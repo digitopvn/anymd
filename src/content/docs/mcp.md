@@ -107,7 +107,7 @@ Tools are listed only when the caller holds the scope they need.
 | `upsert_post` | `{ id?, slug?, title, markdown, excerpt?, tags? }` | `content:write` |
 | `publish_post` | `{ id, publish }` | `content:publish` |
 
-The ops format, revision rules and the safe editing loop are in [Page builder](/docs/page-builder).
+The ops format, revision rules and the safe editing loop are in the admin [builder guide](/admin/docs/page-builder).
 
 ## Things to ask your agent
 

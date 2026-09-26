@@ -25,7 +25,6 @@ That's the whole trick. Everything else in these docs is about doing it at scale
 | Find something I converted last month | [Library & search](/docs/library-search) |
 | Know what converts well (X, YouTube, PDFs…) | [Supported sources](/docs/sources) |
 | Scope a key for CI or a teammate | [API keys & roles](/docs/api-keys-roles) |
-| Build landing pages with an AI agent | [Page builder](/docs/page-builder) |
 | Understand credits and plans | [Billing & credits](/docs/billing) |
 | Run my own copy on Cloudflare | [Self-hosting](/docs/self-host) |
 

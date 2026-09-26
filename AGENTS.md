@@ -80,7 +80,7 @@ All site copy is Markdown under `src/content/`, imported as text by Wrangler and
 
 1. Add a `define({...})` entry to `BLOCKS` in `src/cms/blocks.ts`: `type`, `version`, `label`, `description`, `category`, zod `schema` with length/count limits, `sizes`, `defaultSize`, optional `slots`, a valid `example`, and `toMarkdown`.
 2. Add its renderer in the render module named in the `blocks.ts` header.
-3. The catalog (`GET /api/v1/admin/blocks`, MCP `list_blocks`) picks it up automatically. Add a row to the block table in `src/content/docs/page-builder.md`.
+3. The catalog (`GET /api/v1/admin/blocks`, MCP `list_blocks`) picks it up automatically. Add a row to the block table in `src/content/docs/page-builder.md` (served to admins at `/admin/docs/page-builder`, not in public docs).
 4. Changing an existing block's props shape: bump `version` and keep old documents rendering.
 
 ### Add a source adapter

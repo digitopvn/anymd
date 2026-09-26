@@ -1,6 +1,6 @@
 # Page builder operations (agent workflow)
 
-Operating procedure for an AI agent (or a human scripting the API) that builds and publishes pages on anymd.cc. The op format and block overview are public in `src/content/docs/page-builder.md` (`/docs/page-builder`). Exact block props come from the live catalog, whose source is `src/cms/blocks.ts`. Op validation, concurrency and idempotency are implemented in `src/cms/pages.ts`.
+Operating procedure for an AI agent (or a human scripting the API) that builds and publishes pages on anymd.cc. The op format and block overview are in `src/content/docs/page-builder.md`, served to admins at `/admin/docs/page-builder` (`pages:read`) and kept out of the public docs. Exact block props come from the live catalog, whose source is `src/cms/blocks.ts`. Op validation, concurrency and idempotency are implemented in `src/cms/pages.ts`.
 
 The same service backs every channel, so the procedure is identical whether you use REST (`/api/v1/admin/…`), MCP tools, the CLI (`anymd pages …`) or the editor's WebMCP tools.
 

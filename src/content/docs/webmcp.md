@@ -40,7 +40,7 @@ When you open a page in the dashboard editor, it adds tools for building that pa
 | `apply_page_ops` | Apply a batch of ops against a `baseRevision` |
 | `publish_page` | Publish the draft (or a given revision) |
 
-These follow exactly the same rules as the REST API and MCP versions: optimistic concurrency, validation per block, scopes from your role. See [Page builder](/docs/page-builder).
+These follow exactly the same rules as the REST API and MCP versions: optimistic concurrency, validation per block, scopes from your role. Admins: see the [builder guide](/admin/docs/page-builder).
 
 ## When to use which
 

@@ -100,7 +100,7 @@ anymd pages ops launch --file ops.json               # apply a batch of ops
 anymd pages publish launch
 ```
 
-`ops.json` is the same body as [`POST /admin/pages/:id/ops`](/docs/page-builder):
+`ops.json` is the same body as `POST /admin/pages/:id/ops`:
 
 ```json
 {

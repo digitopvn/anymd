@@ -11,8 +11,9 @@ import { isRole, roleAtLeast } from '../auth/roles';
 import { PLANS, type PlanId } from '../billing/plans';
 import { createPage, getPage, listPages, PageError, TEMPLATES } from '../cms/pages';
 import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost, type PostRow } from '../cms/posts';
-import { BUNDLED_POSTS } from '../content';
+import { BUNDLED_POSTS, PAGE_BUILDER_GUIDE } from '../content';
 import type { AppBindings, Scope } from '../env';
+import { renderMarkdown } from '../lib/markdown';
 import { getSettings, putSettings } from '../lib/settings';
 import { newId } from '../lib/util';
 import { PageEditorPage, PagesListPage, PostEditorPage, PostsListPage, SETTING_FIELDS, SettingsPage, UsersPage } from '../views/admin';
@@ -49,10 +50,29 @@ adminRoutes.get('/', (c) => c.redirect(can(c, 'pages:read') ? '/admin/pages' : '
 
 async function pagesList(c: AppContext, error?: string, status = 200) {
   const pages = (await listPages(c.env)).filter((p) => p.status !== 'archived');
-  return shell(c, '/admin/pages', 'Pages', <PagesListPage pages={pages} canWrite={can(c, 'pages:write')} error={error} />, { status });
+  const guide = (
+    <a class="btn btn-ghost btn-sm" href="/admin/docs/page-builder">
+      Builder guide
+    </a>
+  );
+  return shell(c, '/admin/pages', 'Pages', <PagesListPage pages={pages} canWrite={can(c, 'pages:write')} error={error} />, { status, actions: guide });
 }
 
 adminRoutes.get('/pages', needs('pages:read'), (c) => pagesList(c));
+
+adminRoutes.get('/docs/page-builder', needs('pages:read'), (c) => {
+  const { html } = renderMarkdown(PAGE_BUILDER_GUIDE.markdown, { trusted: true });
+  return shell(
+    c,
+    '/admin/pages',
+    PAGE_BUILDER_GUIDE.title,
+    <article class="card max-w-[860px] p-5 md:p-8">
+      {PAGE_BUILDER_GUIDE.description ? <p class="text-lg text-muted">{PAGE_BUILDER_GUIDE.description}</p> : null}
+      <div class="prose-md mt-6" dangerouslySetInnerHTML={{ __html: html }} />
+    </article>,
+    { actions: <a class="btn btn-ghost btn-sm" href="/admin/pages">Back to pages</a> },
+  );
+});
 
 adminRoutes.post('/pages', needs('pages:write'), async (c) => {
   const f = await formData(c);

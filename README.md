@@ -60,7 +60,6 @@ claude mcp add --transport http anymd https://anymd.cc/mcp --header "Authorizati
 | [Library & search](https://anymd.cc/docs/library-search) | Search modes, fan-out, RRF, Jev |
 | [Sources](https://anymd.cc/docs/sources) | What converts and what's planned |
 | [API keys & roles](https://anymd.cc/docs/api-keys-roles) | Scopes, presets, roles |
-| [Page builder](https://anymd.cc/docs/page-builder) | Blocks, ops, revisions |
 | [Billing](https://anymd.cc/docs/billing) | Credits and plans |
 | [Self-hosting](https://anymd.cc/docs/self-host) | Run your own copy |
 

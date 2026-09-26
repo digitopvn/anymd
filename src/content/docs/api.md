@@ -69,7 +69,7 @@ Read `code`, not `message`. Messages are for humans and may change.
 | DELETE | `/keys/:id` | `keys:manage` |
 | GET | `/me` | any signed-in caller |
 | POST | `/billing/checkout`, `/billing/portal` | browser session |
-| * | `/admin/pages…`, `/admin/blocks`, `/admin/templates` | `pages:*` (see [Page builder](/docs/page-builder)) |
+| * | `/admin/pages…`, `/admin/blocks`, `/admin/templates` | `pages:*` (admins: [builder guide](/admin/docs/page-builder)) |
 | * | `/admin/posts…` | `content:*` |
 | GET, PATCH | `/admin/users…` | `users:read` / `users:write` |
 | GET | `/admin/roles` | any signed-in caller |
@@ -270,7 +270,7 @@ Body: `{ name, preset?, scopes?, expires_in_days? }`. Presets and scopes: [API k
 
 These endpoints power the AI-operable CMS. They need role-granted scopes (`pages:*`, `content:*`, `users:*`, `settings:write`).
 
-- **Pages:** `/admin/blocks`, `/admin/templates`, `/admin/pages` and friends. Full guide: [Page builder](/docs/page-builder).
+- **Pages:** `/admin/blocks`, `/admin/templates`, `/admin/pages` and friends. Admins will find the full guide in the dashboard under [Pages → Builder guide](/admin/docs/page-builder).
 - **Posts:** `GET/POST /admin/posts` with `{ slug?, title, markdown, excerpt?, tags?, category?, cover_url?, seo_title?, seo_description? }`; `GET/PATCH/DELETE /admin/posts/:id`; `POST /admin/posts/:id/publish` with `{ "publish": true | false }`.
 - **Users:** `GET /admin/users` (`users:read`), `PATCH /admin/users/:id` with `{ role?, plan? }` (`users:write`).
 - **Roles:** `GET /admin/roles` lists role templates and key presets.

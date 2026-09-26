@@ -107,7 +107,9 @@ export const DOCS_PAGES: ContentPage[] = [
   contentPage('library-search', docsLibrary),
   contentPage('sources', docsSources),
   contentPage('api-keys-roles', docsKeys),
-  contentPage('page-builder', docsPages),
   contentPage('billing', docsBilling),
   contentPage('self-host', docsSelfHost),
 ];
+
+/** Operator guide for the page builder. Served inside /admin only, so it stays out of docs, sitemap and llms.txt. */
+export const PAGE_BUILDER_GUIDE: ContentPage = contentPage('page-builder', docsPages);
