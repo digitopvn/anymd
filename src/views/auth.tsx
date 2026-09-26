@@ -35,7 +35,7 @@ function AuthShell({ title, lead, children, aside = true }: { title: string; lea
           <img src="/logo/anymd-logo-512.webp" alt="" width="240" height="240" class="relative w-56 animate-float rounded-3xl bg-card/95 p-4" />
           <div class="relative">
             <p class="font-display text-[34px] font-extrabold leading-tight">
-              Every page you convert becomes <span class="text-accent">memory</span> your agents can search.
+              Every source your agents read becomes <span class="text-accent">context</span> they can search.
             </p>
             <ul class="mt-6 space-y-2 text-[#c5d2d0]">
               {['500 free credits every month', 'BM25 + semantic + fan-out search', 'API, CLI, MCP and WebMCP'].map((t) => (

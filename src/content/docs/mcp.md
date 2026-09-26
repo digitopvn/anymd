@@ -1,10 +1,10 @@
 ---
 title: "MCP server"
-description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp to convert URLs, search your library and edit pages."
+description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp so your agents can read the public web, remember it and search it."
 updated: "2026-09-26"
 ---
 
-anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) server. Connect it once and your agent can read any URL as Markdown, search everything you've saved, and (with the right scopes) build and publish pages.
+anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) server. It is the main way agents use anymd as their web context layer: connect it once and your agent can read public web content as structured Markdown, recall everything it has read from your private library, and (with the right scopes) manage pages.
 
 | | |
 |---|---|
@@ -82,14 +82,15 @@ Tools are listed only when the caller holds the scope they need.
 
 | Tool | Input | Needs |
 |---|---|---|
-| `convert_url` | `{ url, save? }` | `convert` (saving also needs `library:write`) |
+| `read_url` | `{ url, save?, fresh? }` | `convert` (saving also needs `library:write`) |
+| `convert_url` | `{ url, save?, fresh? }` | Same as `read_url`, kept under its original name for existing clients |
 | `search_library` | `{ query, mode?, limit? }` | `library:read` |
 | `get_document` | `{ id }` | `library:read` |
 | `list_documents` | `{ limit?, domain? }` | `library:read` |
 | `delete_document` | `{ id }` | `library:write` |
 | `usage_summary` | `{}` | `usage:read` |
 
-`mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
+`read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
 
 ### Pages and posts
 
@@ -111,14 +112,15 @@ The ops format, revision rules and the safe editing loop are in the admin [build
 
 ## Things to ask your agent
 
-- "Convert https://stephango.com/saw and give me the three key ideas."
+- "Read https://stephango.com/saw and give me the three key ideas."
+- "Before you read anything new, check my library for what we already know about this vendor."
 - "Search my library for what I saved about vector databases last month."
 - "Read this YouTube video's transcript and list the timestamps where pricing comes up."
 - "Create a landing page from the `ads-landing` template for our research audience, show me the preview link, and don't publish yet."
 
 ## Credits
 
-`convert_url` costs the same credits as any other conversion. Reads such as `search_library`, `get_document` and `list_documents` are free. See [Billing & credits](/docs/billing).
+`read_url` (and `convert_url`) costs the same credits as any other conversion; cached reads are free. Reads such as `search_library`, `get_document` and `list_documents` are free. See [Billing & credits](/docs/billing).
 
 ## Troubleshooting
 

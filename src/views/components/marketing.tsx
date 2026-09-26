@@ -37,11 +37,10 @@ export function OfferBar() {
 
 export function Converter({ compact = false, autofocus = false }: { compact?: boolean; autofocus?: boolean }) {
   const examples = [
-    ['stephango.com/saw', 'Blog post'],
-    ['x.com/jack/status/20', 'X post'],
-    ['youtube.com/watch?v=dQw4w9WgXcQ', 'YouTube'],
-    ['news.ycombinator.com/item?id=8863', 'Hacker News'],
-    ['github.com/digitopvn/anymd', 'GitHub'],
+    ['stephango.com/saw', 'Article'],
+    ['developers.cloudflare.com/workers/', 'Docs page'],
+    ['github.com/digitopvn/anymd', 'GitHub repo'],
+    ['news.ycombinator.com/item?id=8863', 'Discussion'],
   ];
   return (
     <div class="w-full" data-converter>
@@ -60,7 +59,7 @@ export function Converter({ compact = false, autofocus = false }: { compact?: bo
             autocapitalize="off"
             spellcheck={false}
             required
-            placeholder="paste any link…"
+            placeholder="paste a public URL…"
             class="min-w-0 flex-1 bg-transparent py-3 pl-1 font-mono text-[15px] outline-none placeholder:text-[#9aa7a9]"
             autofocus={autofocus}
           />

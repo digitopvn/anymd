@@ -1,23 +1,40 @@
 # anymd
 
-**Convert anything on the internet to clean Markdown.** Put `anymd.cc/` in front of any URL and get LLM-ready Markdown back.
+**The web context layer for AI agents.** anymd reads public web content, normalizes it into structured Markdown, remembers what matters in a private searchable library, and makes it available anywhere through MCP, API and CLI.
+
+The fastest way to try it: put `anymd.cc/` in front of a public URL.
 
 ```bash
 curl https://anymd.cc/stephango.com/saw
 ```
 
+Connect your agent over MCP:
+
+```bash
+claude mcp add --transport http anymd https://anymd.cc/mcp
+```
+
 [anymd.cc](https://anymd.cc) · [Docs](https://anymd.cc/docs) · [API reference](https://anymd.cc/docs/api) · [MCP](https://anymd.cc/docs/mcp) · [Pricing](https://anymd.cc/pricing)
 
-## Features
+## What it does
 
-- **The URL is the API.** `https://anymd.cc/<url>` returns Markdown with YAML frontmatter; JSON or an HTML preview on request. No key needed for light use.
-- **Source-aware converters.** Web pages, X/Twitter posts and Articles, YouTube transcripts, GitHub, Reddit, Hacker News threads, PDFs, Office files, spreadsheets and images.
-- **A searchable library.** Signed-in conversions are saved and searchable with BM25, full-text, semantic (bge-m3 on Vectorize) or hybrid search, with query fan-out, Reciprocal Rank Fusion and Jev tie-breaking.
-- **Every interface.** REST API, zero-dependency CLI, a remote MCP server with OAuth 2.1 or API keys, and WebMCP tools in the browser.
+- **Read.** A source-aware reader extracts the content of a public URL and normalizes it into structured Markdown with YAML metadata. Dedicated readers handle GitHub, YouTube transcripts, Reddit, Hacker News, X posts, PDFs, Office files, spreadsheets and images.
+- **Remember.** What your agents read while signed in becomes private, reusable context: BM25, full-text, semantic (bge-m3 on Vectorize) and hybrid search, with query fan-out, Reciprocal Rank Fusion and optional Jev tie-breaking. Recall is free.
+- **Use anywhere.** A remote MCP server (`read_url`, `search_library`, `get_document`…) with OAuth 2.1 or API keys, a REST API, a zero-dependency CLI, WebMCP tools in the browser, and the URL prefix: `https://anymd.cc/<url>` returns Markdown, JSON or an HTML preview.
+
+## Responsible by design
+
+- Reads only the URLs a user or their agent requests; no autonomous crawling.
+- Public content only; no login, paywall or CAPTCHA bypass.
+- Follows robots.txt (`anymd` token or `*`), honours domain opt-outs on every channel, and enforces per-site rate limits.
+- Libraries are private to each account. Site owners can opt out or request a takedown: [Site Owners & Abuse](https://anymd.cc/legal/abuse).
+
+## Also included
+
 - **Scoped access.** API keys with presets, capped by role templates.
 - **Agent-readable site.** Every page has a `.md` twin, plus `llms.txt`.
-- **AI-operable page builder.** Typed blocks, revisioned ops, previews and publishing over REST, MCP and CLI.
-- **Runs on Cloudflare.** One Worker with D1, KV, R2, Vectorize and Workers AI.
+- **Admin page builder.** Typed blocks, revisioned ops, previews and publishing over REST, MCP and CLI.
+- **Runs on Cloudflare.** One Worker with D1, KV, R2, Vectorize and Workers AI; self-hostable.
 
 ## Quick usage
 
@@ -58,7 +75,7 @@ claude mcp add --transport http anymd https://anymd.cc/mcp --header "Authorizati
 | [CLI](https://anymd.cc/docs/cli) | The `anymd` command |
 | [MCP](https://anymd.cc/docs/mcp) · [WebMCP](https://anymd.cc/docs/webmcp) | Agent integrations |
 | [Library & search](https://anymd.cc/docs/library-search) | Search modes, fan-out, RRF, Jev |
-| [Sources](https://anymd.cc/docs/sources) | What converts and what's planned |
+| [Sources](https://anymd.cc/docs/sources) | Dedicated readers and what's planned |
 | [API keys & roles](https://anymd.cc/docs/api-keys-roles) | Scopes, presets, roles |
 | [Billing](https://anymd.cc/docs/billing) | Credits and plans |
 | [Self-hosting](https://anymd.cc/docs/self-host) | Run your own copy |

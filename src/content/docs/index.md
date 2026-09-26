@@ -1,16 +1,18 @@
 ---
 title: "Documentation"
-description: "Everything you need to turn any URL into clean Markdown with anymd: URL API, REST, CLI, MCP, WebMCP, library search and more."
+description: "anymd is the web context layer for AI agents. Docs for MCP, the URL API, REST, CLI, WebMCP, library search and self-hosting."
 updated: "2026-09-26"
 ---
 
-anymd converts anything on the internet to clean Markdown. Put `anymd.cc/` in front of a link and you get the content back: no nav bars, no cookie banners, no scripts. Just text your model can use, with YAML frontmatter on top.
+anymd is the web context layer for AI agents. It reads public web content, normalizes it into structured Markdown, remembers what your agents read in a private searchable library, and makes all of it available through MCP, the API and the CLI.
+
+The fastest way to see it: put `anymd.cc/` in front of a link and you get the content back, with no nav bars, cookie banners or scripts. Just text your model can use, with YAML frontmatter on top.
 
 ```bash
 curl https://anymd.cc/stephango.com/saw
 ```
 
-That's the whole trick. Everything else in these docs is about doing it at scale, from code, from your terminal, or from inside an agent.
+The rest of these docs cover doing it from inside an agent, from code and from your terminal, and recalling what was read later.
 
 ## Pick your path
 
@@ -20,21 +22,23 @@ That's the whole trick. Everything else in these docs is about doing it at scale
 | Convert a URL with zero setup | [URL API](/docs/url) |
 | Call anymd from my app | [REST API](/docs/api) |
 | Use it from the terminal | [CLI](/docs/cli) |
-| Give Claude, Cursor or my agent a "read this URL" tool | [MCP server](/docs/mcp) |
+| Give Claude, Cursor or my agent web context over MCP | [MCP server](/docs/mcp) |
 | Let in-browser agents use anymd.cc | [WebMCP](/docs/webmcp) |
-| Find something I converted last month | [Library & search](/docs/library-search) |
-| Know what converts well (X, YouTube, PDFs…) | [Supported sources](/docs/sources) |
+| Find something my agents read last month | [Library & search](/docs/library-search) |
+| Know which sources have dedicated readers | [Supported sources](/docs/sources) |
 | Scope a key for CI or a teammate | [API keys & roles](/docs/api-keys-roles) |
 | Understand credits and plans | [Billing & credits](/docs/billing) |
 | Run my own copy on Cloudflare | [Self-hosting](/docs/self-host) |
 
 ## Core ideas
 
-- **The URL is the API.** `https://anymd.cc/<any-url>` returns Markdown. No key needed for light use (50 conversions a day per IP).
+- **Read, remember, use anywhere.** anymd reads a source once, keeps it as private context, and serves it to every agent you connect.
+- **The URL is the API.** `https://anymd.cc/<url>` returns Markdown. No key needed for light use (50 reads a day per IP).
 - **One engine, every channel.** The URL API, REST, CLI, MCP and WebMCP all run the same conversion pipeline, so output is identical wherever you call it from.
-- **Credits, not seats.** A web page costs 1 credit; heavier sources cost more. Searching your library and re-serving cached results are free. See [Billing & credits](/docs/billing).
-- **Your library remembers.** Sign in (or send an API key) and every conversion is saved to a private, searchable library with BM25, full-text and semantic search.
+- **Pay for new context, not seats.** Processing a new source uses credits by complexity (a web page is 1). Searching your library and cached reads are free. See [Billing & credits](/docs/billing).
+- **Your library remembers.** Sign in (or send an API key) and every source your agents read is saved to a private library with BM25, full-text, semantic and hybrid search.
 - **Scoped access.** Every API key and OAuth grant carries scopes, capped by its owner's role. See [API keys & roles](/docs/api-keys-roles).
+- **Responsible reading.** anymd only reads URLs you or your agent request, only public content, and follows robots.txt, domain opt-outs and per-site rate limits. See [Supported sources](/docs/sources) and [Site Owners & Abuse](/legal/abuse).
 
 ## These docs are Markdown too
 

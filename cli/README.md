@@ -1,7 +1,7 @@
 # anymd CLI
 
-Convert any URL or file to clean Markdown with [anymd.cc](https://anymd.cc), search your
-Markdown library, and manage pages from the terminal. Zero dependencies; Node.js 18 or newer.
+Read public URLs and files as clean Markdown with [anymd.cc](https://anymd.cc), the web context
+layer for AI agents; search your library and manage pages from the terminal. Zero dependencies; Node.js 18 or newer.
 
 ## Install
 

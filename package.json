@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Convert anything on the internet to clean Markdown — with a searchable personal library, API, CLI, MCP and WebMCP.",
+  "description": "The web context layer for AI agents: read public web content as structured Markdown, remember it in a private searchable library, and use it over MCP, API and CLI.",
   "license": "MIT",
   "author": "Digitop.ai <hello@digitop.ai>",
   "repository": "github:digitopvn/anymd",

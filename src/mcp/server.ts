@@ -15,10 +15,10 @@ import { deleteDocument, getDocument, listDocuments } from '../library/store';
 import { convertPayload, searchForPrincipal, usageSummary } from '../services';
 
 const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
-const SERVER_INFO = { name: 'anymd', title: 'anymd — any URL to Markdown', version: '1.0.0' };
+const SERVER_INFO = { name: 'anymd', title: 'anymd — the web context layer for AI agents', version: '1.0.0' };
 const INSTRUCTIONS =
-  'anymd converts any URL (web pages, X, YouTube, GitHub, Reddit, Hacker News, PDFs, Office files, images) to clean Markdown and keeps a private, searchable library of everything converted. ' +
-  'Use convert_url to read a page, search_library to recall saved pages, get_document for full text. Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision.';
+  'anymd is the web context layer for AI agents: it reads public web content (web pages, GitHub, YouTube, Reddit, Hacker News, X, PDFs, Office files, images) into structured Markdown and keeps a private, searchable library of everything read. ' +
+  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document for full text. Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision.';
 
 interface ToolContext {
   env: Env;
@@ -39,24 +39,43 @@ interface ToolDef {
 
 const READ = { readOnlyHint: true, openWorldHint: false };
 
+/** Reading a URL. Exposed as `read_url`, and as `convert_url` for clients built before the rename. */
+const READ_URL_INPUT = z.object({
+  url: z.string().describe('The public URL to read, e.g. https://example.com/post'),
+  save: z.boolean().optional().describe('Save to the library (default true)'),
+  fresh: z.boolean().optional().describe('Bypass the 1-hour cache'),
+});
+const READ_URL_TEXT = 'Saves to the library by default (save=false to skip). Costs 1–5 credits by source complexity; cached reads are free.';
+const readUrl = async (a: z.infer<typeof READ_URL_INPUT>, t: ToolContext) => {
+  const r = await runConversion(t.env, t.ctx, { url: a.url, channel: 'mcp', principal: t.principal, save: a.save, fresh: a.fresh });
+  const { content: _content, ...rest } = convertPayload(r);
+  return rest;
+};
+const READ_URL_TOOLS = new Set(['read_url', 'convert_url']);
+
 const TOOLS: ToolDef[] = [
+  {
+    name: 'read_url',
+    title: 'Read URL',
+    description: `Read a public URL and return its content as structured Markdown with metadata. ${READ_URL_TEXT}`,
+    scope: 'convert',
+    input: READ_URL_INPUT,
+    annotations: { readOnlyHint: false, openWorldHint: true },
+    run: readUrl,
+  },
   {
     name: 'convert_url',
     title: 'Convert URL to Markdown',
-    description: 'Fetch any URL and return clean Markdown with metadata. Saves to the library by default (save=false to skip). Costs 1–5 credits; cached results are free.',
+    description: `Same as read_url, kept under its original name for existing clients. Fetch a URL and return clean Markdown with metadata. ${READ_URL_TEXT}`,
     scope: 'convert',
-    input: z.object({ url: z.string().describe('The URL to convert, e.g. https://example.com/post'), save: z.boolean().optional().describe('Save to the library (default true)'), fresh: z.boolean().optional().describe('Bypass the 1-hour cache') }),
+    input: READ_URL_INPUT,
     annotations: { readOnlyHint: false, openWorldHint: true },
-    run: async (a, t) => {
-      const r = await runConversion(t.env, t.ctx, { url: a.url, channel: 'mcp', principal: t.principal, save: a.save, fresh: a.fresh });
-      const { content: _content, ...rest } = convertPayload(r);
-      return rest;
-    },
+    run: readUrl,
   },
   {
     name: 'search_library',
     title: 'Search library',
-    description: 'Search everything this user converted. Modes: hybrid (default: BM25 + semantic fused with RRF), bm25, fulltext (FTS5 syntax), semantic. Free.',
+    description: 'Search every source this user has read and saved. Modes: hybrid (default: BM25 + semantic fused with RRF), bm25, fulltext (FTS5 syntax), semantic. Free.',
     scope: 'library:read',
     input: z.object({
       query: z.string().min(1),
@@ -283,8 +302,8 @@ async function callTool(params: Record<string, unknown> | undefined, t: ToolCont
   try {
     const out = await tool.run(parsed.data, t);
     const text = typeof out === 'string' ? out : JSON.stringify(out, null, 2);
-    // convert_url: lead with the Markdown so the model reads the page, not escaped JSON.
-    if (tool.name === 'convert_url' && out && typeof out === 'object' && 'markdown' in out) {
+    // read_url / convert_url: lead with the Markdown so the model reads the page, not escaped JSON.
+    if (READ_URL_TOOLS.has(tool.name) && out && typeof out === 'object' && 'markdown' in out) {
       const { markdown, ...meta } = out as { markdown: string };
       return { content: [{ type: 'text', text: markdown }, { type: 'text', text: JSON.stringify(meta, null, 2) }], structuredContent: out };
     }
