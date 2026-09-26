@@ -1,8 +1,9 @@
-/** Email/password auth, password reset, and the OAuth 2.1 consent screen for MCP clients. */
+/** Email/password and GitHub/Google sign-in, password reset, and the OAuth 2.1 consent screen for MCP clients. */
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { createSession, createUser, destroySession, getUserByEmail, hashPassword, SESSION_COOKIE, SESSION_TTL_MS, verifyPassword } from '../auth/identity';
 import { capScopes } from '../auth/roles';
+import { beginSso, completeSso, enabledSsoProviders, isSsoProvider, SSO_ERRORS, SSO_STATE_COOKIE, SSO_STATE_TTL, SsoError, type SsoErrorCode, type SsoState } from '../auth/sso';
 import type { AppBindings } from '../env';
 import { resetEmail, sendEmail, welcomeEmail } from '../lib/email';
 import { randomToken, sha256 } from '../lib/util';
@@ -38,17 +39,24 @@ const noindex = { noindex: true, markdownPath: null, variant: 'bare' as const };
 authRoutes.get('/login', (c) => {
   if (c.get('user')) return c.redirect(safeNext(c.req.query('next')));
   const notice = c.req.query('reset') ? 'Password updated. Log in with your new password.' : undefined;
-  return renderPage(c, { title: 'Log in', path: '/login', ...noindex }, <LoginPage next={safeNext(c.req.query('next'))} notice={notice} />);
+  const code = c.req.query('sso_error');
+  const error = code && code in SSO_ERRORS ? SSO_ERRORS[code as SsoErrorCode] : undefined;
+  return renderPage(c, { title: 'Log in', path: '/login', ...noindex }, <LoginPage next={safeNext(c.req.query('next'))} notice={notice} error={error} providers={enabledSsoProviders(c.env)} />);
 });
 
 authRoutes.post('/login', async (c) => {
   const f = await formData(c);
   const next = safeNext(f.next);
   const email = (f.email ?? '').trim().toLowerCase();
-  if (await throttled(c, 'login')) return renderPage(c, { title: 'Log in', path: '/login', ...noindex }, <LoginPage next={next} email={email} error="Too many attempts. Wait a minute and try again." />, 429);
+  if (await throttled(c, 'login')) return renderPage(c, { title: 'Log in', path: '/login', ...noindex }, <LoginPage next={next} email={email} error="Too many attempts. Wait a minute and try again." providers={enabledSsoProviders(c.env)} />, 429);
   const user = email ? await getUserByEmail(c.env, email) : null;
+  const providers = enabledSsoProviders(c.env);
+  if (user && !user.password_hash) {
+    const via = providers.length ? 'GitHub or Google' : 'a sign-in provider';
+    return renderPage(c, { title: 'Log in', path: '/login', ...noindex }, <LoginPage next={next} email={email} providers={providers} error={`This account signs in with ${via}. Use a button above, or reset your password to add one.`} />, 401);
+  }
   if (!user || !(await verifyPassword(f.password ?? '', user.password_hash))) {
-    return renderPage(c, { title: 'Log in', path: '/login', ...noindex }, <LoginPage next={next} email={email} error="Email or password is incorrect." />, 401);
+    return renderPage(c, { title: 'Log in', path: '/login', ...noindex }, <LoginPage next={next} email={email} providers={providers} error="Email or password is incorrect." />, 401);
   }
   await startSession(c, user.id);
   return c.redirect(next);
@@ -56,7 +64,7 @@ authRoutes.post('/login', async (c) => {
 
 authRoutes.get('/signup', (c) => {
   if (c.get('user')) return c.redirect('/dashboard');
-  return renderPage(c, { title: 'Create your account', path: '/signup', noindex: true, markdownPath: null, variant: 'bare' }, <SignupPage next={safeNext(c.req.query('next'))} plan={c.req.query('plan')} interval={c.req.query('interval')} />);
+  return renderPage(c, { title: 'Create your account', path: '/signup', noindex: true, markdownPath: null, variant: 'bare' }, <SignupPage next={safeNext(c.req.query('next'))} plan={c.req.query('plan')} interval={c.req.query('interval')} providers={enabledSsoProviders(c.env)} />);
 });
 
 authRoutes.post('/signup', async (c) => {
@@ -67,7 +75,7 @@ authRoutes.post('/signup', async (c) => {
   const plan = f.plan === 'pro' || f.plan === 'scale' ? f.plan : '';
   const interval = f.interval === 'year' ? 'year' : 'month';
   const fail = (error: string, status = 400) =>
-    renderPage(c, { title: 'Create your account', path: '/signup', ...noindex }, <SignupPage next={next} email={email} name={name} plan={plan} interval={interval} error={error} />, status);
+    renderPage(c, { title: 'Create your account', path: '/signup', ...noindex }, <SignupPage next={next} email={email} name={name} plan={plan} interval={interval} error={error} providers={enabledSsoProviders(c.env)} />, status);
   if (await throttled(c, 'signup')) return fail('Too many attempts. Wait a minute and try again.', 429);
   if (!EMAIL_RE.test(email)) return fail('Enter a valid email address.');
   if ((f.password ?? '').length < 8) return fail('Password must be at least 8 characters.');
@@ -124,6 +132,55 @@ authRoutes.post('/reset', async (c) => {
   ]);
   await c.env.CACHE.delete(key);
   return c.redirect('/login?reset=1');
+});
+
+// ─── GitHub / Google sign-in ────────────────────────────────────────────────
+
+const ssoFail = (c: AppContext, code: SsoErrorCode, next = '/dashboard') =>
+  c.redirect(`/login?sso_error=${code}${next !== '/dashboard' ? `&next=${encodeURIComponent(next)}` : ''}`);
+
+authRoutes.get('/api/auth/oauth/:provider', async (c) => {
+  const provider = c.req.param('provider');
+  const next = safeNext(c.req.query('next'));
+  if (!isSsoProvider(provider) || !enabledSsoProviders(c.env).includes(provider)) return ssoFail(c, 'unavailable', next);
+  if (await throttled(c, 'sso')) return ssoFail(c, 'failed', next);
+  const { url, state, data } = await beginSso(c.env, provider, next);
+  await c.env.CACHE.put(`sso:${state}`, JSON.stringify(data), { expirationTtl: SSO_STATE_TTL });
+  // Binds the round trip to this browser, so a callback URL cannot be replayed into someone else's session.
+  setCookie(c, SSO_STATE_COOKIE, state, {
+    path: '/api/auth/oauth',
+    httpOnly: true,
+    secure: new URL(c.req.url).protocol === 'https:',
+    sameSite: 'Lax',
+    maxAge: SSO_STATE_TTL,
+  });
+  return c.redirect(url);
+});
+
+authRoutes.get('/api/auth/oauth/:provider/callback', async (c) => {
+  const provider = c.req.param('provider');
+  const state = c.req.query('state') ?? '';
+  const cookieState = getCookie(c, SSO_STATE_COOKIE);
+  deleteCookie(c, SSO_STATE_COOKIE, { path: '/api/auth/oauth' });
+  const raw = state ? await c.env.CACHE.get(`sso:${state}`) : null;
+  if (raw) await c.env.CACHE.delete(`sso:${state}`);
+  const saved = raw ? (JSON.parse(raw) as SsoState) : null;
+  if (!saved || !isSsoProvider(provider) || saved.provider !== provider || cookieState !== state) return ssoFail(c, 'expired');
+  if (c.req.query('error')) return ssoFail(c, 'denied', saved.next);
+  const code = c.req.query('code');
+  if (!code) return ssoFail(c, 'failed', saved.next);
+  try {
+    const { user, created } = await completeSso(c.env, provider, code, saved.verifier);
+    await startSession(c, user.id);
+    if (created) {
+      const mail = welcomeEmail(c.env, user.name);
+      c.executionCtx.waitUntil(sendEmail(c.env, user.email, mail.subject, mail.html, mail.text).catch(() => false));
+    }
+    return c.redirect(saved.next);
+  } catch (e) {
+    console.error('sso', provider, e instanceof Error ? e.message : e);
+    return ssoFail(c, e instanceof SsoError ? e.code : 'failed', saved.next);
+  }
 });
 
 // ─── OAuth 2.1 consent (MCP clients) ────────────────────────────────────────

@@ -28,6 +28,14 @@ export interface Env {
   OPENROUTER_API_KEY?: string;
   RESEND_API_KEY?: string;
   RAPIDAPI_KEY?: string;
+  // Social sign-in. A provider shows up only when both its id and secret are set; the callback
+  // defaults to `${PUBLIC_URL}/api/auth/oauth/<provider>/callback`.
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+  GITHUB_CALLBACK_URL?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  GOOGLE_CALLBACK_URL?: string;
 }
 
 /** The part of ExecutionContext this app uses; Hono's and workers-types' contexts both satisfy it. */

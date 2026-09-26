@@ -6,6 +6,7 @@
 // Only names listed below are sent; empty values are skipped. Polar secrets are read from
 // POLAR_ACCESS_TOKEN / POLAR_WEBHOOK_SECRET for staging (sandbox) and from
 // POLAR_PRODUCTION_ACCESS_TOKEN / POLAR_PRODUCTION_WEBHOOK_SECRET for production.
+// GitHub/Google sign-in values are described next to where they are read below.
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,6 +23,17 @@ const secrets = Object.fromEntries(shared.map((k) => [k, process.env[k]]));
 const polarPrefix = target === 'production' ? 'POLAR_PRODUCTION_' : 'POLAR_';
 secrets.POLAR_ACCESS_TOKEN = process.env[`${polarPrefix}ACCESS_TOKEN`];
 secrets.POLAR_WEBHOOK_SECRET = process.env[`${polarPrefix}WEBHOOK_SECRET`];
+
+// Social sign-in. Staging prefers STAGING_-prefixed values. A GitHub OAuth App accepts a single
+// callback host, so staging never reuses the production GitHub app; Google may, once the staging
+// callback is added to the client's redirect URIs. Staging derives its callback from PUBLIC_URL.
+for (const p of ['GITHUB', 'GOOGLE']) {
+  for (const k of ['CLIENT_ID', 'CLIENT_SECRET']) {
+    const name = `${p}_${k}`;
+    secrets[name] = target === 'production' ? process.env[name] : (process.env[`STAGING_${name}`] ?? (p === 'GOOGLE' ? process.env[name] : undefined));
+  }
+  if (target === 'production') secrets[`${p}_CALLBACK_URL`] = process.env[`${p}_CALLBACK_URL`];
+}
 
 const payload = Object.fromEntries(Object.entries(secrets).filter(([, v]) => v && v.trim()));
 if (!Object.keys(payload).length) {
