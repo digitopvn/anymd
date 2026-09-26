@@ -10,6 +10,7 @@ import { Tracer } from '../lib/tracer';
 import { canSpend, recordUsage, type Channel } from '../lib/usage';
 import { newId, sha256 } from '../lib/util';
 import { convertUrl, creditCost, formatMarkdown, normalizeTargetUrl } from './index';
+import { findOptout } from './optouts';
 import { ConvertError, type ConvertResult } from './types';
 
 export interface ConvertRequest {
@@ -65,6 +66,10 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
   try {
     const url = normalizeTargetUrl(req.url);
     targetForLog = url.href;
+    const optout = await tracer.span('optout', () => findOptout(env, url.hostname));
+    if (optout) {
+      throw new ConvertError(`${optout.domain} has asked not to be converted by anymd. See https://anymd.cc/legal/abuse`, 403, 'site_opted_out');
+    }
     const key = await cacheKey(url.href, req);
 
     let plan = 'free';

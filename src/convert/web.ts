@@ -6,9 +6,9 @@
 import './polyfill';
 import { parseHTML } from 'linkedom';
 import Defuddle from 'defuddle/full';
+import { robotsVerdict } from './robots';
 import {
   BOT_USER_AGENT,
-  BROWSER_USER_AGENT,
   ConvertError,
   USER_AGENT,
   countWords,
@@ -112,26 +112,38 @@ async function parseHtml(html: string, pageUrl: string, ctx: ConvertContext): Pr
   };
 }
 
+/** Politeness gate for pages we fetch ourselves: a per-site request budget, then the site's robots.txt. */
+async function checkSitePolicy(url: URL, ctx: ConvertContext): Promise<void> {
+  const site = url.hostname.replace(/^www\./, '');
+  const { success } = await ctx.env.RL_DOMAIN.limit({ key: site });
+  if (!success) throw new ConvertError(`Too many requests to ${site} right now. Try again in a minute.`, 429, 'domain_rate_limited');
+  const verdict = await ctx.tracer.span('robots', () => robotsVerdict(ctx.env, url));
+  if (verdict === 'disallowed') {
+    throw new ConvertError(`${site} asks automated tools not to fetch this page (robots.txt), so anymd will not convert it.`, 403, 'robots_disallowed');
+  }
+  if (verdict === 'unreachable') {
+    throw new ConvertError(`Could not read ${site}/robots.txt, so anymd will not fetch the page. Try again later.`, 503, 'robots_unreachable');
+  }
+}
+
 async function convertWeb(url: URL, ctx: ConvertContext): Promise<ConvertResult> {
+  await checkSitePolicy(url, ctx);
   const ua = initialUserAgent(url);
   const first = await ctx.tracer.span('fetch', () => fetchPage(url, ua, ctx), { ua: ua === BOT_USER_AGENT ? 'bot' : 'default' });
   if (first.kind === 'result') return first.result;
 
   let result = await ctx.tracer.span('extract', () => parseHtml(first.html, first.finalUrl, ctx), { bytes: first.html.length });
 
-  // Some sites (client-rendered SPAs, Obsidian Publish, YouTube) serve richer HTML to bots or browsers.
-  if (result.wordCount < 5) {
-    for (const retryUa of [BOT_USER_AGENT, BROWSER_USER_AGENT]) {
-      if (retryUa === ua) continue;
-      try {
-        const retry = await ctx.tracer.span('fetch.retry', () => fetchPage(url, retryUa, ctx), { ua: retryUa === BOT_USER_AGENT ? 'bot' : 'browser' });
-        if (retry.kind === 'result') return retry.result;
-        const parsed = await ctx.tracer.span('extract.retry', () => parseHtml(retry.html, retry.finalUrl, ctx));
-        if (parsed.wordCount > result.wordCount) result = parsed;
-        if (result.wordCount >= 5) break;
-      } catch {
-        // A blocked retry keeps the first result.
-      }
+  // Some sites (client-rendered SPAs, Obsidian Publish) serve server-rendered HTML to bots. The retry
+  // still identifies as anymd; we never present a browser user agent.
+  if (result.wordCount < 5 && ua !== BOT_USER_AGENT) {
+    try {
+      const retry = await ctx.tracer.span('fetch.retry', () => fetchPage(url, BOT_USER_AGENT, ctx), { ua: 'bot' });
+      if (retry.kind === 'result') return retry.result;
+      const parsed = await ctx.tracer.span('extract.retry', () => parseHtml(retry.html, retry.finalUrl, ctx));
+      if (parsed.wordCount > result.wordCount) result = parsed;
+    } catch {
+      // A blocked retry keeps the first result.
     }
   }
   if (!result.content) throw new ConvertError('No readable content found on this page', 422, 'empty_content');

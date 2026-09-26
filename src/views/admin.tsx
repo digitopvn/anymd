@@ -1,9 +1,10 @@
-/** Admin screens: landing pages (builder), blog posts, users & roles, settings. */
+/** Admin screens: landing pages (builder), blog posts, users & roles, site opt-outs, settings. */
 import type { UserRow } from '../auth/identity';
 import { ROLE_TEMPLATES } from '../auth/roles';
 import { PLANS } from '../billing/plans';
 import type { PostRow } from '../cms/posts';
 import type { PageRow } from '../cms/pages';
+import type { SiteOptout } from '../convert/optouts';
 import { TEMPLATES } from '../cms/pages';
 import type { BlogPost } from '../content';
 import type { RoleName } from '../env';
@@ -496,6 +497,79 @@ export function SettingsPage({ values, notice }: { values: Record<string, string
         </button>
       </form>
       <RoleTemplates />
+    </>
+  );
+}
+
+export function OptoutsPage({ optouts, error, notice }: { optouts: SiteOptout[]; error?: string; notice?: string }) {
+  return (
+    <>
+      {notice ? <p class="mb-4 rounded-xl border border-ok-line bg-accent-soft px-4 py-3 text-sm text-accent-ink">{notice}</p> : null}
+      {error ? (
+        <p class="mb-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <form method="post" action="/admin/optouts" class="card max-w-2xl space-y-4 p-5">
+        <p class="text-sm text-muted">
+          Blocks conversions of the domain and all its subdomains on every channel, including cached results. Use it for owner opt-out and takedown requests
+          sent through <a class="underline" href="/legal/abuse">the abuse page</a>.
+        </p>
+        <div>
+          <label class="label" for="o-domain">
+            Domain
+          </label>
+          <input id="o-domain" name="domain" class="input" placeholder="example.com" required maxlength={253} autocomplete="off" />
+        </div>
+        <div>
+          <label class="label" for="o-reason">
+            Reason
+          </label>
+          <input id="o-reason" name="reason" class="input" placeholder="Owner request by email, 2026-09-26" maxlength={300} />
+          <p class="mt-1 text-xs text-muted">Internal note. Not shown to users.</p>
+        </div>
+        <button class="btn btn-dark" type="submit" name="intent" value="add">
+          Block domain
+        </button>
+      </form>
+      <div class="card mt-4 max-w-2xl overflow-hidden">
+        {optouts.length ? (
+          <div class="scroll-x">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Domain</th>
+                  <th class="hidden sm:table-cell">Added</th>
+                  <th>
+                    <span class="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {optouts.map((o) => (
+                  <tr>
+                    <td>
+                      <p class="break-all font-mono text-sm">{o.domain}</p>
+                      {o.reason ? <p class="mt-0.5 text-xs text-muted">{o.reason}</p> : null}
+                    </td>
+                    <td class="hidden whitespace-nowrap text-muted sm:table-cell">{humanDate(o.created_at)}</td>
+                    <td class="text-right">
+                      <form method="post" action="/admin/optouts">
+                        <input type="hidden" name="domain" value={o.domain} />
+                        <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="remove" aria-label={`Unblock ${o.domain}`}>
+                          <Icon name="trash" size={15} /> Unblock
+                        </button>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p class="p-5 text-sm text-muted">No domains are blocked.</p>
+        )}
+      </div>
     </>
   );
 }

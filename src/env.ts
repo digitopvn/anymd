@@ -16,6 +16,8 @@ export interface Env {
   ASSETS: Fetcher;
   RL_ANON: RateLimit;
   RL_AUTH: RateLimit;
+  /** Per-site budget for pages anymd fetches itself, shared by all callers. */
+  RL_DOMAIN: RateLimit;
   OAUTH_PROVIDER: OAuthHelpers;
 
   // Secrets (all optional; features degrade gracefully when absent)

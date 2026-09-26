@@ -34,6 +34,7 @@ The repository's `wrangler.jsonc` declares two environments, `staging` and `prod
 | `VECTORS` | Vectorize index | Semantic search embeddings |
 | `AI` | Workers AI | Embeddings, query fan-out, document conversion |
 | `RL_ANON`, `RL_AUTH` | Rate limiting | Per-minute limits for anonymous and signed-in callers |
+| `RL_DOMAIN` | Rate limiting | Per-minute fetch budget per target site, shared by all callers |
 
 Create them (production shown; repeat with `-staging` names for staging):
 

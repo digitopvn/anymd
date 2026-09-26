@@ -12,11 +12,12 @@ import { PLANS, type PlanId } from '../billing/plans';
 import { createPage, getPage, listPages, PageError, TEMPLATES } from '../cms/pages';
 import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost, type PostRow } from '../cms/posts';
 import { BUNDLED_POSTS, PAGE_BUILDER_GUIDE } from '../content';
+import { addOptout, listOptouts, normalizeOptoutDomain, removeOptout } from '../convert/optouts';
 import type { AppBindings, Scope } from '../env';
 import { renderMarkdown } from '../lib/markdown';
 import { getSettings, putSettings } from '../lib/settings';
 import { newId } from '../lib/util';
-import { PageEditorPage, PagesListPage, PostEditorPage, PostsListPage, SETTING_FIELDS, SettingsPage, UsersPage } from '../views/admin';
+import { OptoutsPage, PageEditorPage, PagesListPage, PostEditorPage, PostsListPage, SETTING_FIELDS, SettingsPage, UsersPage } from '../views/admin';
 import { DashShell } from '../views/dashboard';
 import { formData, renderMessage, renderPage } from './shared';
 
@@ -218,6 +219,28 @@ adminRoutes.post('/users/:id', needs('users:write'), async (c) => {
   await c.env.DB.prepare('UPDATE users SET role = COALESCE(?, role), plan = COALESCE(?, plan), updated_at = ? WHERE id = ?').bind(role ?? null, plan ?? null, Date.now(), target.id).run();
   await c.env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)').bind(newId('aud_'), `${actor.kind}:${actor.userId}`, 'user.update', target.id, JSON.stringify({ role, plan }), Date.now()).run();
   return c.redirect('/admin/users');
+});
+
+// ─── Site opt-outs ──────────────────────────────────────────────────────────
+
+const OPTOUT_NOTICES: Record<string, string> = { added: 'Domain blocked. Conversions stop right away.', removed: 'Domain unblocked.' };
+
+async function optoutsList(c: AppContext, error?: string, status = 200) {
+  return shell(c, '/admin/optouts', 'Site opt-outs', <OptoutsPage optouts={await listOptouts(c.env)} error={error} notice={OPTOUT_NOTICES[c.req.query('saved') ?? '']} />, { status });
+}
+
+adminRoutes.get('/optouts', needs('settings:write'), (c) => optoutsList(c));
+
+adminRoutes.post('/optouts', needs('settings:write'), async (c) => {
+  const f = await formData(c);
+  const actor = c.get('principal');
+  const domain = normalizeOptoutDomain(f.domain ?? '');
+  if (!domain) return optoutsList(c, 'Enter a domain such as example.com.', 422);
+  if (f.intent === 'remove') await removeOptout(c.env, domain);
+  else await addOptout(c.env, domain, (f.reason ?? '').trim().slice(0, 300), actor.userId);
+  const action = f.intent === 'remove' ? 'optout.remove' : 'optout.add';
+  await c.env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)').bind(newId('aud_'), `${actor.kind}:${actor.userId}`, action, domain, '{}', Date.now()).run();
+  return c.redirect(`/admin/optouts?saved=${f.intent === 'remove' ? 'removed' : 'added'}`);
 });
 
 // ─── Settings ───────────────────────────────────────────────────────────────

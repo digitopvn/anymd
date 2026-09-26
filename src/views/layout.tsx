@@ -261,6 +261,7 @@ const FOOTER_COLUMNS: { title: string; links: [string, string][] }[] = [
       ['/legal/refund', 'Refunds'],
       ['/legal/cookies', 'Cookies'],
       ['/legal/gdpr', 'GDPR'],
+      ['/legal/abuse', 'Site owners'],
     ],
   },
 ];

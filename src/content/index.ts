@@ -16,6 +16,7 @@ import legalPrivacy from './legal/privacy.md';
 import legalRefund from './legal/refund.md';
 import legalCookies from './legal/cookies.md';
 import legalGdpr from './legal/gdpr.md';
+import legalAbuse from './legal/abuse.md';
 
 import docsIndex from './docs/index.md';
 import docsQuickstart from './docs/quickstart.md';
@@ -93,6 +94,7 @@ export const LEGAL_PAGES: ContentPage[] = [
   contentPage('refund', legalRefund),
   contentPage('cookies', legalCookies),
   contentPage('gdpr', legalGdpr),
+  contentPage('abuse', legalAbuse),
 ];
 
 /** Docs in navigation order. `index` renders at /docs. */

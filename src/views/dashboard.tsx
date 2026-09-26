@@ -27,6 +27,7 @@ const ADMIN_NAV: { href: string; label: string; icon: string; min: RoleName }[] 
   { href: '/admin/pages', label: 'Pages', icon: 'pages', min: 'author' },
   { href: '/admin/posts', label: 'Blog posts', icon: 'pen', min: 'author' },
   { href: '/admin/users', label: 'Users & roles', icon: 'users', min: 'admin' },
+  { href: '/admin/optouts', label: 'Site opt-outs', icon: 'shield', min: 'admin' },
   { href: '/admin/settings', label: 'Settings', icon: 'settings', min: 'admin' },
 ];
 

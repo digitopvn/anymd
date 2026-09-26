@@ -29,12 +29,16 @@ The web pipeline fetches the page, parses it with linkedom, and runs a content-e
 
 anymd adds a few things on top:
 
-- **Retry for empty shells.** If a client-rendered page comes back with almost no text, anymd retries with bot and browser user agents and keeps the richest result.
+- **Retry for empty shells.** If a client-rendered page comes back with almost no text, anymd retries once with its bot user agent and keeps the richer result. It always identifies as `anymd`.
 - **GitHub gets a bot user agent** first, because it serves server-rendered content to bots.
 - **Documents behind URLs.** If a URL serves a PDF, Office file or image, it is routed to the document converter automatically.
 - **Your overrides.** `selector` picks the content block when automatic detection misses; `images=0` strips images; `lang` sets `Accept-Language`. See [URL API](/docs/url).
 
 Limit: 5 MB of HTML per page.
+
+### Site rules anymd follows
+
+Before fetching a page itself, anymd checks the site's `robots.txt` for the `anymd` token (or `*`) and refuses disallowed pages with `403 robots_disallowed`. If robots.txt cannot be read because of a server error, the request fails with `503 robots_unreachable`. Each site also has a shared per-minute fetch budget (`429 domain_rate_limited`), and domains whose owners opted out are refused on every source with `403 site_opted_out`. None of these use credits. Site owners: see [Site Owners & Abuse](/legal/abuse).
 
 ## X / Twitter
 

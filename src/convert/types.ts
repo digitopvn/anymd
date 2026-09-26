@@ -69,5 +69,3 @@ export function countWords(text: string): number {
 
 export const USER_AGENT = 'Mozilla/5.0 (compatible; anymd/1.0; +https://anymd.cc)';
 export const BOT_USER_AGENT = USER_AGENT + ' bot';
-export const BROWSER_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';

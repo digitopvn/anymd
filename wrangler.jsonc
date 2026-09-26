@@ -28,7 +28,8 @@
       "ai": { "binding": "AI" },
       "ratelimits": [
         { "name": "RL_ANON", "namespace_id": "2101", "simple": { "limit": 20, "period": 60 } },
-        { "name": "RL_AUTH", "namespace_id": "2102", "simple": { "limit": 120, "period": 60 } }
+        { "name": "RL_AUTH", "namespace_id": "2102", "simple": { "limit": 120, "period": 60 } },
+        { "name": "RL_DOMAIN", "namespace_id": "2103", "simple": { "limit": 60, "period": 60 } }
       ]
     },
     "production": {
@@ -55,7 +56,8 @@
       "ai": { "binding": "AI" },
       "ratelimits": [
         { "name": "RL_ANON", "namespace_id": "1101", "simple": { "limit": 20, "period": 60 } },
-        { "name": "RL_AUTH", "namespace_id": "1102", "simple": { "limit": 120, "period": 60 } }
+        { "name": "RL_AUTH", "namespace_id": "1102", "simple": { "limit": 120, "period": 60 } },
+        { "name": "RL_DOMAIN", "namespace_id": "1103", "simple": { "limit": 60, "period": 60 } }
       ]
     }
   }

@@ -16,7 +16,7 @@ Why one Worker: every channel (URL, web, REST, CLI, MCP, WebMCP) must return byt
 | R2 | `MEDIA` | Media, OG images, CLI tarball, served from `CDN_URL` |
 | Vectorize | `VECTORS` | Chunk embeddings, metadata `user_id`, `doc_id` |
 | Workers AI | `AI` | Embeddings, query fan-out fallback, `toMarkdown` for files |
-| Rate limiting | `RL_ANON`, `RL_AUTH` | Per-minute limits |
+| Rate limiting | `RL_ANON`, `RL_AUTH`, `RL_DOMAIN` | Per-minute limits per caller, and per fetched site |
 | Static assets | `ASSETS` | `public/` (built CSS/JS, icons, brand) |
 
 Bindings and secrets are typed in `src/env.ts`; per-environment values are in `wrangler.jsonc`.

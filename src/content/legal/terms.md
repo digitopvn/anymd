@@ -33,11 +33,21 @@ You decide which URLs you send to the Service, so you are responsible for them.
 
 We do not review the content you convert and we do not endorse it.
 
+## How we fetch content, and site owners' choices
+
+anymd fetches a page only when you ask for that URL. It identifies itself with the `anymd` user agent and never presents itself as a regular browser.
+
+- **robots.txt.** Before fetching a page itself, the Service checks the site's robots.txt for the `anymd` token (or `*`) and does not fetch pages it disallows.
+- **Opt-outs.** Site owners can ask us to block their domain. Blocked domains cannot be converted through any channel, including from cache.
+- **Per-site limits.** We cap how often the Service fetches from any single site, shared across all users.
+
+A conversion refused for any of these reasons does not use credits. You must not try to get around them, for example by rewriting URLs, using mirrors or proxies of a blocked site, or spreading requests across accounts. Site owners can read how this works, opt out, or report abuse on our [Site Owners & Abuse page](https://anymd.cc/legal/abuse).
+
 ## Acceptable use
 
 You agree not to use the Service to:
 
-- **Bypass access controls.** No circumventing paywalls, logins, CAPTCHAs, or other technical measures, and no converting content that a site's terms or robots rules prohibit you from accessing in the way you are accessing it.
+- **Bypass access controls.** No circumventing paywalls, logins, CAPTCHAs, robots.txt, site opt-outs, per-site limits or other technical measures, and no converting content that a site's terms prohibit you from accessing in the way you are accessing it.
 - **Scrape for spam or abuse.** No harvesting email addresses or personal data for unsolicited messages, no building spam or content-farm pipelines, and no mass-republishing other people's work without permission.
 - **Break the law.** No infringing intellectual property, violating privacy or data-protection law, or processing content that is illegal to possess.
 - **Attack anyone.** No using the Service to probe, overload, or attack third-party sites, and no pointing it at internal or private network addresses.
