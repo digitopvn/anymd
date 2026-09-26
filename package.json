@@ -1,0 +1,45 @@
+{
+  "name": "anymd",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Convert anything on the internet to clean Markdown — with a searchable personal library, API, CLI, MCP and WebMCP.",
+  "license": "MIT",
+  "author": "Digitop.ai <hello@digitop.ai>",
+  "repository": "github:digitopvn/anymd",
+  "homepage": "https://anymd.cc",
+  "scripts": {
+    "build:css": "tailwindcss -i ./src/styles/app.css -o ./public/assets/app.css --minify",
+    "build:js": "node scripts/build-client.mjs",
+    "build": "npm run build:css && npm run build:js",
+    "dev": "npm run build && wrangler dev --env staging",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate:staging": "wrangler d1 migrations apply anymd-staging --remote --env staging",
+    "db:migrate:production": "wrangler d1 migrations apply anymd-production --remote --env production",
+    "secrets:staging": "node --env-file=.env scripts/sync-secrets.mjs staging",
+    "secrets:production": "node --env-file=.env scripts/sync-secrets.mjs production",
+    "polar:setup": "node --env-file=.env scripts/polar-setup.mjs",
+    "deploy:staging": "npm run build && wrangler deploy --env staging",
+    "deploy:production": "npm run build && wrangler deploy --env production"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^1.1.0",
+    "defuddle": "^0.19.4",
+    "hono": "^4.13.9",
+    "linkedom": "^0.18.13",
+    "marked": "^18.0.14",
+    "turndown": "^7.2.4",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260926.1",
+    "@tailwindcss/cli": "^4.3.3",
+    "@types/turndown": "^5.0.6",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
+    "wrangler": "^4.141.0"
+  }
+}

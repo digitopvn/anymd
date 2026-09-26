@@ -1,0 +1,28 @@
+{
+  "name": "@digitop/anymd-cli",
+  "version": "0.1.0",
+  "description": "Convert any URL or file to clean Markdown with anymd.cc, and search your Markdown library from the terminal.",
+  "type": "module",
+  "bin": {
+    "anymd": "bin/anymd.mjs"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "markdown",
+    "cli",
+    "anymd",
+    "html-to-markdown",
+    "mcp"
+  ],
+  "homepage": "https://anymd.cc",
+  "license": "MIT"
+}

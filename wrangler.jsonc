@@ -1,0 +1,62 @@
+{
+  "name": "anymd",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": { "enabled": true },
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
+  "env": {
+    "staging": {
+      "name": "anymd-staging",
+      "routes": [{ "pattern": "staging.anymd.cc", "custom_domain": true }],
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "PUBLIC_URL": "https://staging.anymd.cc",
+        "CDN_URL": "https://cdn.anymd.cc",
+        "GITHUB_REPO": "digitopvn/anymd",
+        "POLAR_SERVER": "sandbox",
+        "ADMIN_EMAILS": "hello@digitop.ai"
+      },
+      "d1_databases": [{ "binding": "DB", "database_name": "anymd-staging", "database_id": "0799bf4e-4051-4e56-a70d-cff01a1b4a77", "migrations_dir": "migrations" }],
+      "kv_namespaces": [
+        { "binding": "OAUTH_KV", "id": "6ac81be07b2f4208aac97e86e04bc410" },
+        { "binding": "CACHE", "id": "56e7ad94e476407cb6d6ee9798b9f9ef" }
+      ],
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "anymd" }],
+      "vectorize": [{ "binding": "VECTORS", "index_name": "anymd-chunks-staging" }],
+      "ai": { "binding": "AI" },
+      "ratelimits": [
+        { "name": "RL_ANON", "namespace_id": "2101", "simple": { "limit": 20, "period": 60 } },
+        { "name": "RL_AUTH", "namespace_id": "2102", "simple": { "limit": 120, "period": 60 } }
+      ]
+    },
+    "production": {
+      "name": "anymd",
+      "routes": [
+        { "pattern": "anymd.cc", "custom_domain": true },
+        { "pattern": "www.anymd.cc", "custom_domain": true }
+      ],
+      "vars": {
+        "ENVIRONMENT": "production",
+        "PUBLIC_URL": "https://anymd.cc",
+        "CDN_URL": "https://cdn.anymd.cc",
+        "GITHUB_REPO": "digitopvn/anymd",
+        "POLAR_SERVER": "production",
+        "ADMIN_EMAILS": "hello@digitop.ai"
+      },
+      "d1_databases": [{ "binding": "DB", "database_name": "anymd-production", "database_id": "fdf71d54-5bc3-492f-81ed-5346b12039bf", "migrations_dir": "migrations" }],
+      "kv_namespaces": [
+        { "binding": "OAUTH_KV", "id": "798a826064e144ffa319f4ff4cb3d241" },
+        { "binding": "CACHE", "id": "5b648d311c6146d4b2bbdbb1d0678d99" }
+      ],
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "anymd" }],
+      "vectorize": [{ "binding": "VECTORS", "index_name": "anymd-chunks-production" }],
+      "ai": { "binding": "AI" },
+      "ratelimits": [
+        { "name": "RL_ANON", "namespace_id": "1101", "simple": { "limit": 20, "period": 60 } },
+        { "name": "RL_AUTH", "namespace_id": "1102", "simple": { "limit": 120, "period": 60 } }
+      ]
+    }
+  }
+}

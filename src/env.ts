@@ -1,0 +1,73 @@
+import type { OAuthHelpers } from '@cloudflare/workers-oauth-provider';
+
+export interface Env {
+  ENVIRONMENT: 'staging' | 'production' | 'development';
+  PUBLIC_URL: string;
+  CDN_URL: string;
+  GITHUB_REPO: string;
+  POLAR_SERVER: 'sandbox' | 'production';
+
+  DB: D1Database;
+  OAUTH_KV: KVNamespace;
+  CACHE: KVNamespace;
+  MEDIA: R2Bucket;
+  VECTORS: VectorizeIndex;
+  AI: Ai;
+  ASSETS: Fetcher;
+  RL_ANON: RateLimit;
+  RL_AUTH: RateLimit;
+  OAUTH_PROVIDER: OAuthHelpers;
+
+  // Secrets (all optional; features degrade gracefully when absent)
+  ADMIN_EMAILS?: string;
+  POLAR_ACCESS_TOKEN?: string;
+  POLAR_WEBHOOK_SECRET?: string;
+  TYPESAFE_API_KEY?: string;
+  VIDCAP_API_KEY?: string;
+  GITHUB_TOKEN?: string;
+  OPENROUTER_API_KEY?: string;
+  RESEND_API_KEY?: string;
+  RAPIDAPI_KEY?: string;
+}
+
+/** The part of ExecutionContext this app uses; Hono's and workers-types' contexts both satisfy it. */
+export interface WaitUntil {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+export interface RateLimit {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
+/** Who is calling. Resolved once per request by the auth middleware. */
+export interface Principal {
+  kind: 'anonymous' | 'session' | 'api_key' | 'oauth';
+  userId: string | null;
+  role: RoleName;
+  scopes: Scope[];
+  apiKeyId?: string;
+  clientId?: string;
+}
+
+export type RoleName = 'owner' | 'admin' | 'editor' | 'author' | 'viewer' | 'user';
+
+export type Scope =
+  | 'convert'
+  | 'library:read'
+  | 'library:write'
+  | 'usage:read'
+  | 'keys:manage'
+  | 'content:read'
+  | 'content:write'
+  | 'content:publish'
+  | 'pages:read'
+  | 'pages:write'
+  | 'pages:publish'
+  | 'settings:write'
+  | 'users:read'
+  | 'users:write';
+
+export type AppBindings = {
+  Bindings: Env;
+  Variables: { principal: Principal; user: import('./auth/identity').UserRow | null };
+};

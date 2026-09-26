@@ -1,0 +1,13 @@
+node_modules/
+.wrangler/
+.dev.vars*
+.env
+.env.*
+!.env.example
+public/assets/app.css
+public/assets/js/
+dist/
+*.log
+.DS_Store
+coverage/
+.data/

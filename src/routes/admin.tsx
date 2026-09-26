@@ -1,0 +1,213 @@
+/**
+ * Admin screens. Access follows the session principal's scopes (derived from the role), the same
+ * scopes the API and MCP enforce, so a screen never offers an action its backend would refuse.
+ */
+import { Hono, type MiddlewareHandler } from 'hono';
+import type { Child } from 'hono/jsx';
+import type { UserRow } from '../auth/identity';
+import { getUser } from '../auth/identity';
+import { requireUserPage, sameOriginWrites, type AppContext } from '../auth/middleware';
+import { isRole, roleAtLeast } from '../auth/roles';
+import { PLANS, type PlanId } from '../billing/plans';
+import { createPage, getPage, listPages, PageError, TEMPLATES } from '../cms/pages';
+import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost, type PostRow } from '../cms/posts';
+import { BUNDLED_POSTS } from '../content';
+import type { AppBindings, Scope } from '../env';
+import { getSettings, putSettings } from '../lib/settings';
+import { newId } from '../lib/util';
+import { PageEditorPage, PagesListPage, PostEditorPage, PostsListPage, SETTING_FIELDS, SettingsPage, UsersPage } from '../views/admin';
+import { DashShell } from '../views/dashboard';
+import { formData, renderMessage, renderPage } from './shared';
+
+export const adminRoutes = new Hono<AppBindings>();
+
+adminRoutes.use('*', requireUserPage, sameOriginWrites);
+
+const can = (c: AppContext, scope: Scope) => c.get('principal').scopes.includes(scope);
+
+function needs(scope: Scope): MiddlewareHandler<AppBindings> {
+  return async (c, next) => {
+    if (!can(c, scope)) return renderMessage(c, 403, 'Not allowed', `Your role does not include ${scope}. Ask an admin to change your role.`, <a class="btn btn-dark" href="/dashboard">Back to dashboard</a>);
+    await next();
+  };
+}
+
+function shell(c: AppContext, current: string, title: string, children: Child, opts: { actions?: Child; status?: number; scripts?: string[]; variant?: 'app' | 'bare' } = {}) {
+  return renderPage(
+    c,
+    { title, path: current, noindex: true, markdownPath: null, variant: opts.variant ?? 'app', scripts: opts.scripts },
+    <DashShell user={c.get('user')!} current={current} title={title} actions={opts.actions}>
+      {children}
+    </DashShell>,
+    opts.status,
+  );
+}
+
+adminRoutes.get('/', (c) => c.redirect(can(c, 'pages:read') ? '/admin/pages' : '/dashboard'));
+
+// ─── Pages (builder) ────────────────────────────────────────────────────────
+
+async function pagesList(c: AppContext, error?: string, status = 200) {
+  const pages = (await listPages(c.env)).filter((p) => p.status !== 'archived');
+  return shell(c, '/admin/pages', 'Pages', <PagesListPage pages={pages} canWrite={can(c, 'pages:write')} error={error} />, { status });
+}
+
+adminRoutes.get('/pages', needs('pages:read'), (c) => pagesList(c));
+
+adminRoutes.post('/pages', needs('pages:write'), async (c) => {
+  const f = await formData(c);
+  const title = (f.title ?? '').trim();
+  if (!title) return pagesList(c, 'Give the page a title.', 400);
+  const template = f.template && TEMPLATES[f.template] ? f.template : 'blank';
+  try {
+    const row = await createPage(c.env, c.get('principal'), { title: title.slice(0, 140), slug: (f.slug || title).slice(0, 80), template });
+    return c.redirect(`/admin/pages/${row.id}`);
+  } catch (e) {
+    if (e instanceof PageError) return pagesList(c, e.message, e.status);
+    throw e;
+  }
+});
+
+adminRoutes.get('/pages/:id', needs('pages:read'), async (c) => {
+  const page = await getPage(c.env, c.req.param('id'));
+  if (!page || page.status === 'archived') return renderMessage(c, 404, 'Page not found', 'It may have been archived.', <a class="btn btn-dark" href="/admin/pages">All pages</a>);
+  // The editor is a full-screen tool: no dashboard chrome.
+  return renderPage(c, { title: `Edit · ${page.title}`, path: `/admin/pages/${page.id}`, noindex: true, markdownPath: null, variant: 'bare', scripts: ['/assets/js/editor.js'] }, <PageEditorPage page={page} canPublish={can(c, 'pages:publish')} />);
+});
+
+// ─── Blog posts ─────────────────────────────────────────────────────────────
+
+adminRoutes.get('/posts', needs('content:read'), async (c) => shell(c, '/admin/posts', 'Blog posts', <PostsListPage posts={await listAllPosts(c.env)} canWrite={can(c, 'content:write')} />));
+
+function editor(c: AppContext, post: PostRow | null, extra: { error?: string; notice?: string } = {}, status = 200) {
+  return shell(c, '/admin/posts', post ? `Edit post` : 'New post', <PostEditorPage post={post} canPublish={can(c, 'content:publish')} error={extra.error} notice={extra.notice} />, { status, scripts: ['/assets/js/md-preview.js'] });
+}
+
+/** Form fields → PostInput (tags are comma or space separated in the form). */
+function postInput(f: Record<string, string>) {
+  return PostInputSchema.safeParse({
+    title: (f.title ?? '').trim(),
+    markdown: f.markdown ?? '',
+    slug: f.slug?.trim() || undefined,
+    excerpt: f.excerpt?.trim() || '',
+    category: ['article', 'announcement', 'guide'].includes(f.category) ? f.category : 'article',
+    tags: (f.tags ?? '')
+      .split(/[,\s]+/)
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 12),
+    cover_url: f.cover_url?.trim() || '',
+    seo_title: f.seo_title?.trim() || '',
+    seo_description: f.seo_description?.trim() || '',
+  });
+}
+
+const issueText = (issues: { path: PropertyKey[]; message: string }[]) => issues.map((i) => `${String(i.path[0] ?? 'form')}: ${i.message}`).join(' · ');
+
+adminRoutes.get('/posts/new', needs('content:write'), (c) => editor(c, null));
+
+adminRoutes.post('/posts/new', needs('content:write'), async (c) => {
+  const f = await formData(c);
+  const parsed = postInput(f);
+  if (!parsed.success) return editor(c, null, { error: issueText(parsed.error.issues) }, 422);
+  try {
+    const row = await createPost(c.env, c.get('principal'), parsed.data);
+    if (f.intent === 'publish' && can(c, 'content:publish')) await setPostPublished(c.env, c.get('principal'), row.id, true);
+    return c.redirect(`/admin/posts/${row.id}?saved=${f.intent === 'publish' ? 'published' : 'draft'}`);
+  } catch (e) {
+    return editor(c, null, { error: (e as Error).message }, (e as { status?: number }).status ?? 400);
+  }
+});
+
+/** Copy a bundled (file-based) post into the database so it can be edited. */
+adminRoutes.post('/posts/fork', needs('content:write'), async (c) => {
+  const f = await formData(c);
+  const existing = await getPostRow(c.env, f.slug ?? '');
+  if (existing) return c.redirect(`/admin/posts/${existing.id}`);
+  const src = BUNDLED_POSTS.find((p) => p.slug === f.slug);
+  if (!src) return renderMessage(c, 404, 'Post not found', 'That bundled post does not exist.');
+  const row = await createPost(c.env, c.get('principal'), {
+    slug: src.slug,
+    title: src.title,
+    markdown: src.markdown,
+    excerpt: src.excerpt,
+    category: (['article', 'announcement', 'guide'].includes(src.category) ? src.category : 'article') as 'article',
+    tags: src.tags,
+    cover_url: src.coverUrl,
+    seo_title: src.seoTitle,
+    seo_description: src.seoDescription,
+  });
+  // Keep the original date so the fork does not jump to the top of the blog once published.
+  await c.env.DB.prepare('UPDATE posts SET published_at = ?, author_name = ? WHERE id = ?').bind(src.publishedAt || null, src.authorName, row.id).run();
+  return c.redirect(`/admin/posts/${row.id}?saved=forked`);
+});
+
+const SAVED: Record<string, string> = {
+  draft: 'Draft saved.',
+  published: 'Published — it is live on the blog.',
+  unpublished: 'Unpublished — the post is a draft again.',
+  forked: 'Copied into the editor. Publish to replace the bundled version.',
+};
+
+adminRoutes.get('/posts/:id', needs('content:read'), async (c) => {
+  const post = await getPostRow(c.env, c.req.param('id'));
+  if (!post) return renderMessage(c, 404, 'Post not found', 'It may have been deleted.', <a class="btn btn-dark" href="/admin/posts">All posts</a>);
+  return editor(c, post, { notice: SAVED[c.req.query('saved') ?? ''] });
+});
+
+adminRoutes.post('/posts/:id', needs('content:write'), async (c) => {
+  const f = await formData(c);
+  const actor = c.get('principal');
+  const post = await getPostRow(c.env, c.req.param('id'));
+  if (!post) return renderMessage(c, 404, 'Post not found', 'It may have been deleted.');
+  if (f.intent === 'delete') {
+    await deletePost(c.env, actor, post.id);
+    return c.redirect('/admin/posts');
+  }
+  if ((f.intent === 'publish' || f.intent === 'unpublish') && !can(c, 'content:publish')) return editor(c, post, { error: 'Your role cannot publish. Save the draft and ask an editor.' }, 403);
+  const parsed = postInput(f);
+  if (!parsed.success) return editor(c, { ...post, ...f } as PostRow, { error: issueText(parsed.error.issues) }, 422);
+  try {
+    await updatePost(c.env, actor, post.id, parsed.data);
+  } catch (e) {
+    return editor(c, { ...post, ...f } as PostRow, { error: (e as Error).message.includes('UNIQUE') ? 'That slug is already used by another post.' : (e as Error).message }, 409);
+  }
+  if (f.intent === 'publish') await setPostPublished(c.env, actor, post.id, true);
+  if (f.intent === 'unpublish') await setPostPublished(c.env, actor, post.id, false);
+  return c.redirect(`/admin/posts/${post.id}?saved=${f.intent === 'publish' ? 'published' : f.intent === 'unpublish' ? 'unpublished' : 'draft'}`);
+});
+
+// ─── Users & roles ──────────────────────────────────────────────────────────
+
+adminRoutes.get('/users', needs('users:read'), async (c) => {
+  const { results } = await c.env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 500').all<UserRow>();
+  return shell(c, '/admin/users', 'Users & roles', <UsersPage users={results} canWrite={can(c, 'users:write')} me={c.get('user')!.id} />);
+});
+
+adminRoutes.post('/users/:id', needs('users:write'), async (c) => {
+  const f = await formData(c);
+  const actor = c.get('principal');
+  const target = await getUser(c.env, c.req.param('id'));
+  if (!target) return renderMessage(c, 404, 'User not found', 'The account may have been deleted.');
+  if (target.id === actor.userId) return renderMessage(c, 403, 'Not allowed', 'You cannot change your own role or plan.', <a class="btn btn-dark" href="/admin/users">Back</a>);
+  const role = f.role && isRole(f.role) ? f.role : undefined;
+  const plan = PLANS.some((p) => p.id === f.plan) ? (f.plan as PlanId) : undefined;
+  if (role && role !== target.role && actor.role !== 'owner' && (roleAtLeast(role, actor.role) || roleAtLeast(target.role, actor.role))) {
+    return renderMessage(c, 403, 'Not allowed', 'You can only manage roles below your own.', <a class="btn btn-dark" href="/admin/users">Back</a>);
+  }
+  await c.env.DB.prepare('UPDATE users SET role = COALESCE(?, role), plan = COALESCE(?, plan), updated_at = ? WHERE id = ?').bind(role ?? null, plan ?? null, Date.now(), target.id).run();
+  await c.env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)').bind(newId('aud_'), `${actor.kind}:${actor.userId}`, 'user.update', target.id, JSON.stringify({ role, plan }), Date.now()).run();
+  return c.redirect('/admin/users');
+});
+
+// ─── Settings ───────────────────────────────────────────────────────────────
+
+adminRoutes.get('/settings', needs('settings:write'), async (c) => shell(c, '/admin/settings', 'Settings', <SettingsPage values={await getSettings(c.env)} notice={c.req.query('saved') ? 'Settings saved. Public pages pick them up within a minute.' : undefined} />));
+
+adminRoutes.post('/settings', needs('settings:write'), async (c) => {
+  const f = await formData(c);
+  const values: Record<string, string> = {};
+  for (const field of SETTING_FIELDS) values[field.key] = (f[field.key] ?? '').trim().slice(0, 1000);
+  await putSettings(c.env, values);
+  return c.redirect('/admin/settings?saved=1');
+});
