@@ -165,7 +165,7 @@ function Header({ user, landing }: { user?: LayoutProps['user']; landing?: boole
         {landing ? null : (
           <nav class="hidden lg:flex items-center gap-1 text-[15px] font-medium text-ink-2" aria-label="Main">
             {NAV.map((n) => (
-              <a href={n.href} class="rounded-lg px-3 py-2 hover:bg-paper-2">
+              <a href={n.href} class="whitespace-nowrap rounded-lg px-2 py-2 hover:bg-paper-2 xl:px-3">
                 {n.label}
               </a>
             ))}
@@ -175,7 +175,7 @@ function Header({ user, landing }: { user?: LayoutProps['user']; landing?: boole
           <ThemeToggle />
           <a href="https://github.com/digitopvn/anymd" class="hidden sm:inline-flex btn btn-ghost btn-sm" rel="noopener" aria-label="GitHub repository">
             <Icon name="github" size={16} />
-            <span class="hidden md:inline">Star</span>
+            <span class="hidden md:inline lg:hidden xl:inline">Star</span>
           </a>
           {user ? (
             <a href="/dashboard" class="btn btn-dark btn-sm">
