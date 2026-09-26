@@ -137,7 +137,7 @@ const refId = (r: Ref) => (typeof r === 'string' ? r : r?.id ?? null);
 
 async function resolveUser(env: Env, metadata: Record<string, unknown> | null | undefined, customer: Ref): Promise<string | null> {
   const ref = metadata?.referenceId;
-  if (typeof ref === 'string' && ref) return ref;
+  if (typeof ref === 'string' && ref && (await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(ref).first())) return ref;
   const customerId = refId(customer);
   if (customerId) {
     const row = await env.DB.prepare('SELECT id FROM users WHERE creem_customer_id = ?').bind(customerId).first<{ id: string }>();
