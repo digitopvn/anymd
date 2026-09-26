@@ -12,7 +12,7 @@ anymd.cc (the "Service") is operated by [Digitop.ai](https://digitop.ai) ("we", 
 
 - Use anymd.cc without an account and we cache the result briefly (up to 1 hour). It does not go into any library.
 - Sign in and every conversion is saved to **your** library so you can search it later. You can export it or delete it any time.
-- We do not sell your data.
+- We do not sell your data, and we do not use your library, conversions or searches to train AI models.
 - We share data only with the processors listed below, and only what they need.
 
 ## What we collect
@@ -59,7 +59,8 @@ We use a small set of processors. Each receives only what it needs for its job.
 - **FxTwitter** — receives the post identifier when you convert an X/Twitter URL.
 - **YouTube oEmbed, RapidAPI transcript providers and VidCap** — receive the video URL or identifier when you convert a YouTube link.
 - **Hacker News API** — receives the item identifier when you convert a Hacker News thread.
-- **TypeSafe** — only if you turn on the Jev decider for search. It receives a sanitized version of your search query and the titles of the candidate results. It never receives document bodies.
+- **OpenRouter** — routes two small AI calls for search. It receives the text of your search query (up to 300 characters) to suggest alternative phrasings, and, if you turn on the Jev decider, the same data TypeSafe receives below. It never receives document bodies.
+- **TypeSafe** — only if you turn on the Jev decider for search. It receives a sanitized version of your search query and the titles of the candidate results, directly or through OpenRouter. It never receives document bodies.
 
 When you convert an ordinary web page, we fetch it from the site that hosts it. That site will see a request from our infrastructure, not from you.
 
@@ -100,7 +101,9 @@ The Service is not directed at children under 16, and we do not knowingly collec
 
 ## AI and your content
 
-AI features (document and image conversion, embeddings, and query fan-out) run on Cloudflare Workers AI, on Cloudflare's infrastructure, to perform the conversion or search you asked for. The only other AI service involved is TypeSafe, and only when you enable the Jev decider, as described above.
+**We do not train AI models on your content.** Your library, your conversions, your search queries and your usage history are never used by us to train, fine-tune or evaluate AI models, and we do not sell or license them to anyone for that purpose.
+
+AI features run only to perform the conversion or search you asked for. Document and image conversion and embeddings run on Cloudflare Workers AI, on Cloudflare's infrastructure. Search query rewriting runs through OpenRouter when it is configured, with Workers AI as the fallback, and receives only your query text. The Jev decider uses TypeSafe, only when you enable it. Only Cloudflare Workers AI processes document content. The other services receive search text and result titles, never document bodies.
 
 ## Changes to this policy
 

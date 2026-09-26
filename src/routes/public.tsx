@@ -128,7 +128,7 @@ publicRoutes.get('/blog/:slug{[a-z0-9-]+}', async (c) => {
           author: { '@type': 'Person', name: post.authorName, url: 'https://zuey.me' },
           publisher: { '@type': 'Organization', name: SITE.owner, url: SITE.ownerUrl },
           mainEntityOfPage: `${origin}/blog/${post.slug}`,
-          image: post.coverUrl || `${origin}/og/share.jpg`,
+          image: post.coverUrl || `${origin}/og/share.jpg?v=2`,
           keywords: post.tags.join(', '),
         },
       ],

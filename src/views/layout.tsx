@@ -67,7 +67,7 @@ export function Layout(props: LayoutProps) {
   const { origin, title, path } = props;
   const description = props.description || SITE.description;
   const canonical = origin + path;
-  const image = props.image || `${origin}/og/share.jpg`;
+  const image = props.image || `${origin}/og/share.jpg?v=2`;
   const mdPath = props.markdownPath === null ? null : props.markdownPath || markdownPathFor(path);
   const fullTitle = title.includes('anymd') ? title : `${title} · anymd`;
   const variant = props.variant ?? 'default';
