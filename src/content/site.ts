@@ -3,9 +3,10 @@
 export const SITE = {
   name: 'anymd',
   domain: 'anymd.cc',
-  tagline: 'Convert anything on the internet to Markdown.',
+  tagline: 'The web context layer for AI agents.',
+  headline: 'Turn the web into context your agents can use.',
   description:
-    'anymd turns any URL — web pages, X posts, YouTube, GitHub, Reddit, Hacker News, PDFs, images — into clean Markdown for AI agents, with a searchable personal library, API, CLI, MCP and WebMCP.',
+    'anymd is the web context layer for AI agents: it reads public web content, normalizes it into structured Markdown, remembers what matters in a private searchable library, and makes it available anywhere through MCP, API and CLI.',
   github: 'https://github.com/digitopvn/anymd',
   email: 'hello@digitop.ai',
   owner: 'Digitop.ai',
@@ -37,6 +38,18 @@ export const SOURCES = [
 ];
 
 export const ROADMAP_SOURCES = ['Audio & podcasts', 'Any video (Whisper)', 'Facebook', 'LinkedIn', 'Threads', 'TikTok', 'Notion', 'Google Docs', 'EPUB'];
+
+/** Ingestion rules the service enforces today (src/convert/robots.ts, optouts.ts; terms and /legal/abuse). */
+export const RESPONSIBLE = [
+  { icon: 'user', title: 'Requested URLs only', body: 'anymd reads the URLs a user or their agent asks for. It does not crawl or discover pages on its own.' },
+  { icon: 'globe', title: 'Public content only', body: 'Only pages that anyone can reach on the open web, without an account.' },
+  { icon: 'key', title: 'No bypassing access', body: 'No login, paywall or CAPTCHA bypass. Terms forbid users from trying, too.' },
+  { icon: 'shield', title: 'Respects robots.txt', body: 'Checked before anymd fetches a page itself, for the anymd token or *. Disallowed pages are refused.' },
+  { icon: 'lock', title: 'Domain opt-out', body: 'Site owners can block their domain on every channel, including cached results.' },
+  { icon: 'clock', title: 'Per-site rate limits', body: 'Each site has a shared per-minute fetch budget, so agents never hammer a server.' },
+  { icon: 'eye', title: 'Private library', body: 'What your agents read is saved to your account only. Never shared, never used to train models.' },
+  { icon: 'send', title: 'Takedown process', body: 'Abuse reports and takedown requests go to a human at hello@digitop.ai.' },
+];
 
 export const ECOSYSTEM = [
   {
@@ -118,23 +131,27 @@ export const FOUNDER = {
 export const FAQ = [
   {
     q: 'Is anymd free?',
-    a: 'Yes. Anyone can prefix a URL with anymd.cc/ — no account, up to 50 conversions a day. A free account gives you 500 credits a month plus a searchable library. Paid plans start at $9/month.',
+    a: 'Yes. Anyone can prefix a URL with anymd.cc/ — no account, up to 50 reads a day. A free account gives you 500 credits a month plus a private, searchable context library. Paid plans start at $9/month.',
   },
   {
     q: 'What is a credit?',
-    a: 'One web page = 1 credit. A YouTube video with transcript or a PDF/Office file = 3 credits. An image = 5 credits. Cached results, library search and MCP reads are free.',
+    a: 'Credits pay for new source processing, priced by complexity: a web page is 1 credit, a YouTube transcript or a PDF/Office file is 3, an image is 5. Reusing what your agents already know is free: cached reads, library search and MCP recall never cost credits.',
   },
   {
-    q: 'How is this different from copying the page text?',
-    a: 'anymd runs a proven content-extraction engine plus site-specific adapters for X, YouTube, GitHub, Reddit and Hacker News. You get the article, not the nav, cookie banners, ads or related posts, with headings, links, tables, code and footnotes intact.',
+    q: 'How is this different from fetching the HTML?',
+    a: 'anymd is a source-aware reader: a proven content-extraction engine plus dedicated paths for sources such as GitHub, YouTube, Reddit, Hacker News, X and documents. Your agent gets the content, not the nav, cookie banners, ads or related posts, as structured Markdown with metadata, headings, links, tables, code and footnotes intact.',
   },
   {
-    q: 'Can my AI agent use it?',
-    a: 'That is the point. Use the HTTP API, the CLI, or connect the MCP server at anymd.cc/mcp (OAuth or API key). In the browser, anymd exposes WebMCP tools so in-page agents can convert and search too.',
+    q: 'How do my agents use it?',
+    a: 'Connect the MCP server at anymd.cc/mcp (OAuth or API key) and your agent gets read_url, search_library and get_document tools. Apps use the REST API, pipelines use the CLI, and in-browser agents get WebMCP tools on anymd.cc.',
   },
   {
-    q: 'What happens to what I convert?',
-    a: 'Signed-in conversions are saved to your private library so you and your agents can search them. Nothing is shared, nothing is used to train models, and you can delete any document — or your whole account — at any time.',
+    q: 'What happens to what my agents read?',
+    a: 'Signed-in reads are saved to your private library so you and your agents can search them later. Nothing is shared, nothing is used to train models, and you can delete any document — or your whole account — at any time.',
+  },
+  {
+    q: 'Does anymd crawl websites or get past paywalls?',
+    a: 'No. anymd only reads URLs that a user or their agent asks for, and only content that is publicly reachable. It follows robots.txt, honours domain opt-outs, limits how often it hits each site, and never bypasses logins, paywalls or CAPTCHAs.',
   },
   {
     q: 'Is it open source?',

@@ -59,7 +59,7 @@ publicRoutes.get('/', async (c) => {
   return renderPage(
     c,
     {
-      title: 'anymd — Convert anything on the internet to Markdown',
+      title: `anymd — ${SITE.tagline.replace(/\.$/, '')}`,
       description: SITE.description,
       path: '/',
       pageActions: true,
@@ -259,7 +259,7 @@ publicRoutes.get('/llms.txt', async (c) => {
 
 > ${SITE.description}
 
-anymd converts any URL to Markdown. Prefix a link: \`${origin}/<url>\` returns \`text/markdown\`; add \`?format=json\` for JSON. Every page on this site has a Markdown twin — append \`.md\` to its URL.
+Agents read public web content through anymd as structured Markdown and recall it later from a private library. Quick read: prefix a link, \`${origin}/<url>\` returns \`text/markdown\`; add \`?format=json\` for JSON. MCP: \`${origin}/mcp\` with the \`read_url\` and \`search_library\` tools. Every page on this site has a Markdown twin — append \`.md\` to its URL.
 
 ## Docs
 

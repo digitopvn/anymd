@@ -1,12 +1,12 @@
 ---
 title: "Quickstart"
-description: "Convert your first URL, create an API key, search your library and plug anymd into your agent in five minutes."
+description: "Read your first URL, create an API key, search your library and connect your agent over MCP in five minutes."
 updated: "2026-09-26"
 ---
 
 Five minutes, five steps. Step 1 needs nothing but a terminal or a browser.
 
-## 1. Convert a URL (no account)
+## 1. Read a URL (no account)
 
 Prefix any link with `anymd.cc/`:
 

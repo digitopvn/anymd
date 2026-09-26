@@ -36,7 +36,7 @@ export function PricingPage({ checkoutReady }: { checkoutReady: boolean }) {
   return (
     <>
       <OfferBar />
-      <PageHero eyebrow="Pricing" title="Pay for pages, not seats." lead="Start free with 500 credits a month. Upgrade when your agents get hungry. Usage-based, predictable, cancel anytime." />
+      <PageHero eyebrow="Pricing" title="Pay when your agents learn something new." lead="Reusing what they already know is free. Start with 500 credits a month, upgrade when your agents get hungry. Usage-based, predictable, cancel anytime." />
       <section class="section !pt-12">
         <div class="container-x">
           <PricingCards />
@@ -50,7 +50,7 @@ export function PricingPage({ checkoutReady }: { checkoutReady: boolean }) {
       <section class="section bg-paper-2/60">
         <div class="container-x grid gap-12 lg:grid-cols-2">
           <div>
-            <SectionHeader eyebrow="Credits" title="Simple math." lead="Every conversion costs a fixed number of credits by source type. Cached results and search are free." />
+            <SectionHeader eyebrow="Credits" title="Simple math." lead="Processing a new source costs a fixed number of credits by its complexity. Cached reads and library search are free." />
             <div class="reveal mt-8">
               <CreditTable />
             </div>

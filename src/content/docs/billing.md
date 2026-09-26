@@ -4,7 +4,7 @@ description: "How anymd credits work, what each source costs, plans, overage, of
 updated: "2026-09-26"
 ---
 
-anymd bills in **credits**. One credit is one web page. Heavier sources cost more, and anything that doesn't do new conversion work is free.
+anymd bills in **credits**, and you pay when your agents learn something new. Processing a new source uses credits by its complexity (one credit is one web page); reusing what your agents already know is free: cached reads, library search and MCP recall cost nothing.
 
 ## What things cost
 

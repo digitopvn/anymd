@@ -44,7 +44,7 @@ const OPS: Record<string, Record<string, Op>> = {
   '/me': { get: { summary: 'Current account', tag: 'Account', scope: '', ok: ref('Me') } },
   '/convert': {
     post: {
-      summary: 'Convert a URL to Markdown',
+      summary: 'Read a URL as Markdown',
       description: 'Fetches the URL, extracts the main content (with dedicated adapters for X, YouTube, GitHub, Reddit, Hacker News and documents) and returns Markdown. Results are cached for an hour; cached hits cost 0 credits. Anonymous calls are allowed at a small daily limit.',
       tag: 'Convert',
       scope: 'convert',
@@ -269,7 +269,7 @@ export function buildOpenApi(origin: string) {
     info: {
       title: 'anymd API',
       version: '1.0.0',
-      summary: 'Any URL to clean Markdown, plus a searchable library.',
+      summary: 'The web context layer for AI agents: read public web content as structured Markdown and recall it from a private, searchable library.',
       description:
         'Authenticate with an API key from https://anymd.cc/dashboard/keys: `Authorization: Bearer amd_…`. Every response includes `X-Anymd-Trace`; conversions also return `X-Anymd-Credits` and `X-Anymd-Cache`. Errors look like `{"error":{"code","message"}}`.\n\nNo-code shortcut: prefix any URL with `https://anymd.cc/` to get Markdown.',
       contact: { name: 'Digitop', email: 'hello@digitop.ai', url: 'https://digitop.ai' },

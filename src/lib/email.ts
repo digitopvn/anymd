@@ -34,7 +34,7 @@ export function welcomeEmail(env: Env, name: string) {
     subject: 'Welcome to anymd — your first 500 credits are ready',
     html: layout(
       `Welcome, ${name}`,
-      `<p style="line-height:1.6">Paste any URL and get clean Markdown back. Everything you convert while signed in lands in your searchable library — ready for your agents over MCP.</p>
+      `<p style="line-height:1.6">anymd turns public web content into structured context for your agents. Everything they read while signed in lands in your private, searchable library — ready over MCP, API and CLI.</p>
        <p style="line-height:1.6">Quick start: prefix any link with <code>anymd.cc/</code>.</p>`,
       { label: 'Open your dashboard', url },
     ),

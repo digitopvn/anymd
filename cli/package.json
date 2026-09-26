@@ -1,7 +1,7 @@
 {
   "name": "@digitop/anymd-cli",
   "version": "0.1.0",
-  "description": "Convert any URL or file to clean Markdown with anymd.cc, and search your Markdown library from the terminal.",
+  "description": "Read public URLs and files as clean Markdown with anymd.cc, the web context layer for AI agents, and search your library from the terminal.",
   "type": "module",
   "bin": {
     "anymd": "bin/anymd.mjs"
