@@ -24,7 +24,8 @@ Tools run with the page's own session. If you're signed in to anymd.cc, library 
 
 | Tool | What it does | Availability |
 |---|---|---|
-| `convert_url` | Convert a URL to Markdown | Everyone (anonymous limits apply) |
+| `read_url` | Read a public URL and return structured Markdown | Everyone (anonymous limits apply) |
+| `convert_url` | Same as `read_url`, under its original name | Everyone (anonymous limits apply) |
 | `get_page_markdown` | Return the current page as Markdown (its `.md` twin) | Everyone |
 | `search_library` | Search your saved documents | Signed in |
 | `list_documents` | List recent library documents | Signed in |

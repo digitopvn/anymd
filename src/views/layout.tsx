@@ -225,7 +225,7 @@ const FOOTER_COLUMNS: { title: string; links: [string, string][] }[] = [
   {
     title: 'Product',
     links: [
-      ['/', 'Converter'],
+      ['/#try', 'Try a URL'],
       ['/pricing', 'Pricing'],
       ['/changelog', 'Changelog'],
       ['/dashboard', 'Dashboard'],

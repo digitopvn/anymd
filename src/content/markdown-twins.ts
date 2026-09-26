@@ -8,7 +8,7 @@ import { getPage, pageToMarkdown, parseDoc } from '../cms/pages';
 import type { Env } from '../env';
 import { changelogMarkdown, loadChangelog } from '../lib/changelog';
 import { DOCS_PAGES, LEGAL_PAGES, type BlogPost, type ContentPage } from './index';
-import { ECOSYSTEM, FAQ, FOUNDER, ROADMAP_SOURCES, SITE, SOURCES } from './site';
+import { ECOSYSTEM, FAQ, FOUNDER, RESPONSIBLE, ROADMAP_SOURCES, SITE, SOURCES } from './site';
 
 function frontmatter(fields: Record<string, string | undefined>): string {
   const lines = Object.entries(fields)
@@ -40,51 +40,80 @@ function plansMarkdown(): string {
 }
 
 export function homeMarkdown(origin: string): string {
-  return `${frontmatter({ title: 'anymd — Convert anything on the internet to Markdown', url: origin + '/' })}# anymd
+  return `${frontmatter({ title: `anymd — ${SITE.tagline.replace(/\.$/, '')}`, url: origin + '/' })}# anymd
 
 > ${SITE.tagline}
 
+## ${SITE.headline}
+
 ${SITE.description}
 
-## Use it in one second
-
-Prefix any link with \`anymd.cc/\`:
+Try it now: prefix any public URL with \`anymd.cc/\`, no account needed (up to 50 reads a day).
 
 \`\`\`
 ${origin}/https://stephango.com/saw
 \`\`\`
 
-No account needed for up to 50 conversions a day. Sign up for 500 free credits a month and a private, searchable library.
+Connect your agent over MCP: \`${origin}/mcp\` — [setup](${origin}/docs/mcp.md).
 
-## Why Markdown
+Open source · Self-hostable · Respects robots.txt · No paywall or login bypass.
 
-- AI agents read Markdown natively; raw HTML wastes tokens on navigation, ads, scripts and styles.
-- anymd keeps the article and drops the clutter: headings, links, tables, code and footnotes survive.
-- Everything you convert while signed in lands in your library, searchable with BM25, full-text, semantic, query fan-out and Jev re-ranking.
+## The problem
 
-## Sources
+Raw HTML is noisy agent context. A typical page is mostly menus, trackers, pop-ups, related posts and inline styles, so an agent that reads it burns tokens, context and accuracy on noise.
+
+## Read
+
+A source-aware reader extracts the content and normalizes it into structured Markdown with YAML metadata. Headings, links, tables, code and footnotes survive; clutter does not. Dedicated readers handle sources such as GitHub, YouTube, Reddit, Hacker News, X and documents.
+
+## Remember
+
+Your agents shouldn't read the same web twice. Every source they read while signed in becomes reusable private context in a library searchable by keyword, phrase, meaning, or through MCP:
+
+- **BM25** relevance ranking over titles, text, domains and tags
+- **Full-text** search with exact phrases, boolean operators and prefixes
+- **Semantic** search with multilingual bge-m3 embeddings
+- **Hybrid** search fusing BM25 and semantic results with Reciprocal Rank Fusion
+- **Query fan-out**, rewriting a query into variants
+- Optional **Jev** tie-breaking when the top results are too close to call
+
+Library search and recall never cost credits.
+
+## Use anywhere
+
+- **MCP:** \`${origin}/mcp\` (Streamable HTTP, OAuth or API key). Tools include \`read_url\`, \`search_library\` and \`get_document\` — [docs](${origin}/docs/mcp.md)
+- **REST API:** \`POST ${origin}/api/v1/convert\` with \`Authorization: Bearer amd_…\` — [docs](${origin}/docs/api.md)
+- **CLI:** \`npm i -g https://cdn.anymd.cc/cli/anymd-cli-latest.tgz\` — [docs](${origin}/docs/cli.md)
+- **WebMCP:** tools exposed to in-browser agents on anymd.cc — [docs](${origin}/docs/webmcp.md)
+- **URL API:** \`GET ${origin}/<url>\` returns Markdown, \`?format=json\` for JSON — [docs](${origin}/docs/url.md)
+
+## Responsible by design
+
+${RESPONSIBLE.map((r) => `- **${r.title}.** ${r.body}`).join('\n')}
+
+Site owners can opt out or request a takedown: ${origin}/legal/abuse.md
+
+## Supported sources
 
 ${SOURCES.map((s) => `- **${s.label}** — ${s.note}`).join('\n')}
 
-Coming next: ${ROADMAP_SOURCES.join(', ')}.
-
-## Every interface an agent needs
-
-- **URL API:** \`GET ${origin}/<url>\` (Markdown), \`?format=json\` for JSON.
-- **REST API:** \`POST ${origin}/api/v1/convert\` with \`Authorization: Bearer amd_…\` — [docs](${origin}/docs/api.md)
-- **CLI:** \`npm i -g https://cdn.anymd.cc/cli/anymd-cli-latest.tgz\` — [docs](${origin}/docs/cli.md)
-- **MCP:** \`${origin}/mcp\` (Streamable HTTP, OAuth or API key) — [docs](${origin}/docs/mcp.md)
-- **WebMCP:** tools exposed to in-browser agents on anymd.cc — [docs](${origin}/docs/webmcp.md)
+Planned: ${ROADMAP_SOURCES.join(', ')}.
 
 ## Pricing
+
+Pay when your agents learn something new. Reusing what they already know is free: processing a new source uses credits by complexity, while cached reads and library search cost nothing.
 
 ${plansMarkdown()}
 
 Launch offer: ${LAUNCH_OFFER.percent}% off Pro and Scale with code \`${LAUNCH_OFFER.code}\` until ${new Date(LAUNCH_OFFER.endsAt).toISOString().slice(0, 10)}. Full details: ${origin}/pricing.md
 
+## Self-hosting
+
+anymd is open source (MIT) and deploys as a single Cloudflare Worker: ${origin}/docs/self-host.md · ${SITE.github}
+
 ## Built by
 
-${FOUNDER.name} (${FOUNDER.handle}), ${FOUNDER.role}. anymd is open source (MIT): ${SITE.github}
+${FOUNDER.name} (${FOUNDER.handle}), ${FOUNDER.role}.
 
 ## FAQ
 
@@ -95,7 +124,7 @@ ${faqMarkdown(FAQ)}
 export function pricingMarkdown(origin: string): string {
   return `${frontmatter({ title: 'Pricing', url: origin + '/pricing' })}# Pricing
 
-Usage-based: 1 credit = one web page converted. Heavier sources cost more; search and reads are free.
+Pay when your agents learn something new; reusing what they already know is free. Processing a new source uses credits by complexity (1 credit = one web page); cached reads and library search are free.
 
 ${plansMarkdown()}
 

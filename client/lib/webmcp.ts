@@ -55,23 +55,30 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
 
-const convertTool = tool(
-  'convert_url',
-  'Convert any URL (web page, X post, YouTube, GitHub, PDF…) to clean Markdown with anymd. Signed-in conversions are saved to the library.',
-  {
-    type: 'object',
-    properties: {
-      url: { type: 'string', description: 'The URL to convert, with or without https://' },
-      save: { type: 'boolean', description: 'Save to the library when signed in (default true)' },
-    },
-    required: ['url'],
+const readUrlSchema = {
+  type: 'object',
+  properties: {
+    url: { type: 'string', description: 'The public URL to read, with or without https://' },
+    save: { type: 'boolean', description: 'Save to the library when signed in (default true)' },
   },
-  async (input) => {
-    const save = typeof input.save === 'boolean' ? input.save : undefined;
-    const { data } = await convertUrl(requiredString(input, 'url', 4000), save);
-    return data.markdown;
-  },
+  required: ['url'],
+};
+
+async function readUrl(input: Input): Promise<string> {
+  const save = typeof input.save === 'boolean' ? input.save : undefined;
+  const { data } = await convertUrl(requiredString(input, 'url', 4000), save);
+  return data.markdown;
+}
+
+const readTool = tool(
+  'read_url',
+  'Read a public URL (web page, GitHub, YouTube, PDF…) with anymd and return it as structured Markdown. Signed-in reads are saved to the library.',
+  readUrlSchema,
+  readUrl,
 );
+
+// The original name, kept so agents built against it keep working.
+const convertTool = tool('convert_url', 'Same as read_url, under its original name: convert a URL to clean Markdown with anymd.', readUrlSchema, readUrl);
 
 const pageMarkdownTool = tool('get_page_markdown', 'Return the current anymd.cc page as Markdown (its .md twin).', { type: 'object', properties: {} }, async () => {
   const twin = document.querySelector<HTMLLinkElement>('link[rel="alternate"][type="text/markdown"]')?.href;
@@ -126,7 +133,7 @@ async function signedIn(): Promise<boolean> {
 export async function initWebMcp(): Promise<void> {
   const mc = (navigator as Navigator & { modelContext?: ModelContext }).modelContext;
   if (!mc || (typeof mc.registerTool !== 'function' && typeof mc.provideContext !== 'function')) return;
-  const tools = [convertTool, pageMarkdownTool];
+  const tools = [readTool, convertTool, pageMarkdownTool];
   if (await signedIn()) tools.push(searchTool, listTool);
   // registerTool adds to what other scripts (the page editor) register; provideContext replaces it.
   if (typeof mc.registerTool === 'function') {
