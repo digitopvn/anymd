@@ -1,24 +1,30 @@
 // Creates (or reuses) everything anymd needs in a Polar organization. Safe to re-run.
 //
 //   node --env-file=.env scripts/polar-setup.mjs --webhook https://staging.anymd.cc/api/webhooks/polar
+//   node --env-file=.env scripts/polar-setup.mjs --production --webhook https://anymd.cc/api/webhooks/polar
 //
-// Reads POLAR_ACCESS_TOKEN and POLAR_ENVIRONMENT (sandbox | production). Creates:
+// Reads POLAR_ACCESS_TOKEN and POLAR_ENVIRONMENT (sandbox | production). With --production it reads
+// POLAR_PRODUCTION_ACCESS_TOKEN against the production API instead, and saves the webhook as
+// POLAR_PRODUCTION_WEBHOOK_URL / POLAR_PRODUCTION_WEBHOOK_SECRET (the names sync-secrets.mjs reads). Creates:
 //   - the `anymd_credits` meter (sum of metadata.credits over `anymd_credits` events)
 //   - a monthly credit benefit per plan (the included credits)
 //   - Pro and Scale products, monthly and yearly, tagged `anymd_plan` so the Worker finds them
 //     (fixed price + metered overage price on the meter)
 //   - LAUNCH30 and COMEBACK20 discount codes
 //   - the webhook endpoint (with --webhook). Polar generates the signing secret; it is written to
-//     .env as POLAR_WEBHOOK_SECRET (never printed). Push it with `wrangler secret put`.
+//     .env (never printed). Push it with `npm run secrets:<env>`.
 // Prices and credits come from src/billing/plans.ts; keep them in sync.
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const token = process.env.POLAR_ACCESS_TOKEN;
-const server = process.env.POLAR_ENVIRONMENT === 'production' ? 'https://api.polar.sh' : 'https://sandbox-api.polar.sh';
+const production = process.argv.includes('--production');
+const prefix = production ? 'POLAR_PRODUCTION_' : 'POLAR_';
+const token = process.env[`${prefix}ACCESS_TOKEN`];
+const server = production || process.env.POLAR_ENVIRONMENT === 'production' ? 'https://api.polar.sh' : 'https://sandbox-api.polar.sh';
 if (!token) {
-  console.error('POLAR_ACCESS_TOKEN is not set. Run with: node --env-file=.env scripts/polar-setup.mjs');
+  console.error(`${prefix}ACCESS_TOKEN is not set. Run with: node --env-file=.env scripts/polar-setup.mjs`);
   process.exit(1);
 }
+console.log(`polar: ${new URL(server).host}`);
 const webhookArg = process.argv.indexOf('--webhook');
 const webhookUrl = webhookArg > -1 ? process.argv[webhookArg + 1] : null;
 
@@ -118,8 +124,8 @@ if (webhookUrl) {
     if (endpoint.secret) {
       const env = readFileSync('.env', 'utf8');
       const set = (src, key, value) => (new RegExp(`^${key}=.*$`, 'm').test(src) ? src.replace(new RegExp(`^${key}=.*$`, 'm'), `${key}=${value}`) : `${src.trimEnd()}\n${key}=${value}\n`);
-      writeFileSync('.env', set(set(env, 'POLAR_WEBHOOK_URL', webhookUrl), 'POLAR_WEBHOOK_SECRET', endpoint.secret));
-      console.log('webhook: created; signing secret saved to .env as POLAR_WEBHOOK_SECRET');
+      writeFileSync('.env', set(set(env, `${prefix}WEBHOOK_URL`, webhookUrl), `${prefix}WEBHOOK_SECRET`, endpoint.secret));
+      console.log(`webhook: created; signing secret saved to .env as ${prefix}WEBHOOK_SECRET`);
     } else console.log('webhook: created; copy the signing secret from the Polar dashboard');
   }
 }

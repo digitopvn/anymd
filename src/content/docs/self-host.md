@@ -107,12 +107,36 @@ npm run secrets:production   # pushes every known secret found in .env, without 
 | `RAPIDAPI_KEY`, `VIDCAP_API_KEY` | YouTube transcripts (either works; RapidAPI is tried first) |
 | `OPENROUTER_API_KEY` | Query fan-out and Jev via OpenRouter (Workers AI is the fan-out fallback) |
 | `TYPESAFE_API_KEY` | Jev directly from TypeSafe, when OpenRouter isn't configured |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | "Continue with GitHub" sign-in |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | "Continue with Google" sign-in |
+
+### Sign in with GitHub or Google
+
+A provider's button appears only when both its client id and secret are set. Register this callback URL with the provider, using your own host:
+
+```text
+https://anymd.cc/api/auth/oauth/github/callback
+https://anymd.cc/api/auth/oauth/google/callback
+```
+
+The callback defaults to `PUBLIC_URL` plus that path; set `GITHUB_CALLBACK_URL` or `GOOGLE_CALLBACK_URL` only to override it. A GitHub OAuth App accepts one callback host, so staging needs its own app: put its values in `.env` as `STAGING_GITHUB_CLIENT_ID` and `STAGING_GITHUB_CLIENT_SECRET`, and `npm run secrets:staging` pushes them. A Google client can serve both hosts once the staging callback is added to its authorized redirect URIs. Request the `user:email` (GitHub) and `openid email profile` (Google) scopes; anymd asks for them itself.
+
+Sign-in links to an existing account only through an email address the provider marks as verified. Because sign-up with a password does not verify email, linking removes any password on that account and signs out its sessions; the owner can add a password again with "Forgot password".
 
 The authoritative list is the `Env` interface in `src/env.ts`. For local development, put values in `.dev.vars` (git-ignored). Never commit secrets.
 
 ### Billing with Polar
 
 Use `POLAR_SERVER=sandbox` for anything that isn't production. anymd finds your Polar products by metadata, so no product ids live in config: give each recurring product `anymd_plan` = `pro` or `scale`. Discount codes are plain Polar discounts with matching names (for example `LAUNCH30`). Without `POLAR_ACCESS_TOKEN`, billing stays off and everything else works.
+
+`scripts/polar-setup.mjs` creates all of that in one run and is safe to re-run: the credits meter, the included-credit benefits, the four products, the discount codes and the webhook. It saves the webhook signing secret to `.env` without printing it:
+
+```bash
+npm run polar:setup -- --webhook https://staging.example.com/api/webhooks/polar                  # sandbox, POLAR_ACCESS_TOKEN
+npm run polar:setup -- --production --webhook https://example.com/api/webhooks/polar             # production, POLAR_PRODUCTION_ACCESS_TOKEN
+```
+
+`npm run secrets:production` then pushes `POLAR_PRODUCTION_ACCESS_TOKEN` and `POLAR_PRODUCTION_WEBHOOK_SECRET` as the production Worker's `POLAR_ACCESS_TOKEN` and `POLAR_WEBHOOK_SECRET`.
 
 ## 6. Build and deploy
 
