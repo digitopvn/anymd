@@ -4,7 +4,7 @@ import { createApiKey, getUser, SESSION_COOKIE, type ApiKeyRow } from '../auth/i
 import { deleteCookie } from 'hono/cookie';
 import { requireUserPage, sameOriginWrites, type AppContext } from '../auth/middleware';
 import { KEY_PRESETS } from '../auth/roles';
-import { createCheckout, customerPortalUrl, polarEnabled } from '../billing/polar';
+import { billingEnabled, createCheckout, customerPortalUrl, providerName } from '../billing/provider';
 import type { PlanId } from '../billing/plans';
 import type { AppBindings } from '../env';
 import { deleteAccount, documentsToMarkdown, exportDocuments } from '../lib/account';
@@ -183,7 +183,7 @@ async function billingPage(c: AppContext, extra: { notice?: string; error?: stri
       .first<{ status: string; billing_interval: string; current_period_end: number | null; cancel_at_period_end: number }>(),
   ]);
   const notice = extra.notice ?? (c.req.query('checkout') === 'success' ? 'Payment received — your plan updates within a few seconds. Refresh if it still shows the old plan.' : undefined);
-  return shell(c, '/dashboard/billing', 'Billing', <BillingPage user={user} quota={quota} enabled={polarEnabled(c.env)} subscription={subscription} notice={notice} error={extra.error} chosen={{ plan: c.req.query('plan'), interval: c.req.query('interval') }} />, { status });
+  return shell(c, '/dashboard/billing', 'Billing', <BillingPage user={user} quota={quota} enabled={billingEnabled(c.env)} provider={providerName(c.env)} subscription={subscription} notice={notice} error={extra.error} chosen={{ plan: c.req.query('plan'), interval: c.req.query('interval') }} />, { status });
 }
 
 dashboardRoutes.get('/billing', (c) => billingPage(c));
@@ -192,7 +192,7 @@ dashboardRoutes.post('/billing/checkout', async (c) => {
   const f = await formData(c);
   const plan = f.plan === 'scale' ? 'scale' : f.plan === 'pro' ? 'pro' : null;
   if (!plan) return billingPage(c, { error: 'Pick a plan.' }, 400);
-  if (!polarEnabled(c.env)) return billingPage(c, { error: 'Billing is not available on this environment yet.' }, 503);
+  if (!billingEnabled(c.env)) return billingPage(c, { error: 'Billing is not available on this environment yet.' }, 503);
   try {
     const url = await createCheckout(c.env, c.get('user')!, plan as PlanId, f.interval === 'year' ? 'year' : 'month');
     return c.redirect(url, 303);
@@ -203,7 +203,7 @@ dashboardRoutes.post('/billing/checkout', async (c) => {
 });
 
 dashboardRoutes.post('/billing/portal', async (c) => {
-  if (!polarEnabled(c.env)) return billingPage(c, { error: 'Billing is not available on this environment yet.' }, 503);
+  if (!billingEnabled(c.env)) return billingPage(c, { error: 'Billing is not available on this environment yet.' }, 503);
   try {
     return c.redirect(await customerPortalUrl(c.env, c.get('user')!.id), 303);
   } catch (e) {

@@ -409,7 +409,7 @@ export function HomePage({ conversions }: { conversions: number }) {
           <SectionHeader
             eyebrow="Pricing"
             title="Pay when your agents <span class='hl'>learn something new</span>."
-            lead="Reusing what they already know is free. Processing a new source uses credits by complexity — 1 for a web page — while cached reads and library search cost nothing. Pro and Scale never block you: overage is billed per 1,000 credits."
+            lead="Reusing what they already know is free. Processing a new source uses credits by complexity — 1 for a web page — while cached reads and library search cost nothing. Upgrade the moment you need more."
             center
           />
           <div class="reveal mt-10">

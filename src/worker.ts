@@ -12,7 +12,8 @@ import { Hono } from 'hono';
 import { API_KEY_PREFIX, getUser } from './auth/identity';
 import { resolvePrincipal } from './auth/middleware';
 import { ALL_SCOPES, capScopes, isRole } from './auth/roles';
-import { handlePolarEvent, verifyPolarWebhook } from './billing/polar';
+import { type CreemEvent, creemEnabled, handleCreemEvent, verifyCreemWebhook } from './billing/creem';
+import { handlePolarEvent, polarEnabled, verifyPolarWebhook } from './billing/polar';
 import type { AppBindings, Env, Principal, Scope } from './env';
 import { handleMcp } from './mcp/server';
 import { adminRoutes } from './routes/admin';
@@ -45,8 +46,32 @@ app.use('*', async (c, next) => {
   if (c.env.ENVIRONMENT !== 'production') c.header('X-Robots-Tag', 'noindex, nofollow');
 });
 
+// Creem webhooks carry their own signature; no session or key involved.
+app.post('/api/webhooks/creem', async (c) => {
+  if (!creemEnabled(c.env)) return c.json({ error: { code: 'billing_provider_disabled', message: 'Creem is not the billing provider here' } }, 404);
+  const body = await c.req.text();
+  if (!(await verifyCreemWebhook(c.env, c.req.header('creem-signature'), body))) return c.json({ error: { code: 'invalid_signature', message: 'Signature verification failed' } }, 401);
+  let event: CreemEvent;
+  try {
+    event = JSON.parse(body);
+  } catch {
+    return c.json({ error: { code: 'invalid_json', message: 'Body must be JSON' } }, 400);
+  }
+  if (!event?.id || !event.eventType) return c.json({ error: { code: 'invalid_event', message: 'Missing id or eventType' } }, 400);
+  try {
+    const outcome = await handleCreemEvent(c.env, event);
+    return c.json({ ok: true, outcome });
+  } catch (e) {
+    console.error('creem webhook', event.eventType, e);
+    // Forget the event id so Creem's retry (triggered by the 500) is processed instead of skipped.
+    await c.env.DB.prepare('DELETE FROM webhook_events WHERE id = ?').bind(event.id).run().catch(() => undefined);
+    return c.json({ error: { code: 'internal', message: 'Webhook handling failed' } }, 500);
+  }
+});
+
 // Polar webhooks carry their own signature; no session or key involved.
 app.post('/api/webhooks/polar', async (c) => {
+  if (!polarEnabled(c.env)) return c.json({ error: { code: 'billing_provider_disabled', message: 'Polar is not the billing provider here' } }, 404);
   const body = await c.req.text();
   if (!(await verifyPolarWebhook(c.env, c.req.raw.headers, body))) return c.json({ error: { code: 'invalid_signature', message: 'Signature verification failed' } }, 401);
   let event: { type: string; data: unknown };

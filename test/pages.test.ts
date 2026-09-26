@@ -18,6 +18,8 @@ const env = {
   PUBLIC_URL: 'https://staging.anymd.cc',
   CDN_URL: 'https://cdn.anymd.cc',
   GITHUB_REPO: 'digitopvn/anymd',
+  BILLING_PROVIDER: 'creem',
+  CREEM_SERVER: 'test',
   POLAR_SERVER: 'sandbox',
   DB: { prepare: () => stmt, batch: async () => [] },
   CACHE: kv(),

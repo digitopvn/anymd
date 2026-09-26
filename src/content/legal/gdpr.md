@@ -31,7 +31,7 @@ You can ask us to delete your personal data.
 - **Revoke an API key** at any time.
 - **Delete your account** from [Dashboard → Account](/dashboard/account). This removes your documents, embeddings, API keys and usage logs from live systems immediately, and from backups within **30 days**.
 
-We may keep a limited set of records where the law requires it, such as invoices for tax purposes. Billing records held by Polar.sh as merchant of record are subject to Polar's own retention obligations.
+We may keep a limited set of records where the law requires it, such as invoices for tax purposes. Billing records held by Creem as merchant of record are subject to Creem's own retention obligations.
 
 ### Right to data portability
 
@@ -71,7 +71,7 @@ We use the following subprocessors. Each receives only the data it needs.
 | Subprocessor | Purpose | Data involved |
 | --- | --- | --- |
 | Cloudflare | Hosting (Workers), database (D1), vector index (Vectorize), storage (R2), AI inference (Workers AI) | All Service data |
-| Polar.sh | Merchant of record: payments, tax, VAT, invoicing | Email, billing details, purchase history |
+| Creem | Merchant of record: payments, tax, VAT, invoicing | Email, billing details, purchase history |
 | FxTwitter | Fetching X/Twitter posts you convert | Post identifiers |
 | YouTube oEmbed, RapidAPI transcript providers and VidCap | Fetching video metadata and transcripts you convert | Video URLs or identifiers |
 | Hacker News API | Fetching threads you convert | Item identifiers |

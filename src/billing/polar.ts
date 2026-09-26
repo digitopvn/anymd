@@ -1,14 +1,14 @@
 /**
  * Polar.sh integration: checkout, customer portal, Standard Webhooks, and usage-event ingestion
- * for metered overage. Everything is gated on POLAR_ACCESS_TOKEN / POLAR_WEBHOOK_SECRET.
- * Products are discovered by metadata (`anymd_plan` = pro|scale) so no product ids live in config.
+ * for metered overage. Everything is gated on BILLING_PROVIDER=polar plus POLAR_ACCESS_TOKEN /
+ * POLAR_WEBHOOK_SECRET. Products are discovered by metadata (`anymd_plan` = pro|scale) so no product ids live in config.
  */
 import type { Env } from '../env';
 import { newId, now } from '../lib/util';
 import type { PlanId } from './plans';
 
 export function polarEnabled(env: Env): boolean {
-  return Boolean(env.POLAR_ACCESS_TOKEN);
+  return env.BILLING_PROVIDER === 'polar' && Boolean(env.POLAR_ACCESS_TOKEN);
 }
 
 function apiBase(env: Env): string {

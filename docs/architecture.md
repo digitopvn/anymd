@@ -28,7 +28,7 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 | `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, file conversion (`document.ts`) |
 | `src/library/` | Library persistence and embeddings (`store.ts`), search modes, fan-out and RRF (`search.ts`), Jev tie-break (`jev.ts`) |
 | `src/auth/` | Principal resolution, scope guards, same-origin writes (`middleware.ts`), users/sessions/API keys (`identity.ts`), role templates and key presets (`roles.ts`) |
-| `src/billing/` | Plans, credit table, offers (`plans.ts`), Polar checkout/portal/webhooks/usage ingest (`polar.ts`) |
+| `src/billing/` | Plans, credit table, offers (`plans.ts`); `provider.ts` routes checkout and portal to the provider named by `BILLING_PROVIDER`: Creem (`creem.ts`: checkout, portal, webhooks) or Polar (`polar.ts`: also usage ingest for metered overage) |
 | `src/cms/` | Page-builder block registry (`blocks.ts`) and page document service: ops, revisions, publish (`pages.ts`) |
 | `src/lib/` | Usage + quota accounting (`usage.ts`), tracer, Markdown rendering (`markdown.ts`), email, utilities |
 | `src/content/` | Bundled Markdown (blog, docs, legal) and site copy (`site.ts`); loader in `index.ts` |
@@ -52,7 +52,7 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 2. Cache lookup keyed on URL + language + selector + image flag (not on the caller), unless `fresh`.
 3. On a miss: quota check (signed-in) or anonymous daily counter, then `pickAdapter` → adapter. Adapters are tried in registry order; the web adapter is the fallback and itself hands binary responses to `document.ts`.
 4. Credits come from the adapter's resulting `sourceKind`. The quota pre-check uses the cheapest cost because the kind is unknown until the adapter runs.
-5. Save to the library when signed in, `save !== false` and the principal has `library:write`. Embedding, usage recording and Polar usage ingest run in `waitUntil` so they never add latency or fail the request.
+5. Save to the library when signed in, `save !== false` and the principal has `library:write`. Embedding, usage recording and (when Polar is the provider) Polar usage ingest run in `waitUntil` so they never add latency or fail the request.
 
 Why a caller-independent cache: identical URLs are converted once per hour for everyone, and cached hits are free, which is the pricing promise.
 
@@ -75,12 +75,12 @@ The schema is owned by `migrations/`. Tables group as:
 | Identity | `users`, `sessions`, `api_keys` | Sessions and keys store SHA-256 hashes, never raw tokens. Key `scopes` is a JSON array. |
 | Library | `documents`, `documents_fts` | Unique per `(user_id, url_hash)`. FTS5 is an external-content table kept in sync by triggers. `embedded_chunks` tracks vectors `<doc_id>#<n>` in Vectorize. |
 | Metering | `usage_events`, `traces` | Monthly credit use is summed from `usage_events` since the UTC month start. |
-| Billing | `subscriptions`, `credit_grants`, `webhook_events` | `webhook_events` makes Polar webhook handling idempotent. |
+| Billing | `subscriptions`, `credit_grants`, `webhook_events` | `webhook_events` makes Creem and Polar webhook handling idempotent. `users.creem_customer_id` opens the Creem portal. |
 | Content | `posts`, `pages`, `page_revisions`, `idempotency_keys` | Page `draft`/`published` are JSON page documents. |
-| Admin | `audit_log`, `settings`, `stats` | Page mutations and Polar events write to `audit_log`. |
+| Admin | `audit_log`, `settings`, `stats` | Page mutations and billing webhook events write to `audit_log`. |
 
 Add schema changes as a new numbered file in `migrations/`; never edit an applied migration.
 
 ## Graceful degradation
 
-Every secret in `src/env.ts` is optional. Missing Polar → no billing; missing transcript keys → YouTube without transcripts; missing OpenRouter/TypeSafe → fan-out via Workers AI and no Jev; missing Resend → no email. Keep new integrations behind the same pattern: detect the secret, do nothing harmful without it.
+Every secret in `src/env.ts` is optional. Missing key for the `BILLING_PROVIDER` provider → no billing; missing transcript keys → YouTube without transcripts; missing OpenRouter/TypeSafe → fan-out via Workers AI and no Jev; missing Resend → no email. Keep new integrations behind the same pattern: detect the secret, do nothing harmful without it.

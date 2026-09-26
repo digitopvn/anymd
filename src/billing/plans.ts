@@ -44,7 +44,7 @@ export const PLANS: Plan[] = [
     monthly: 9,
     yearly: 7,
     credits: 10_000,
-    overagePer1k: 1,
+    overagePer1k: null,
     libraryLimit: null,
     rateLimitPerMin: 120,
     highlight: true,
@@ -53,7 +53,7 @@ export const PLANS: Plan[] = [
       'Unlimited library',
       'Query fan-out + Jev re-ranking',
       'Unlimited API keys & OAuth apps',
-      'Overage $1 per 1k credits — never blocked',
+      'Move up to Scale any time',
       'Traces & 90-day usage logs',
     ],
   },
@@ -64,13 +64,13 @@ export const PLANS: Plan[] = [
     monthly: 49,
     yearly: 39,
     credits: 100_000,
-    overagePer1k: 0.6,
+    overagePer1k: null,
     libraryLimit: null,
     rateLimitPerMin: 600,
     features: [
       '100,000 credits / month',
       'Everything in Pro',
-      'Overage $0.60 per 1k credits',
+      'Custom volume on Enterprise',
       'Priority conversion queue',
       'Role-scoped keys for your team',
       'Email support within 1 business day',
@@ -105,7 +105,7 @@ export const CREDIT_TABLE: { kind: string; label: string; credits: number }[] = 
   { kind: 'search', label: 'Library search, reads, MCP reads', credits: 0 },
 ];
 
-/** Launch offer shown to returning visitors; codes are created in Polar with the same name. */
+/** Launch offer shown to returning visitors; codes are created in the billing provider with the same name. */
 export const LAUNCH_OFFER = {
   code: 'LAUNCH30',
   percent: 30,

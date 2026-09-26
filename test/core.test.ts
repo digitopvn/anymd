@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { applyOpsToDocument, normalizeSlug, PageError, TEMPLATES, type PageDocument } from '../src/cms/pages';
 import { documentsToMarkdown } from '../src/lib/account';
 import type { DocumentRow } from '../src/library/store';
-import { verifyPolarWebhook } from '../src/billing/polar';
+import { creemEnabled, parseProductName, planForStatus, verifyCreemWebhook } from '../src/billing/creem';
+import { polarEnabled, verifyPolarWebhook } from '../src/billing/polar';
 import { normalizeTargetUrl } from '../src/convert/index';
 import { buildOpenApi } from '../src/openapi';
 import type { Env } from '../src/env';
@@ -85,6 +86,40 @@ describe('Polar webhook signature', () => {
     expect(await verifyPolarWebhook(env, headers(), body)).toBe(true);
     expect(await verifyPolarWebhook(env, headers(), body + ' ')).toBe(false);
     expect(await verifyPolarWebhook(env, headers(String(Number(ts) - 600), await sign(secret, 'msg_1', String(Number(ts) - 600), body)), body)).toBe(false);
+  });
+});
+
+describe('Creem billing', () => {
+  const env = { CREEM_WEBHOOK_SECRET: 'creem-test-secret' } as Env;
+  async function sign(body: string) {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode('creem-test-secret'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return Array.from(new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body))), (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  it('accepts the hex HMAC of the raw body and rejects tampering or a missing header', async () => {
+    const body = '{"id":"evt_1","eventType":"subscription.paid","object":{}}';
+    const sig = await sign(body);
+    expect(await verifyCreemWebhook(env, sig, body)).toBe(true);
+    expect(await verifyCreemWebhook(env, sig, body + ' ')).toBe(false);
+    expect(await verifyCreemWebhook(env, null, body)).toBe(false);
+    expect(await verifyCreemWebhook({} as Env, sig, body)).toBe(false);
+  });
+
+  it('keeps the paid plan only while the subscription is live', () => {
+    for (const s of ['active', 'trialing', 'paid', 'past_due', 'scheduled_cancel']) expect(planForStatus(s, 'pro')).toBe('pro');
+    for (const s of ['canceled', 'expired', 'paused', 'unpaid']) expect(planForStatus(s, 'pro')).toBe('free');
+  });
+
+  it('maps product names to plans and intervals', () => {
+    expect(parseProductName('anymd Scale (yearly)')).toEqual({ plan: 'scale', interval: 'year' });
+    expect(parseProductName('anymd Pro (monthly)')).toEqual({ plan: 'pro', interval: 'month' });
+    expect(parseProductName('Something else')).toBeNull();
+  });
+
+  it('runs only when Creem is the chosen provider and has a key', () => {
+    expect(creemEnabled({ BILLING_PROVIDER: 'creem', CREEM_API_KEY: 'k' } as Env)).toBe(true);
+    expect(creemEnabled({ BILLING_PROVIDER: 'polar', CREEM_API_KEY: 'k' } as Env)).toBe(false);
+    expect(polarEnabled({ BILLING_PROVIDER: 'creem', POLAR_ACCESS_TOKEN: 't' } as Env)).toBe(false);
   });
 });
 

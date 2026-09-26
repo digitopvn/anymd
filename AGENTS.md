@@ -8,7 +8,7 @@ Guide for AI coding agents working in this repository. anymd.cc converts any URL
 - Cloudflare D1 (with FTS5), KV, R2, Vectorize, Workers AI, rate-limit bindings.
 - Conversion: the `src/convert/web.ts` extractor + linkedom, turndown; Workers AI `toMarkdown` for files.
 - Tailwind CSS v4; client islands bundled with esbuild; vitest for tests.
-- MCP: `@modelcontextprotocol/sdk`, OAuth via `@cloudflare/workers-oauth-provider`. Billing: Polar.sh.
+- MCP: `@modelcontextprotocol/sdk`, OAuth via `@cloudflare/workers-oauth-provider`. Billing: Creem.io (Polar.sh kept, switched off via `BILLING_PROVIDER`).
 
 Bindings, vars and secrets are typed in `src/env.ts`; per-environment values in `wrangler.jsonc`.
 
@@ -32,7 +32,7 @@ Before handing work back: `npm run typecheck`, plus `npm test` for touched behav
 - `src/convert/`: SSRF guard, adapter registry, the single conversion pipeline, source adapters.
 - `src/library/`: library storage, embeddings, search, Jev.
 - `src/auth/`: principal resolution, scope guards, roles and key presets.
-- `src/billing/`: plans, credits, offers, Polar.
+- `src/billing/`: plans, credits, offers, the active provider (`provider.ts`), Creem and Polar.
 - `src/cms/`: page-builder blocks and page ops service.
 - `src/lib/`: usage/quota, tracer, Markdown rendering, email, utilities.
 - `src/content/`: all bundled Markdown content and site copy.

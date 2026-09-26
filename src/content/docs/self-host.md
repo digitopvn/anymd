@@ -67,7 +67,7 @@ The index dimension (1024) matches the `bge-m3` embedding model used by the libr
 - `r2_buckets[].bucket_name` and `vectorize[].index_name` if you renamed them
 - `routes` with your own hostnames
 - `ratelimits[].namespace_id`: any integer unique within your account
-- `vars`: `PUBLIC_URL`, `CDN_URL`, `GITHUB_REPO`, `POLAR_SERVER` (`sandbox` or `production`)
+- `vars`: `PUBLIC_URL`, `CDN_URL`, `GITHUB_REPO`, `BILLING_PROVIDER` (`creem` or `polar`), `CREEM_SERVER` (`test` or `production`), `POLAR_SERVER` (`sandbox` or `production`)
 
 Serve the R2 bucket from a custom domain (Cloudflare dashboard → R2 → your bucket → Custom domains) and put that origin in `CDN_URL`.
 
@@ -101,7 +101,9 @@ npm run secrets:production   # pushes every known secret found in .env, without 
 
 | Secret | Enables |
 |---|---|
-| `POLAR_ACCESS_TOKEN` | Polar checkout, customer portal and usage-based overage |
+| `CREEM_API_KEY` | Creem checkout and customer portal (with `BILLING_PROVIDER=creem`) |
+| `CREEM_WEBHOOK_SECRET` | Verifying Creem webhooks |
+| `POLAR_ACCESS_TOKEN` | Polar checkout, customer portal and usage-based overage (with `BILLING_PROVIDER=polar`) |
 | `POLAR_WEBHOOK_SECRET` | Verifying Polar webhooks |
 | `GITHUB_TOKEN` | Higher GitHub API rate limit for the changelog |
 | `RESEND_API_KEY` | Transactional email (welcome, password reset) |
@@ -126,11 +128,28 @@ Sign-in links to an existing account only through an email address the provider 
 
 The authoritative list is the `Env` interface in `src/env.ts`. For local development, put values in `.dev.vars` (git-ignored). Never commit secrets.
 
-### Billing with Polar
+### Billing
 
-Use `POLAR_SERVER=sandbox` for anything that isn't production. anymd finds your Polar products by metadata, so no product ids live in config: give each recurring product `anymd_plan` = `pro` or `scale`. Discount codes are plain Polar discounts with matching names (for example `LAUNCH30`). Without `POLAR_ACCESS_TOKEN`, billing stays off and everything else works.
+`BILLING_PROVIDER` picks the one payment provider that takes checkouts: `creem` or `polar`. The other stays off even if its secrets are set, and without the chosen provider's key billing stays off while everything else works.
 
-`scripts/polar-setup.mjs` creates all of that in one run and is safe to re-run: the credits meter, the included-credit benefits, the four products, the discount codes and the webhook. It saves the webhook signing secret to `.env` without printing it:
+#### Creem
+
+Use `CREEM_SERVER=test` for anything that isn't production; it talks to `https://test-api.creem.io` with a test-mode key. anymd finds your products by name: `anymd Pro (monthly)`, `anymd Pro (yearly)`, `anymd Scale (monthly)` and `anymd Scale (yearly)`. Discount codes are plain Creem discounts (for example `LAUNCH30`). Creem has no usage meter, so paid plans stop at their included credits.
+
+`scripts/creem-setup.mjs` creates the four products, the discount codes and the webhook, and is safe to re-run. It saves the webhook signing secret to `.env` without printing it:
+
+```bash
+npm run creem:setup -- --webhook https://staging.example.com/api/webhooks/creem                  # test mode, CREEM_API_KEY
+npm run creem:setup -- --production --webhook https://example.com/api/webhooks/creem             # live, CREEM_PRODUCTION_API_KEY
+```
+
+`npm run secrets:production` then pushes `CREEM_PRODUCTION_API_KEY` and `CREEM_PRODUCTION_WEBHOOK_SECRET` as the production Worker's `CREEM_API_KEY` and `CREEM_WEBHOOK_SECRET`. If Creem does not return the secret, copy it from Creem → Developers → Webhooks into `.env`.
+
+#### Polar
+
+Use `POLAR_SERVER=sandbox` for anything that isn't production. anymd finds your Polar products by metadata, so no product ids live in config: give each recurring product `anymd_plan` = `pro` or `scale`. Polar meters usage, so it can bill overage for plans that set `overagePer1k` in `src/billing/plans.ts`.
+
+`scripts/polar-setup.mjs` creates the credits meter, the included-credit benefits, the four products, the discount codes and the webhook in one run, and is safe to re-run:
 
 ```bash
 npm run polar:setup -- --webhook https://staging.example.com/api/webhooks/polar                  # sandbox, POLAR_ACCESS_TOKEN

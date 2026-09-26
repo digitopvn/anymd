@@ -264,7 +264,7 @@ Body: `{ name, preset?, scopes?, expires_in_days? }`. Presets and scopes: [API k
 
 ## Billing
 
-`POST /billing/checkout` with `{ "plan": "pro" | "scale", "interval": "month" | "year" }` returns `{ url }` for a Polar checkout. `POST /billing/portal` returns `{ url }` for the customer portal. Both need a browser session, not an API key. See [Billing & credits](/docs/billing).
+`POST /billing/checkout` with `{ "plan": "pro" | "scale", "interval": "month" | "year" }` returns `{ url }` for a Creem checkout. `POST /billing/portal` returns `{ url }` for the customer portal. Both need a browser session, not an API key. See [Billing & credits](/docs/billing).
 
 ## Admin: pages, posts, users, settings
 

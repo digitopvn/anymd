@@ -64,7 +64,7 @@ If you exceed your allowance or the rate limits, requests may be slowed, rejecte
 
 ## Payments
 
-Paid plans are sold through Polar.sh, which acts as merchant of record and handles tax and VAT. By purchasing, you also agree to Polar's checkout terms. Subscriptions renew automatically until cancelled. You can cancel at any time and keep access until the end of the paid period. Refunds follow our [Refund Policy](https://anymd.cc/legal/refund).
+Paid plans are sold through Creem, which acts as merchant of record and handles tax and VAT. By purchasing, you also agree to Creem's checkout terms. Subscriptions renew automatically until cancelled. You can cancel at any time and keep access until the end of the paid period. Refunds follow our [Refund Policy](https://anymd.cc/legal/refund).
 
 ## Third-party sources and services
 

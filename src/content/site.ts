@@ -159,7 +159,7 @@ export const FAQ = [
   },
   {
     q: 'What if I run out of credits?',
-    a: 'On Free you wait for next month or upgrade. On Pro and Scale you are never blocked: extra usage is billed at $1 (Pro) or $0.60 (Scale) per 1,000 credits.',
+    a: 'New conversions pause until the 1st of next month, while cached reads and library search keep working. Upgrade any time to raise the limit straight away.',
   },
   {
     q: 'Can I get a refund?',

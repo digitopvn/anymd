@@ -1,6 +1,6 @@
 ---
 title: "Billing & credits"
-description: "How anymd credits work, what each source costs, plans, overage, offers, and how checkout and the customer portal work."
+description: "How anymd credits work, what each source costs, plans, limits, offers, and how checkout and the customer portal work."
 updated: "2026-09-26"
 ---
 
@@ -25,14 +25,14 @@ Every conversion response tells you what it cost in the `X-Anymd-Credits` header
 | Plan | Price | Credits / month | Beyond included credits |
 |---|---|---|---|
 | Free | $0 | 500 | Hard stop until next month |
-| Pro | $9/mo, or $7/mo billed yearly | 10,000 | $1 per extra 1,000 |
-| Scale | $49/mo, or $39/mo billed yearly | 100,000 | $0.60 per extra 1,000 |
+| Pro | $9/mo, or $7/mo billed yearly | 10,000 | Pauses until next month, or upgrade |
+| Scale | $49/mo, or $39/mo billed yearly | 100,000 | Pauses until next month, or move to Enterprise |
 | Enterprise | Custom | Custom volume | $0.40 per 1,000 |
 
 The [pricing page](/pricing) is always current and lists each plan's extras (library size, key limits, support).
 
-- **Free** keeps working for search and reads after credits run out; new conversions return `402 quota_exceeded` until the next month.
-- **Pro and Scale** never block: usage beyond the included credits is metered and billed as overage.
+- Every plan keeps working for search and reads after credits run out; new conversions return `402 quota_exceeded` until the next month.
+- Upgrading takes effect as soon as the payment goes through, so you can raise the limit mid-month.
 - Credits reset at the start of each calendar month (UTC).
 
 ### No account?
@@ -50,10 +50,10 @@ Enter the code at checkout.
 
 ## Checkout and managing your plan
 
-Payments are handled by [Polar.sh](https://polar.sh).
+Payments are handled by [Creem](https://creem.io), our merchant of record. Creem collects the payment and handles sales tax and VAT.
 
 - **Upgrade:** from the [pricing page](/pricing) or your dashboard, or `POST /api/v1/billing/checkout` with `{ "plan": "pro" | "scale", "interval": "month" | "year" }`. The response is `{ url }`; open it to pay.
-- **Manage, change or cancel:** from your dashboard, or `POST /api/v1/billing/portal`, which returns `{ url }` for the Polar customer portal.
+- **Manage, change or cancel:** from your dashboard, or `POST /api/v1/billing/portal`, which returns `{ url }` for the Creem customer portal (payment method, invoices, cancellation). It works once you have paid for a plan.
 
 Both endpoints need a signed-in browser session. API keys can't start a checkout.
 

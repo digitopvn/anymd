@@ -4,12 +4,12 @@ How to reach, deploy, observe and recover the running anymd.cc service. Setup fo
 
 ## Environments
 
-| Environment | Branch | Hostnames | Worker | Polar |
+| Environment | Branch | Hostnames | Worker | Billing |
 |---|---|---|---|---|
-| `staging` | `dev` | staging.anymd.cc | `anymd-staging` | `sandbox` |
-| `production` | `main` | anymd.cc, www.anymd.cc | `anymd` | `production` |
+| `staging` | `dev` | staging.anymd.cc | `anymd-staging` | Creem test mode |
+| `production` | `main` | anymd.cc, www.anymd.cc | `anymd` | Creem live |
 
-Bindings, resource names and vars per environment: `wrangler.jsonc`. The `POLAR_SERVER` var selects the Polar API host (see `apiBase` in `src/billing/polar.ts`).
+Bindings, resource names and vars per environment: `wrangler.jsonc`. `BILLING_PROVIDER` picks the live payment provider (`creem` today; Polar is switched off but its code and secrets remain). `CREEM_SERVER` and `POLAR_SERVER` select each provider's API host (see `apiBase` in `src/billing/creem.ts` and `src/billing/polar.ts`).
 
 ## Deploy
 
@@ -34,9 +34,16 @@ Secret names and their features are declared in the `Env` interface in `src/env.
 - List what is set without values: `npx wrangler secret list --env production`.
 - Rotate by `wrangler secret put` with the new value; the next request picks it up.
 
-Staging uses Polar **sandbox** credentials (`POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET` from the sandbox org). Never put production Polar credentials on staging.
+Staging uses Creem **test-mode** credentials (`CREEM_API_KEY`, `CREEM_WEBHOOK_SECRET`) and Polar **sandbox** credentials. Never put live payment credentials on staging.
 
-## Polar
+## Creem
+
+- Products are found by name (`anymd Pro (monthly)` …, see `parseProductName` in `src/billing/creem.ts`). The mapping is cached in KV key `creem:products` for 10 minutes; delete that key to pick up a product change immediately. `npm run creem:setup` creates the products, discount codes and webhook.
+- Discount codes (`LAUNCH30`, `COMEBACK20`) must exist in Creem with the same names as in `src/billing/plans.ts`.
+- Creem has no usage meter, so Pro and Scale stop at their included credits.
+- The webhook endpoint is `POST /api/webhooks/creem` (`https://staging.anymd.cc/api/webhooks/creem` in test mode, `https://anymd.cc/api/webhooks/creem` live), signed with `CREEM_WEBHOOK_SECRET` in the `creem-signature` header. Checkouts carry `metadata.referenceId` = user id; `checkout.completed` stores the Creem customer id for the portal and `subscription.*` events set the plan. Delivery is idempotent via `webhook_events`.
+
+## Polar (switched off)
 
 - Products are discovered by metadata `anymd_plan` = `pro` | `scale` on recurring products. The mapping is cached in KV key `polar:products` for 10 minutes; delete that key to pick up a product change immediately.
 - Discount codes (`LAUNCH30`, `COMEBACK20`) must exist in Polar with the same names as in `src/billing/plans.ts`.
@@ -65,7 +72,7 @@ KV `CACHE` keys (all expire on their own):
 | `conv:` | Conversion results, one hour. Users can bypass with `fresh=1`. |
 | `anon:` | Anonymous daily counters per hashed IP |
 | `page:` | Published page cache, purged on publish and unpublish |
-| `polar:products` | Polar product mapping |
+| `creem:products`, `polar:products` | Product mapping per provider |
 | `stats:` | Public counters |
 
 ## Contacts

@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import type { AppBindings } from '../env';
 import type { AppContext } from '../auth/middleware';
 import { PLANS } from '../billing/plans';
-import { polarEnabled } from '../billing/polar';
+import { billingEnabled } from '../billing/provider';
 import { findPublishedPost, publishedPosts } from '../cms/posts';
 import { getPage, parseDoc } from '../cms/pages';
 import { PageBlocks, pageJsonLd } from '../cms/render';
@@ -81,7 +81,7 @@ publicRoutes.get('/pricing', (c) =>
       pageActions: true,
       jsonLd: [softwareJsonLd(originOf(c))],
     },
-    <PricingPage checkoutReady={polarEnabled(c.env)} />,
+    <PricingPage checkoutReady={billingEnabled(c.env)} />,
   ),
 );
 

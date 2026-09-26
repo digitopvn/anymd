@@ -57,7 +57,7 @@ export async function quotaState(env: Env, userId: string, planId: string): Prom
   return { plan: plan.id, included: plan.credits, extra, used, remaining: Math.max(0, total - used), overage: plan.overagePer1k !== null };
 }
 
-/** Whether a signed-in user may spend `cost` credits now. Paid plans continue into metered overage. */
+/** Whether a signed-in user may spend `cost` credits now. Plans with overage pricing continue past the allowance. */
 export async function canSpend(env: Env, userId: string, planId: string, cost: number): Promise<{ ok: boolean; state: QuotaState }> {
   const state = await quotaState(env, userId, planId);
   return { ok: state.overage || state.remaining >= cost, state };

@@ -751,7 +751,7 @@ export function KeysPage({ keys, newKey, grants, role, error }: { keys: ApiKeyRo
   );
 }
 
-export function BillingPage({ user, quota, enabled, notice, error, subscription, chosen = {} }: { user: UserRow; quota: QuotaState; enabled: boolean; notice?: string; error?: string; chosen?: { plan?: string; interval?: string }; subscription: { status: string; billing_interval: string; current_period_end: number | null; cancel_at_period_end: number } | null }) {
+export function BillingPage({ user, quota, enabled, provider = 'Creem', notice, error, subscription, chosen = {} }: { user: UserRow; quota: QuotaState; enabled: boolean; provider?: string; notice?: string; error?: string; chosen?: { plan?: string; interval?: string }; subscription: { status: string; billing_interval: string; current_period_end: number | null; cancel_at_period_end: number } | null }) {
   const plan = getPlan(user.plan);
   return (
     <>
@@ -784,7 +784,7 @@ export function BillingPage({ user, quota, enabled, notice, error, subscription,
           <p class="font-bold">Upgrade</p>
           {enabled ? (
             <p class="mt-1 text-sm text-muted">
-              Secure checkout by Polar. Code <code class="font-mono font-bold text-ink">{LAUNCH_OFFER.code}</code> takes {LAUNCH_OFFER.percent}% off.
+              Secure checkout by {provider}. Code <code class="font-mono font-bold text-ink">{LAUNCH_OFFER.code}</code> takes {LAUNCH_OFFER.percent}% off.
             </p>
           ) : (
             <p class="mt-1 text-sm text-muted">Paid plans open soon on this environment. You’ll be able to upgrade here in one click.</p>

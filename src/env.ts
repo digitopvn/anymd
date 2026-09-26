@@ -5,6 +5,9 @@ export interface Env {
   PUBLIC_URL: string;
   CDN_URL: string;
   GITHUB_REPO: string;
+  /** Which payment provider takes checkouts; the other one stays off even when its secrets are set. */
+  BILLING_PROVIDER: 'creem' | 'polar';
+  CREEM_SERVER: 'test' | 'production';
   POLAR_SERVER: 'sandbox' | 'production';
 
   DB: D1Database;
@@ -24,6 +27,8 @@ export interface Env {
   ADMIN_EMAILS?: string;
   POLAR_ACCESS_TOKEN?: string;
   POLAR_WEBHOOK_SECRET?: string;
+  CREEM_API_KEY?: string;
+  CREEM_WEBHOOK_SECRET?: string;
   TYPESAFE_API_KEY?: string;
   VIDCAP_API_KEY?: string;
   GITHUB_TOKEN?: string;

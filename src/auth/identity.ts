@@ -46,6 +46,7 @@ export interface UserRow {
   avatar_url: string | null;
   plan: string;
   polar_customer_id: string | null;
+  creem_customer_id: string | null;
   created_at: number;
   updated_at: number;
   last_login_at: number | null;
@@ -81,6 +82,7 @@ export async function createUser(env: Env, input: { email: string; name: string;
     avatar_url: input.avatarUrl ?? null,
     plan: 'free',
     polar_customer_id: null,
+    creem_customer_id: null,
     created_at: ts,
     updated_at: ts,
     last_login_at: ts,

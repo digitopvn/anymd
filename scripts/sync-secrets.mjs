@@ -3,9 +3,10 @@
 //   node --env-file=.env scripts/sync-secrets.mjs staging
 //   node --env-file=.env scripts/sync-secrets.mjs production
 //
-// Only names listed below are sent; empty values are skipped. Polar secrets are read from
-// POLAR_ACCESS_TOKEN / POLAR_WEBHOOK_SECRET for staging (sandbox) and from
-// POLAR_PRODUCTION_ACCESS_TOKEN / POLAR_PRODUCTION_WEBHOOK_SECRET for production.
+// Only names listed below are sent; empty values are skipped. Billing secrets are read from
+// CREEM_API_KEY / CREEM_WEBHOOK_SECRET and POLAR_ACCESS_TOKEN / POLAR_WEBHOOK_SECRET for staging (test mode),
+// and from the CREEM_PRODUCTION_ / POLAR_PRODUCTION_ variants for production. BILLING_PROVIDER in
+// wrangler.jsonc decides which provider is live.
 // GitHub/Google sign-in values are described next to where they are read below.
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,6 +24,9 @@ const secrets = Object.fromEntries(shared.map((k) => [k, process.env[k]]));
 const polarPrefix = target === 'production' ? 'POLAR_PRODUCTION_' : 'POLAR_';
 secrets.POLAR_ACCESS_TOKEN = process.env[`${polarPrefix}ACCESS_TOKEN`];
 secrets.POLAR_WEBHOOK_SECRET = process.env[`${polarPrefix}WEBHOOK_SECRET`];
+const creemPrefix = target === 'production' ? 'CREEM_PRODUCTION_' : 'CREEM_';
+secrets.CREEM_API_KEY = process.env[`${creemPrefix}API_KEY`];
+secrets.CREEM_WEBHOOK_SECRET = process.env[`${creemPrefix}WEBHOOK_SECRET`];
 
 // Social sign-in. Staging prefers STAGING_-prefixed values. A GitHub OAuth App accepts a single
 // callback host, so staging never reuses the production GitHub app; Google may, once the staging

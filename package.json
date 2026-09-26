@@ -20,6 +20,7 @@
     "secrets:staging": "node --env-file=.env scripts/sync-secrets.mjs staging",
     "secrets:production": "node --env-file=.env scripts/sync-secrets.mjs production",
     "polar:setup": "node --env-file=.env scripts/polar-setup.mjs",
+    "creem:setup": "node --env-file=.env scripts/creem-setup.mjs",
     "deploy:staging": "npm run build && wrangler deploy --env staging",
     "deploy:production": "npm run build && wrangler deploy --env production"
   },

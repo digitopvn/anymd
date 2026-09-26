@@ -6,7 +6,7 @@ import { createApiKey, getUser, type ApiKeyRow } from '../auth/identity';
 import { apiError, requireScope, sameOriginWrites, type AppContext } from '../auth/middleware';
 import { isRole, KEY_PRESETS, ROLE_TEMPLATES, roleAtLeast } from '../auth/roles';
 import { getPlan, PLANS, type PlanId } from '../billing/plans';
-import { createCheckout, customerPortalUrl, polarEnabled } from '../billing/polar';
+import { billingEnabled, createCheckout, customerPortalUrl } from '../billing/provider';
 import { blockCatalog } from '../cms/blocks';
 import {
   applyPageOps,
@@ -291,7 +291,7 @@ api.delete('/keys/:id', requireScope('keys:manage'), async (c) => {
 
 api.post('/billing/checkout', requireScope(), async (c) => {
   if (c.get('principal').kind !== 'session') return apiError(c, 403, 'session_required', 'Checkout must be started from a signed-in browser session.');
-  if (!polarEnabled(c.env)) return apiError(c, 503, 'billing_unavailable', 'Billing is not configured on this environment yet.');
+  if (!billingEnabled(c.env)) return apiError(c, 503, 'billing_unavailable', 'Billing is not configured on this environment yet.');
   const b = await body(c, z.object({ plan: z.enum(['pro', 'scale']), interval: z.enum(['month', 'year']).default('month') }));
   const user = c.get('user')!;
   return c.json({ url: await createCheckout(c.env, user, b.plan as PlanId, b.interval) });
@@ -299,8 +299,10 @@ api.post('/billing/checkout', requireScope(), async (c) => {
 
 api.post('/billing/portal', requireScope(), async (c) => {
   if (c.get('principal').kind !== 'session') return apiError(c, 403, 'session_required', 'The billing portal must be opened from a signed-in browser session.');
-  if (!polarEnabled(c.env)) return apiError(c, 503, 'billing_unavailable', 'Billing is not configured on this environment yet.');
-  return c.json({ url: await customerPortalUrl(c.env, me(c).userId) });
+  if (!billingEnabled(c.env)) return apiError(c, 503, 'billing_unavailable', 'Billing is not configured on this environment yet.');
+  const url = await customerPortalUrl(c.env, me(c).userId).catch(() => null);
+  if (!url) return apiError(c, 400, 'no_billing_account', 'No billing account yet. Subscribe to a plan first.');
+  return c.json({ url });
 });
 
 // ─── Admin: page builder ────────────────────────────────────────────────────
