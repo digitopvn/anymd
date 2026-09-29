@@ -25,7 +25,7 @@ anymd.cc (the "Service") is operated by [Digitop.ai](https://digitop.ai) ("we", 
 
 **Usage events and traces.** For each request we record the URL you converted, the result status, credits used, timing, and per-step span timings (a "trace"). These power the usage logs and traces in your dashboard and help us fix problems.
 
-**Billing data.** Payments are handled by Creem. We receive your subscription status, plan, and order identifiers. We never see or store full card numbers.
+**Billing data.** Payments are handled by Polar.sh. We receive your subscription status, plan, and order identifiers. We never see or store full card numbers.
 
 **Anonymous conversions.** If you convert without signing in, the output is cached for up to 1 hour so repeated requests are fast. It is not attached to an account or stored in a library.
 
@@ -55,7 +55,7 @@ Where we rely on legitimate interests, we have weighed our interest in running a
 We use a small set of processors. Each receives only what it needs for its job.
 
 - **Cloudflare** — hosting on Workers, databases (D1), vector storage (Vectorize), file storage (R2), and AI inference via Workers AI (document and image conversion, embeddings, search query rewriting). Processes all Service data on our behalf.
-- **Creem** — merchant of record for payments, tax and VAT. Receives your email, billing details and purchase history.
+- **Polar.sh** — merchant of record for payments, tax and VAT. Receives your email, billing details and purchase history.
 - **FxTwitter** — receives the post identifier when you convert an X/Twitter URL.
 - **YouTube oEmbed, RapidAPI transcript providers and VidCap** — receive the video URL or identifier when you convert a YouTube link.
 - **Hacker News API** — receives the item identifier when you convert a Hacker News thread.
@@ -73,7 +73,7 @@ Cloudflare runs a global network, so your data may be processed in data centers 
 - **Anonymous conversion cache:** up to 1 hour.
 - **Account data, library, embeddings, API key hashes:** until you delete them or delete your account.
 - **Usage events and traces:** while your account exists, so you can see your history in the dashboard. They are deleted with your account.
-- **Billing records:** kept by Creem and by us for as long as tax and accounting law requires.
+- **Billing records:** kept by Polar.sh and by us for as long as tax and accounting law requires.
 - **Backups:** when you delete your account, your documents, keys and usage logs are removed from live systems and purged from backups within 30 days.
 
 ## Your rights

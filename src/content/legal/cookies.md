@@ -53,7 +53,7 @@ Declining will always leave the site fully usable.
 
 ## Third-party cookies
 
-anymd.cc does not embed advertising networks, social-media widgets or tracking pixels. When you check out, you are taken to Creem, our payment provider. Creem may set its own cookies on its own domain for payment security and checkout. Those are governed by Creem's cookie and privacy policies, not this one.
+anymd.cc does not embed advertising networks, social-media widgets or tracking pixels. When you check out, you are taken to Polar.sh, our payment provider. Polar may set its own cookies on its own domain for payment security and checkout. Those are governed by Polar's cookie and privacy policies, not this one.
 
 ## How to control cookies and storage
 

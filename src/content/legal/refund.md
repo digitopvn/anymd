@@ -6,7 +6,7 @@ updated: 2026-09-26
 
 We want you to pay for anymd.cc because it earns its keep, not because leaving is a hassle. This policy explains when you can get a refund, how much, and how to ask.
 
-All purchases are processed by **Creem** (creem.io), our merchant of record. Creem handles payment, tax and VAT, and it is Creem that actually sends refunds back to your payment method. We decide whether a refund is due under this policy. Creem executes it.
+All purchases are processed by **Polar.sh**, our merchant of record. Polar handles payment, tax and VAT, and it is Polar that actually sends refunds back to your payment method. We decide whether a refund is due under this policy. Polar executes it.
 
 ## Quick summary
 
@@ -40,7 +40,7 @@ After 30 days, annual payments are not refundable. You can still cancel to stop 
 
 ## Monthly plans after the first payment
 
-Monthly renewals are not refundable. Cancel any time from the dashboard or the Creem customer portal, and your plan stays active until the end of the current billing period. Nothing is charged after that.
+Monthly renewals are not refundable. Cancel any time from the dashboard or the Polar customer portal, and your plan stays active until the end of the current billing period. Nothing is charged after that.
 
 ## Mistakes and outages on our side
 
@@ -51,9 +51,9 @@ If you were charged twice, charged the wrong amount, or charged after cancelling
 Pick whichever is easier:
 
 1. **Email hello@digitop.ai** from the email address on your account. Include the order or invoice number if you have it, and tell us what you want refunded. A sentence about why is welcome but not required.
-2. **Contact Creem.** Your receipt email from Creem shows the order number and how to reach Creem support, which can process the refund for us. The Creem customer portal, linked from the same email and from your dashboard, lets you cancel and download invoices.
+2. **Use the Polar customer portal.** Your receipt email from Polar links to the portal, where you can manage your subscription, see your orders and request a refund. It is also linked from your dashboard.
 
-Once a refund is approved, Creem sends it to the original payment method. How long it takes to show up on your statement depends on your bank or card provider.
+Once a refund is approved, Polar sends it to the original payment method. How long it takes to show up on your statement depends on your bank or card provider.
 
 ## What happens to your account after a refund
 

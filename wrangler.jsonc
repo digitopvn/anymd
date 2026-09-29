@@ -45,7 +45,7 @@
         "PUBLIC_URL": "https://anymd.cc",
         "CDN_URL": "https://cdn.anymd.cc",
         "GITHUB_REPO": "digitopvn/anymd",
-        "BILLING_PROVIDER": "creem",
+        "BILLING_PROVIDER": "polar",
         "CREEM_SERVER": "production",
         "POLAR_SERVER": "production",
         "ADMIN_EMAILS": "hello@digitop.ai"

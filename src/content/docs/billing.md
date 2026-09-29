@@ -50,10 +50,10 @@ Enter the code at checkout.
 
 ## Checkout and managing your plan
 
-Payments are handled by [Creem](https://creem.io), our merchant of record. Creem collects the payment and handles sales tax and VAT.
+Payments are handled by [Polar.sh](https://polar.sh), our merchant of record. Polar collects the payment and handles sales tax and VAT.
 
 - **Upgrade:** from the [pricing page](/pricing) or your dashboard, or `POST /api/v1/billing/checkout` with `{ "plan": "pro" | "scale", "interval": "month" | "year" }`. The response is `{ url }`; open it to pay.
-- **Manage, change or cancel:** from your dashboard, or `POST /api/v1/billing/portal`, which returns `{ url }` for the Creem customer portal (payment method, invoices, cancellation). It works once you have paid for a plan.
+- **Manage, change or cancel:** from your dashboard, or `POST /api/v1/billing/portal`, which returns `{ url }` for the Polar customer portal (payment method, invoices, cancellation). It works once you have paid for a plan.
 
 Both endpoints need a signed-in browser session. API keys can't start a checkout.
 
