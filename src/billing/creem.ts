@@ -1,7 +1,7 @@
 /**
  * Creem.io integration: checkout, customer portal and signed webhooks. Gated on BILLING_PROVIDER=creem
- * plus CREEM_API_KEY / CREEM_WEBHOOK_SECRET. Creem has no usage meter, so paid plans stop at their
- * included credits. Products are found by name (`anymd Pro (monthly)` …), created by scripts/creem-setup.mjs.
+ * plus CREEM_API_KEY / CREEM_WEBHOOK_SECRET. Creem has no usage meter, so overage past
+ * the included credits is not billed. Products are found by name (`anymd Pro (monthly)` …), created by scripts/creem-setup.mjs.
  */
 import type { Env } from '../env';
 import { newId, now } from '../lib/util';

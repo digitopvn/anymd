@@ -145,7 +145,7 @@ For the special cases, like transcripts, threads and spreadsheets, see [YouTube,
 
 ## What it costs
 
-One web page is **1 credit**. YouTube videos and PDF or Office files are **3**. Images are **5**. The Free plan includes 500 credits a month. Pro and Scale add far more, and you can upgrade the moment you need it. Details on the [pricing page](/pricing).
+One web page is **1 credit**. YouTube videos and PDF or Office files are **3**. Images are **5**. The Free plan includes 500 credits a month. Pro and Scale add far more, and paid plans keep going past the allowance at a small per-1,000 overage instead of stopping. Details on the [pricing page](/pricing).
 
 ## When a page will not convert
 

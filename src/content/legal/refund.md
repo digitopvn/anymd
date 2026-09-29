@@ -42,6 +42,10 @@ After 30 days, annual payments are not refundable. You can still cancel to stop 
 
 Monthly renewals are not refundable. Cancel any time from the dashboard or the Polar customer portal, and your plan stays active until the end of the current billing period. Nothing is charged after that.
 
+## Overage charges
+
+Pro and Scale plans can bill overage when you go past your monthly credits ($1 per 1,000 credits on Pro, $0.60 per 1,000 on Scale). Overage pays for conversions that already ran, so it is not refundable, except where it was caused by a billing error on our side.
+
 ## Mistakes and outages on our side
 
 If you were charged twice, charged the wrong amount, or charged after cancelling, we will refund the incorrect charge in full, regardless of the windows above. If a prolonged outage on our side kept you from using a paid plan, contact us and we will make it right with a refund or credit, depending on what fits the situation.

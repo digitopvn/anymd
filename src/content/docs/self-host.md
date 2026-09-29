@@ -134,7 +134,7 @@ The authoritative list is the `Env` interface in `src/env.ts`. For local develop
 
 #### Creem
 
-Use `CREEM_SERVER=test` for anything that isn't production; it talks to `https://test-api.creem.io` with a test-mode key. anymd finds your products by name: `anymd Pro (monthly)`, `anymd Pro (yearly)`, `anymd Scale (monthly)` and `anymd Scale (yearly)`. Discount codes are plain Creem discounts (for example `LAUNCH30`). Creem has no usage meter, so paid plans stop at their included credits.
+Use `CREEM_SERVER=test` for anything that isn't production; it talks to `https://test-api.creem.io` with a test-mode key. anymd finds your products by name: `anymd Pro (monthly)`, `anymd Pro (yearly)`, `anymd Scale (monthly)` and `anymd Scale (yearly)`. Discount codes are plain Creem discounts (for example `LAUNCH30`). Creem has no usage meter, so it cannot bill overage: with Creem, plans that set `overagePer1k` keep going past their credits without an extra charge. Use Polar if you want overage billed.
 
 `scripts/creem-setup.mjs` creates the four products, the discount codes and the webhook, and is safe to re-run. It saves the webhook signing secret to `.env` without printing it:
 

@@ -25,9 +25,9 @@ function PageHero({ eyebrow, title, lead, children }: { eyebrow: string; title: 
 
 const PRICING_FAQ = [
   { q: 'What is a credit?', a: 'One web page = 1 credit. YouTube = 3, PDFs and office files = 3, images = 5. Searching your library and cached results are free.' },
-  { q: 'What happens when I run out?', a: 'New conversions pause until the 1st of next month. Cached reads and library search keep working. Upgrade any time to raise the limit straight away, or email hello@digitop.ai for Enterprise volume.' },
+  { q: 'What happens when I run out?', a: 'Free accounts pause until next month. Pro and Scale keep going and pay a small per-1k overage, so your agents never hit a wall mid-task.' },
   { q: 'Can I cancel anytime?', a: 'Yes. Cancel from the billing portal; you keep your plan until the end of the period. See the refund policy for details.' },
-  { q: 'Do unused credits roll over?', a: 'No. Included credits reset on the 1st of each month (UTC). Pick the plan that covers your busiest month.' },
+  { q: 'Do unused credits roll over?', a: 'Included credits reset on the 1st of each month (UTC). On Pro and Scale, work past the allowance is billed as small per-1,000 overage, so nothing stops mid-job.' },
   { q: 'Is there a discount?', a: `Launch week: ${LAUNCH_OFFER.percent}% off with ${LAUNCH_OFFER.code}. Nonprofits, students and open-source maintainers: email hello@digitop.ai.` },
 ];
 
@@ -36,7 +36,7 @@ export function PricingPage({ checkoutReady }: { checkoutReady: boolean }) {
   return (
     <>
       <OfferBar />
-      <PageHero eyebrow="Pricing" title="Pay when your agents learn something new." lead="Reusing what they already know is free. Start with 500 credits a month, upgrade when your agents get hungry. Credit-based, predictable, cancel anytime." />
+      <PageHero eyebrow="Pricing" title="Pay when your agents learn something new." lead="Reusing what they already know is free. Start with 500 credits a month, upgrade when your agents get hungry. Usage-based, predictable, cancel anytime." />
       <section class="section !pt-12">
         <div class="container-x">
           <PricingCards />
