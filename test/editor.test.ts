@@ -135,6 +135,39 @@ check('nested array issue path', () => {
 });
 
 describe('page editor: undo and schema forms', () => {
+  it('preserves full entropy when creating block IDs', () => {
+    const initial = { version: 1, layout: 'default', seo: {}, blocks: [] } as unknown as SDoc;
+    const ops = Array.from({ length: 80 }, () => ({
+      op: 'insert',
+      block: { type: 'hero', props: ex('hero') },
+    })) as unknown as SOp[];
+    const created = applyOpsToDocument(initial, { title: 'T', description: '', slug: 't' }, ops).created;
+
+    expect(new Set(created).size).toBe(80);
+    expect(created.every((id) => /^b_[0-9a-hjkmnp-tv-z]{22}$/.test(id))).toBe(true);
+  });
+
+  it('preserves full entropy when duplicating nested block IDs', () => {
+    const initial = { version: 1, layout: 'default', seo: {}, blocks: [] } as unknown as SDoc;
+    const seeded = applyOpsToDocument(initial, { title: 'T', description: '', slug: 't' }, [
+      { op: 'insert', block: { type: 'columns', props: {} } },
+    ] as unknown as SOp[]);
+    const parentId = seeded.created[0];
+    const withChild = applyOpsToDocument(seeded.doc, seeded.meta, [
+      { op: 'insert', block: { type: 'rich-text', props: { markdown: 'nested' } }, parentId, slot: 'left' },
+    ] as unknown as SOp[]);
+    const duplicated = applyOpsToDocument(
+      withChild.doc,
+      withChild.meta,
+      Array.from({ length: 39 }, () => ({ op: 'duplicate', id: parentId })) as unknown as SOp[],
+    );
+    const allIds = duplicated.doc.blocks.flatMap((block) => [block.id, ...Object.values(block.slots ?? {}).flat().map((child) => child.id)]);
+
+    expect(allIds).toHaveLength(80);
+    expect(new Set(allIds).size).toBe(80);
+    expect(allIds.every((id) => /^b_[0-9a-hjkmnp-tv-z]{22}$/.test(id))).toBe(true);
+  });
+
   for (const [name, fn] of checks) {
     it(name, () => {
       const [ok, extra] = fn();

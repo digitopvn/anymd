@@ -2,6 +2,7 @@ import type { Env, Principal } from '../env';
 import { getPlan } from '../billing/plans';
 import type { Tracer } from './tracer';
 import { newId, now } from './util';
+import { CHARGES_SQL, UNRESERVED_USAGE_SQL } from './conversion-budget';
 
 export type Channel = 'web' | 'api' | 'mcp' | 'cli' | 'webmcp' | 'url';
 
@@ -26,8 +27,9 @@ export function monthStart(ts = now()): number {
 
 /** Credits used this calendar month (UTC). */
 export async function creditsUsedThisMonth(env: Env, userId: string): Promise<number> {
-  const row = await env.DB.prepare('SELECT COALESCE(SUM(credits),0) AS used FROM usage_events WHERE user_id = ? AND created_at >= ?')
-    .bind(userId, monthStart())
+  const ts = now();
+  const row = await env.DB.prepare(`SELECT (${UNRESERVED_USAGE_SQL}) + (${CHARGES_SQL}) AS used`)
+    .bind(userId, monthStart(ts), ts, userId, monthStart(ts))
     .first<{ used: number }>();
   return row?.used ?? 0;
 }

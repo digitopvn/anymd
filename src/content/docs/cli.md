@@ -1,7 +1,7 @@
 ---
 title: "CLI"
 description: "The anymd command: convert URLs and files, search your library, manage pages and print MCP config from your terminal."
-updated: "2026-09-26"
+updated: "2026-10-04"
 ---
 
 `anymd` is a zero-dependency command-line client. It needs Node.js 18 or newer and nothing else.
@@ -40,7 +40,7 @@ Without a key the CLI works anonymously, with the same 50-per-day limit as the [
 | Command | What it does |
 |---|---|
 | `anymd <url>` | Convert and print Markdown |
-| `anymd convert <url> [--json] [-o file] [--no-save] [--fresh]` | Convert with options |
+| `anymd convert <url> [--json] [-o file] [--no-save] [--fresh] [enrichment flags]` | Convert with options |
 | `anymd file <path>` | Convert a local file (PDF, DOCX, XLSX, CSV, images…) |
 | `anymd search <query> [--mode hybrid] [--limit 10] [--json]` | Search your library |
 | `anymd ls [--limit 20] [--domain x]` | List library documents |
@@ -75,6 +75,14 @@ Convert without touching your library, bypassing the cache:
 
 ```bash
 anymd convert https://example.com --no-save --fresh
+```
+
+Signed-in conversions also accept `--include-comments`, `--analyze-images`, `--max-comments <1..1000>`, `--max-images <1..20>` and `--max-credits <1..1000>`. Comments and image analysis are opt-in; `maxCredits` defaults to 100. Anonymous X reads retain the basic post conversion, while signed-in X reads can expand a rooted same-author thread automatically. Social post adapters require a key. JSON output includes the `credit_breakdown` and `enrichment` coverage fields, so provider failures or request limits remain visible.
+
+For example:
+
+```bash
+anymd convert https://x.com/example/status/123 --include-comments --max-comments 40 --max-credits 200 --json
 ```
 
 Convert a local PDF:

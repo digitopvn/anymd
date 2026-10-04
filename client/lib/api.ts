@@ -70,6 +70,7 @@ export interface ConvertPayload {
   content: string;
   document_id: string | null;
   credits: number;
+  credit_breakdown?: { base: number; thread: number; comments: number; images: number };
   cached: boolean;
   duration_ms: number;
   /** Size of the fetched HTML, when the server reports it. */
@@ -100,16 +101,42 @@ function asPayload(raw: unknown): ConvertPayload {
  * Convert a URL. Signed-in callers use POST /api/v1/convert (saved to the library); the REST
  * scope guard rejects anonymous callers, so they fall back to the public URL API.
  */
-export async function convertUrl(url: string, save?: boolean): Promise<{ data: ConvertPayload; headers: Headers }> {
+export interface ConversionOptions {
+  includeComments?: boolean;
+  analyzeImages?: boolean;
+  maxComments?: number;
+  maxImages?: number;
+  maxCredits?: number;
+}
+
+function fallbackQuery(save: boolean | undefined, options: ConversionOptions): string {
+  const params = new URLSearchParams();
+  for (const key of ['includeComments', 'analyzeImages'] as const) {
+    if (options[key] !== undefined) params.set(key, options[key] ? '1' : '0');
+  }
+  for (const key of ['maxComments', 'maxImages', 'maxCredits'] as const) {
+    if (options[key] !== undefined) params.set(key, String(options[key]));
+  }
+  if (save !== undefined) params.set('save', save ? '1' : '0');
+  return params.toString();
+}
+
+export async function convertUrl(url: string, save?: boolean, options: ConversionOptions = {}): Promise<{ data: ConvertPayload; headers: Headers }> {
   try {
-    const { data, res } = await request<unknown>('/api/v1/convert', { method: 'POST', body: { url, format: 'json', ...(save === undefined ? {} : { save }) } });
+    const { data, res } = await request<unknown>('/api/v1/convert', { method: 'POST', body: { url, format: 'json', ...options, ...(save === undefined ? {} : { save }) } });
     return { data: asPayload(data), headers: res.headers };
   } catch (err) {
     if (!(err instanceof ApiFailure && err.status === 401)) throw err;
+    if (options.includeComments || options.analyzeImages) throw err;
   }
   try {
     const target = url.replace(/#.*$/, '').replace(/^\/+/, '');
-    const { data, res } = await request<unknown>(`/${target}`);
+    const query = fallbackQuery(save, options);
+    const separator = target.indexOf('?');
+    const targetPath = separator < 0 ? target : target.slice(0, separator);
+    const targetQuery = separator < 0 ? '' : target.slice(separator + 1);
+    const combinedQuery = [query, targetQuery].filter(Boolean).join('&');
+    const { data, res } = await request<unknown>(`/${targetPath}${combinedQuery ? `?${combinedQuery}` : ''}`);
     return { data: asPayload(data), headers: res.headers };
   } catch (err) {
     if (err instanceof ApiFailure) err.anonymous = true;

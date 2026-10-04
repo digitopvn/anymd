@@ -1,9 +1,14 @@
 import type { Env } from '../env';
 import type { Tracer } from '../lib/tracer';
+import type { ConversionBudget, Enrichment, EnrichmentOptions } from './enrichment-types';
 
 export type SourceKind =
   | 'web'
   | 'x'
+  | 'facebook'
+  | 'threads'
+  | 'instagram'
+  | 'linkedin'
   | 'youtube'
   | 'github'
   | 'hackernews'
@@ -14,6 +19,11 @@ export type SourceKind =
   | 'text';
 
 export interface ConvertResult {
+  enrichment?: Enrichment;
+  /** Unenriched article body, used to retain separately timestamped library sections. */
+  baseContent?: string;
+  /** When present, only these structured provider media URLs are eligible for paid analysis. */
+  articleImageUrls?: string[];
   title: string;
   author: string;
   published: string;
@@ -37,7 +47,9 @@ export interface ConvertResult {
   views?: number | null;
 }
 
-export interface ConvertContext {
+export interface ConvertContext extends EnrichmentOptions {
+  budget?: ConversionBudget;
+  authenticated?: boolean;
   env: Env;
   tracer: Tracer;
   language?: string;

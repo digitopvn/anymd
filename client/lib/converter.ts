@@ -7,6 +7,10 @@ import { loadMarkdownRenderer } from './markdown';
 const KIND_LABELS: Record<string, string> = {
   web: 'Web page',
   x: 'X post',
+  facebook: 'Facebook',
+  instagram: 'Instagram',
+  threads: 'Threads',
+  linkedin: 'LinkedIn',
   youtube: 'YouTube',
   github: 'GitHub',
   hackernews: 'Hacker News',
@@ -151,6 +155,10 @@ function initConverter(root: HTMLElement): void {
     const kind = headers.get('X-Anymd-Kind') || d.kind;
     const ms = d.duration_ms;
     stat('kind', `${KIND_LABELS[kind] ?? kind} · ${credits} credit${credits === 1 ? '' : 's'}`);
+    const kindStat = $('[data-stat="kind"]', root);
+    if (kindStat && d.credit_breakdown) {
+      kindStat.textContent += ` (${Object.entries(d.credit_breakdown).filter(([, value]) => value > 0).map(([name, value]) => `${name} ${value}`).join(', ') || 'cache'})`;
+    }
     stat('words', fmt.format(d.word_count));
     stat('ratio', ratio(d));
     stat('time', `${ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`}${cached ? ' · cached' : ''}`);
@@ -182,7 +190,14 @@ function initConverter(root: HTMLElement): void {
     setBusy(true);
     showError(null);
     try {
-      const { data, headers } = await convertUrl(url);
+      const values = new FormData(form);
+      const { data, headers } = await convertUrl(url, undefined, {
+        includeComments: values.get('includeComments') === '1',
+        analyzeImages: values.get('analyzeImages') === '1',
+        maxComments: Number(values.get('maxComments') ?? 100),
+        maxImages: Number(values.get('maxImages') ?? 10),
+        maxCredits: Number(values.get('maxCredits') ?? 100),
+      });
       current = data;
       previewed = null;
       render(data, headers);

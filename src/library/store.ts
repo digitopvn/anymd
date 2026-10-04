@@ -1,6 +1,10 @@
 import type { Env } from '../env';
 import type { ConvertResult } from '../convert/types';
 import { newId, now, sha256 } from '../lib/util';
+import { mergeEnrichment } from './enrichment';
+import { renderEnrichment } from '../convert/image-enrichment';
+import { countWords } from '../convert/types';
+import type { Enrichment } from '../convert/enrichment-types';
 
 export interface DocumentRow {
   id: string;
@@ -25,6 +29,8 @@ export interface DocumentRow {
 
 export type DocumentSummary = Omit<DocumentRow, 'markdown'>;
 
+const DOCUMENT_COLUMNS =
+  'id,user_id,url,title,author,description,domain,site,image,published,language,source_kind,tags,markdown,word_count,embedded_chunks,created_at,updated_at';
 const SUMMARY_COLUMNS =
   'id,user_id,url,title,author,description,domain,site,image,published,language,source_kind,tags,word_count,embedded_chunks,created_at,updated_at';
 
@@ -40,39 +46,81 @@ export async function saveDocument(
   result: ConvertResult,
   markdown: string,
   libraryLimit: number | null = null,
+  attempt = 0,
 ): Promise<{ id: string; changed: boolean } | null> {
   const urlHash = await sha256(result.source);
-  const contentHash = await sha256(markdown);
   const ts = now();
-  const existing = await env.DB.prepare('SELECT id, content_hash FROM documents WHERE user_id = ? AND url_hash = ?')
+  const existing = await env.DB.prepare(`SELECT id,content_hash,enrichment_json,base_markdown,
+    title,author,description,domain,site,image,published,language,source_kind
+    FROM documents WHERE user_id = ? AND url_hash = ?`)
     .bind(userId, urlHash)
-    .first<{ id: string; content_hash: string }>();
+    .first<{
+      id: string;
+      content_hash: string;
+      enrichment_json: string | null;
+      base_markdown: string | null;
+      title: string;
+      author: string;
+      description: string;
+      domain: string;
+      site: string;
+      image: string;
+      published: string;
+      language: string;
+      source_kind: string;
+    }>();
+  let previous: Enrichment = {};
+  try { previous = JSON.parse(existing?.enrichment_json ?? '{}'); } catch { /* Older records have no enrichment. */ }
+  const enrichment = mergeEnrichment(previous, result.enrichment);
+  const preserveThread = previous.thread && enrichment.thread === previous.thread;
+  const base = preserveThread && existing?.base_markdown ? existing.base_markdown : result.baseContent ?? markdown;
+  markdown = renderEnrichment(base, result.source, enrichment);
+  const contentHash = await sha256(markdown);
+  const wordCount = countWords(markdown);
+  const enrichmentJson = JSON.stringify(enrichment);
   if (existing) {
-    if (existing.content_hash === contentHash) {
+    const metadataChanged = existing.title !== result.title
+      || existing.author !== result.author
+      || existing.description !== result.description
+      || existing.domain !== result.domain
+      || existing.site !== (result.site ?? '')
+      || existing.image !== (result.image ?? '')
+      || existing.published !== result.published
+      || existing.language !== (result.language ?? '')
+      || existing.source_kind !== result.sourceKind;
+    if (existing.content_hash === contentHash && existing.enrichment_json === enrichmentJson && !metadataChanged) {
       await env.DB.prepare('UPDATE documents SET updated_at = ? WHERE id = ?').bind(ts, existing.id).run();
       return { id: existing.id, changed: false };
     }
-    await env.DB.prepare(
-      'UPDATE documents SET title=?,author=?,description=?,domain=?,site=?,image=?,published=?,language=?,source_kind=?,markdown=?,word_count=?,content_hash=?,embedded_chunks=0,updated_at=? WHERE id=?',
+    const updated = await env.DB.prepare(
+      'UPDATE documents SET title=?,author=?,description=?,domain=?,site=?,image=?,published=?,language=?,source_kind=?,markdown=?,word_count=?,content_hash=?,embedded_chunks=0,updated_at=?,enrichment_json=?,base_markdown=? WHERE id=? AND user_id=? AND content_hash=?',
     )
       .bind(
         result.title, result.author, result.description, result.domain, result.site ?? '', result.image ?? '',
-        result.published, result.language ?? '', result.sourceKind, markdown, result.wordCount, contentHash, ts, existing.id,
+        result.published, result.language ?? '', result.sourceKind, markdown, wordCount, contentHash, ts, enrichmentJson, base, existing.id, userId, existing.content_hash,
       )
       .run();
+    if (!updated.meta.changes) {
+      if (attempt >= 2) return null;
+      return saveDocument(env, userId, result, result.baseContent ?? markdown, libraryLimit, attempt + 1);
+    }
     return { id: existing.id, changed: true };
   }
   // A full library still converts; the new page is just not saved.
   if (libraryLimit !== null && (await countDocuments(env, userId)) >= libraryLimit) return null;
   const id = newId('doc_');
-  await env.DB.prepare(
-    'INSERT INTO documents (id,user_id,url,url_hash,title,author,description,domain,site,image,published,language,source_kind,tags,markdown,word_count,content_hash,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  const inserted = await env.DB.prepare(
+    'INSERT INTO documents (id,user_id,url,url_hash,title,author,description,domain,site,image,published,language,source_kind,tags,markdown,word_count,content_hash,created_at,updated_at,enrichment_json,base_markdown) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,url_hash) DO NOTHING',
   )
     .bind(
       id, userId, result.source, urlHash, result.title, result.author, result.description, result.domain, result.site ?? '',
-      result.image ?? '', result.published, result.language ?? '', result.sourceKind, '', markdown, result.wordCount, contentHash, ts, ts,
+      result.image ?? '', result.published, result.language ?? '', result.sourceKind, '', markdown, wordCount, contentHash, ts, ts, enrichmentJson, base,
     )
     .run();
+  if (!inserted.meta.changes) {
+    if (attempt >= 2) return null;
+    return saveDocument(env, userId, result, result.baseContent ?? markdown, libraryLimit, attempt + 1);
+  }
   return { id, changed: true };
 }
 
@@ -99,7 +147,7 @@ export async function listDocuments(
 }
 
 export async function getDocument(env: Env, userId: string, id: string): Promise<DocumentRow | null> {
-  return env.DB.prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?').bind(id, userId).first<DocumentRow>();
+  return env.DB.prepare(`SELECT ${DOCUMENT_COLUMNS} FROM documents WHERE id = ? AND user_id = ?`).bind(id, userId).first<DocumentRow>();
 }
 
 export async function getDocumentsByIds(env: Env, userId: string, ids: string[]): Promise<DocumentSummary[]> {

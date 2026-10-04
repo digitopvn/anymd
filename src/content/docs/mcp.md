@@ -1,7 +1,7 @@
 ---
 title: "MCP server"
 description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp so your agents can read the public web, remember it and search it."
-updated: "2026-09-26"
+updated: "2026-10-04"
 ---
 
 anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) server. It is the main way agents use anymd as their web context layer: connect it once and your agent can read public web content as structured Markdown, recall everything it has read from your private library, and (with the right scopes) manage pages.
@@ -82,8 +82,8 @@ Tools are listed only when the caller holds the scope they need.
 
 | Tool | Input | Needs |
 |---|---|---|
-| `read_url` | `{ url, save?, fresh? }` | `convert` (saving also needs `library:write`) |
-| `convert_url` | `{ url, save?, fresh? }` | Same as `read_url`, kept under its original name for existing clients |
+| `read_url` | `{ url, save?, fresh?, includeComments?, analyzeImages?, maxComments?, maxImages?, maxCredits? }` | `convert` (saving also needs `library:write`) |
+| `convert_url` | Same input as `read_url` | Same as `read_url`, kept under its original name for existing clients |
 | `search_library` | `{ query, mode?, limit? }` | `library:read` |
 | `get_document` | `{ id }` | `library:read` |
 | `list_documents` | `{ limit?, domain? }` | `library:read` |
@@ -91,6 +91,8 @@ Tools are listed only when the caller holds the scope they need.
 | `usage_summary` | `{}` | `usage:read` |
 
 `read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
+
+`includeComments` and `analyzeImages` are opt-in enrichment flags. `maxCredits` defaults to 100 and is capped at 1,000; `maxComments` defaults to 100 and is capped at 1,000; `maxImages` defaults to 10 and is capped at 20. Signed-in X reads can expand the rooted same-author thread automatically. Social post adapters for Facebook, Instagram, Threads and LinkedIn require an account. The response includes `credit_breakdown` and `enrichment` coverage so partial provider, limit or timeout results are explicit; cached reads are free.
 
 ### Pages and posts
 

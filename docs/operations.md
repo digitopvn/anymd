@@ -7,7 +7,7 @@ How to reach, deploy, observe and recover the running anymd.cc service. Setup fo
 | Environment | Branch | Hostnames | Worker | Billing |
 |---|---|---|---|---|
 | `staging` | `dev` | staging.anymd.cc | `anymd-staging` | Creem test mode |
-| `production` | `main` | anymd.cc, www.anymd.cc | `anymd` | Creem live |
+| `production` | `main` | anymd.cc, www.anymd.cc | `anymd` | Polar live |
 
 Bindings, resource names and vars per environment: `wrangler.jsonc`. `BILLING_PROVIDER` picks the live payment provider (`polar` on production, `creem` in test mode on staging; the other provider's code and secrets stay in place but inactive). `CREEM_SERVER` and `POLAR_SERVER` select each provider's API host (see `apiBase` in `src/billing/creem.ts` and `src/billing/polar.ts`).
 
@@ -24,7 +24,26 @@ npm run db:migrate:production && npm run deploy:production
 
 Order matters: apply migrations first, then deploy code that depends on them. Migrations must be additive so the previous Worker version keeps working during rollout and after a rollback.
 
+Before any remote migration, create a recoverable D1 backup or Time Travel bookmark and record the currently deployed Worker version. For example, inspect the target explicitly with `npx wrangler d1 time-travel info anymd-production --env production` (use the staging database and environment for staging). The enrichment schema migration is additive (`migrations/0005_conversion_enrichment.sql`); never edit an applied migration or run a remote migration without that recovery point. Full D1 exports are not a fallback for this database's FTS5 virtual tables.
+
 Promote to production only after the change is verified on staging, including the responsive check at 375 / 768 / 1440 px listed in `REVIEW.md`.
+
+## CLI artifact release
+
+The CLI is distributed from the R2-backed CDN URL `https://cdn.anymd.cc/cli/anymd-cli-latest.tgz`; it is not published to the npm registry. After the CLI version and flags are verified, run `npm pack ./cli` and identify the generated tarball. Before replacing the mutable `latest` object, back it up with a remote GET:
+
+```bash
+npx wrangler r2 object get anymd/cli/anymd-cli-latest.tgz --file ./backups/anymd-cli-latest-<timestamp>.tgz --remote
+```
+
+Upload both the immutable versioned object and the `latest` alias with gzip content type:
+
+```bash
+npx wrangler r2 object put anymd/cli/anymd-cli-<version>.tgz --file ./<packed-tarball>.tgz --remote --content-type application/gzip
+npx wrangler r2 object put anymd/cli/anymd-cli-latest.tgz --file ./<packed-tarball>.tgz --remote --content-type application/gzip
+```
+
+Verify the versioned artifact by downloading it with `wrangler r2 object get --remote` and comparing its SHA-256 hash with the local tarball (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on POSIX). Verify the CDN URL and the CLI help output after the upload. This procedure documents the release route; it does not mean a new artifact has been published.
 
 ## Secrets
 
@@ -35,6 +54,18 @@ Secret names and their features are declared in the `Env` interface in `src/env.
 - Rotate by `wrangler secret put` with the new value; the next request picks it up.
 
 Staging uses Creem **test-mode** credentials (`CREEM_API_KEY`, `CREEM_WEBHOOK_SECRET`) and Polar **sandbox** credentials. Never put live payment credentials on staging.
+
+Social adapters use the optional `RAPIDAPI_KEY`; article-image OCR and descriptions use the optional `OPENROUTER_API_KEY`. Provider subscriptions and model availability are external prerequisites, so a configured secret alone is not evidence that an adapter is operational.
+
+The adapter source files own the fixed provider hosts and paths; callers never supply them:
+
+| Capability | Provider host | Secret |
+|---|---|---|
+| Facebook posts/comments | `facebook-scraper3.p.rapidapi.com` | `RAPIDAPI_KEY` |
+| Instagram posts/media/comments | `instagram-pro-and-cheap-api.p.rapidapi.com` | `RAPIDAPI_KEY` |
+| Threads posts/comments | `threads-api4.p.rapidapi.com` | `RAPIDAPI_KEY` |
+| LinkedIn posts/comments | `fresh-linkedin-profile-data.p.rapidapi.com` | `RAPIDAPI_KEY` |
+| Article-image analysis | OpenRouter `https://openrouter.ai/api/v1/chat/completions` with `qwen/qwen3.6-35b-a3b` | `OPENROUTER_API_KEY` |
 
 ## Creem (staging)
 

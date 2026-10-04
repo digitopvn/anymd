@@ -16,12 +16,15 @@ import { clientIp, markdownResponse, originOf, renderMessage, renderPage } from 
 
 export const convertRoutes = new Hono<AppBindings>();
 
-const OPTION_PARAMS = ['format', 'lang', 'selector', 'images', 'frontmatter', 'fresh', 'save'];
+const OPTION_PARAMS = ['format', 'lang', 'selector', 'images', 'frontmatter', 'fresh', 'save', 'includeComments', 'analyzeImages', 'maxComments', 'maxImages', 'maxCredits'];
 
 convertRoutes.get('/convert', (c) => {
   const url = (c.req.query('url') ?? '').trim();
   if (!url) return c.redirect('/');
-  return c.redirect('/' + url.replace(/^\/+/, ''), 302);
+  const target = url.replace(/^\/+/, '').replace(/#.*$/, '');
+  const extras = new URLSearchParams();
+  for (const key of OPTION_PARAMS) { const value = c.req.query(key); if (value !== undefined) extras.set(key, value); }
+  return c.redirect('/' + target + (extras.size ? `${target.includes('?') ? '&' : '?'}${extras}` : ''), 302);
 });
 
 function notFound(c: AppContext) {
@@ -47,6 +50,13 @@ convertRoutes.get('*', async (c) => {
   const params = new URLSearchParams(reqUrl.search);
   const opt = (k: string) => params.get(k) ?? undefined;
   const options = { format: opt('format'), lang: opt('lang'), selector: opt('selector'), images: opt('images'), frontmatter: opt('frontmatter'), fresh: opt('fresh'), save: opt('save') };
+  const extras = {
+    includeComments: opt('includeComments') === undefined ? undefined : opt('includeComments') === '1' ? true : opt('includeComments') === '0' ? false : null,
+    analyzeImages: opt('analyzeImages') === undefined ? undefined : opt('analyzeImages') === '1' ? true : opt('analyzeImages') === '0' ? false : null,
+    maxComments: opt('maxComments') === undefined ? undefined : Number(opt('maxComments')),
+    maxImages: opt('maxImages') === undefined ? undefined : Number(opt('maxImages')),
+    maxCredits: opt('maxCredits') === undefined ? undefined : Number(opt('maxCredits')),
+  };
   for (const k of OPTION_PARAMS) params.delete(k);
   const query = params.toString();
   const target = raw + (query ? `?${query}` : '');
@@ -56,6 +66,7 @@ convertRoutes.get('*', async (c) => {
 
   try {
     const r = await runConversion(c.env, c.executionCtx, {
+      ...extras as import('../convert/enrichment-types').EnrichmentOptions,
       url: target,
       channel: 'url',
       principal: c.get('principal'),

@@ -3,6 +3,9 @@
  * Uses the FxTwitter API for posts, long-form Articles, quotes, polls and media.
  */
 import { countWords, USER_AGENT, type ConvertResult, type SourceAdapter, ConvertError } from './types';
+import { enrichX } from './x-thread';
+import { readBounded } from './provider-fetch';
+import { plainMarkdown, publicUrl } from './social-common';
 
 const X_URL_PATTERN = /^https?:\/\/(?:www\.|mobile\.)?(x\.com|twitter\.com)\/\w+\/status\/\d+/;
 
@@ -449,7 +452,7 @@ function blocksToMarkdown(blocks: DraftBlock[], entityMap: Record<string, DraftE
  */
 function expandTweetText(tweet: FxTweet): string {
     if (!tweet.raw_text?.facets?.length) {
-        return tweet.text || '';
+        return plainMarkdown(tweet.text || '');
     }
 
     const { text, facets } = tweet.raw_text;
@@ -466,14 +469,14 @@ function expandTweetText(tweet: FxTweet): string {
         const [start, end] = facet.indices;
 
         // Add text before this facet
-        result += chars.slice(lastIndex, start).join('');
+        result += plainMarkdown(chars.slice(lastIndex, start).join(''));
 
         const originalSegment = chars.slice(start, end).join('');
 
         if (facet.type === 'url' && facet.display) {
             // Replace t.co URL with display URL as a markdown link
             const linkUrl = facet.replacement || facet.original || originalSegment;
-            result += `[${facet.display}](${linkUrl})`;
+            result += `[${plainMarkdown(facet.display)}](<${publicUrl(linkUrl)}>)`;
         } else if (facet.type === 'mention') {
             const screenName = facet.id || originalSegment.replace('@', '');
             result += `[@${screenName}](https://x.com/${screenName})`;
@@ -481,14 +484,14 @@ function expandTweetText(tweet: FxTweet): string {
             const tag = facet.display || originalSegment.replace('#', '');
             result += `[#${tag}](https://x.com/hashtag/${tag})`;
         } else {
-            result += originalSegment;
+            result += plainMarkdown(originalSegment);
         }
 
         lastIndex = end;
     }
 
     // Add remaining text
-    result += chars.slice(lastIndex).join('');
+    result += plainMarkdown(chars.slice(lastIndex).join(''));
 
     return result;
 }
@@ -503,7 +506,7 @@ function renderMedia(media: FxTweet['media'], indent = ''): string {
     // Photos
     if (media.photos?.length) {
         for (const photo of media.photos) {
-            const alt = photo.altText || '';
+            const alt = plainMarkdown(photo.altText || '');
             parts.push(`${indent}![${alt}](${photo.url})`);
         }
     }
@@ -618,7 +621,7 @@ function renderEngagement(tweet: FxTweet): string {
 /**
  * Fetch tweet via FxTwitter API and convert to rich Markdown.
  */
-async function fetchTweetData(url: string): Promise<ConvertResult> {
+export async function fetchTweetData(url: string, timeoutMs = 10000): Promise<ConvertResult> {
     const parsed = parseTweetUrl(url);
     if (!parsed) throw new ConvertError('Invalid X/Twitter URL', 400, 'invalid_url');
 
@@ -626,19 +629,27 @@ async function fetchTweetData(url: string): Promise<ConvertResult> {
 
     const response = await fetch(apiUrl, {
         headers: { 'User-Agent': USER_AGENT },
+        redirect: 'manual', signal: AbortSignal.timeout(Math.max(1, Math.min(10000, timeoutMs))),
     });
 
     if (!response.ok) {
         throw new ConvertError(`FxTwitter API error: ${response.status}`, 502, 'upstream_error');
     }
 
-    const data = await response.json() as { tweet?: FxTweet };
+    const data = JSON.parse(new TextDecoder().decode(await readBounded(response))) as { tweet?: FxTweet };
     const tweet = data.tweet;
     if (!tweet) throw new ConvertError('Tweet not found', 404, 'not_found');
 
     let content = '';
     let title = '';
     let description = '';
+    const articleImageUrls: string[] = [];
+    const addMedia = (media: FxTweet['media']) => {
+        for (const photo of media?.photos ?? []) articleImageUrls.push(photo.url);
+        for (const item of media?.all ?? []) if (item.type === 'photo') articleImageUrls.push(item.url);
+    };
+    addMedia(tweet.media);
+    addMedia(tweet.quote?.media);
 
     // ── Replying-to context ──
     if (tweet.replying_to?.screen_name) {
@@ -654,12 +665,17 @@ async function fetchTweetData(url: string): Promise<ConvertResult> {
         // Article cover media — resolve from media_info or direct url
         const coverUrl = article.cover_media?.media_info?.original_img_url || article.cover_media?.url;
         if (coverUrl) {
+            articleImageUrls.push(coverUrl);
             content += `![Cover](${coverUrl})\n\n`;
         }
 
         const blocks = article.content.blocks;
         const rawEntityMap = article.content.entityMap;
         const mediaEntities = article.media_entities || [];
+        for (const item of mediaEntities) {
+            const imageUrl = item.media_info?.original_img_url || (item.type === 'photo' ? item.url : '');
+            if (imageUrl) articleImageUrls.push(imageUrl);
+        }
 
         // Normalize entityMap: FxTwitter may return it as an array of {key, value}
         // instead of a Record<string, Entity>. Convert to Record for consistent access.
@@ -672,6 +688,10 @@ async function fetchTweetData(url: string): Promise<ConvertResult> {
             }
         } else {
             entityMap = rawEntityMap || {};
+        }
+        for (const entity of Object.values(entityMap)) {
+            const info = getEntityInfo(entity);
+            if (info.type === 'IMAGE' || info.type === 'PHOTO') articleImageUrls.push(info.data.src || info.data.url || '');
         }
 
         content += blocksToMarkdown(blocks, entityMap, mediaEntities);
@@ -714,6 +734,7 @@ async function fetchTweetData(url: string): Promise<ConvertResult> {
         description,
         domain: 'x.com',
         content,
+        articleImageUrls: articleImageUrls.map(publicUrl).filter(Boolean),
         wordCount: countWords(content),
         sourceKind: 'x',
         source: url,
@@ -728,5 +749,11 @@ async function fetchTweetData(url: string): Promise<ConvertResult> {
 export const xAdapter: SourceAdapter = {
     kind: 'x',
     matches: (url) => isXUrl(url.href),
-    convert: (url) => fetchTweetData(url.href),
+    convert: async (url, ctx) => {
+        if (ctx.budget && !ctx.budget.canFetch()) throw new ConvertError('Processing deadline reached', 408, 'processing_limit');
+        if (ctx.budget) ctx.budget.calls++;
+        const result = await fetchTweetData(url.href, ctx.budget ? ctx.budget.deadline - Date.now() : 10000);
+        await enrichX(result, ctx);
+        return result;
+    },
 };

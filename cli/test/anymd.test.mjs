@@ -186,7 +186,7 @@ describe('run: meta commands', () => {
     const h = harness();
     assert.equal(await h.exec(['--version']), 0);
     assert.equal(h.stdout, `${VERSION}\n`);
-    assert.equal(VERSION, '0.1.0');
+    assert.equal(VERSION, '0.1.1');
   });
 
   test('unknown command fails with a usage error', async () => {
@@ -228,6 +228,51 @@ describe('run: convert', () => {
     assert.equal(call.headers.authorization, `Bearer ${KEY}`);
     assert.deepEqual(JSON.parse(call.body), { url: 'https://example.com', format: 'markdown', save: false, fresh: true });
     assert.equal(h.stdout, '# Keyed\n');
+  });
+
+  test('forwards authenticated enrichment options with numeric bounds preserved', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'POST /api/v1/convert': () => jsonResponse({ markdown: '# Enriched' }) },
+    });
+    assert.equal(await h.exec([
+      'convert', 'example.com/post', '--include-comments', '--analyze-images',
+      '--max-comments', '37', '--max-images=4', '--max-credits', '88',
+    ]), 0);
+    assert.deepEqual(JSON.parse(h.calls[0].body), {
+      url: 'https://example.com/post',
+      format: 'markdown',
+      includeComments: true,
+      analyzeImages: true,
+      maxComments: 37,
+      maxImages: 4,
+      maxCredits: 88,
+    });
+  });
+
+  test('requires a key for paid enrichment before making a request', async () => {
+    for (const option of ['--include-comments', '--analyze-images']) {
+      const h = harness();
+      assert.equal(await h.exec(['convert', 'example.com', option]), 1);
+      assert.match(h.stderr, /^not_authenticated:/);
+      assert.equal(h.calls.length, 0);
+    }
+  });
+
+  test('rejects invalid enrichment bounds before making a request', async () => {
+    for (const [option, value] of [
+      ['--max-comments', '0'],
+      ['--max-comments', '1001'],
+      ['--max-images', '21'],
+      ['--max-images', '1.5'],
+      ['--max-credits', '0'],
+      ['--max-credits', '1001'],
+    ]) {
+      const h = harness({ env: { ANYMD_API_KEY: KEY } });
+      assert.equal(await h.exec(['convert', 'example.com', option, value]), 1);
+      assert.match(h.stderr, /^usage:/);
+      assert.equal(h.calls.length, 0);
+    }
   });
 
   test('-o writes the result to a file and reports on stderr', async () => {
