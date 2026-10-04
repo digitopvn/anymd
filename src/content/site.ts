@@ -28,6 +28,10 @@ export const NAV = [
 export const SOURCES = [
   { kind: 'web', label: 'Any web page', note: 'Articles, docs, blogs — clutter removed', icon: 'globe' },
   { kind: 'x', label: 'X / Twitter', note: 'Posts, quotes, media, engagement stats', icon: 'x' },
+  { kind: 'facebook', label: 'Facebook', note: 'Public posts, captions and media; comments on request', icon: 'chat' },
+  { kind: 'instagram', label: 'Instagram', note: 'Public posts, reels and media; comments on request', icon: 'image' },
+  { kind: 'threads', label: 'Threads', note: 'Public posts and carousel media; comments on request', icon: 'chat' },
+  { kind: 'linkedin', label: 'LinkedIn', note: 'Public posts, media and comments on request', icon: 'chat' },
   { kind: 'youtube', label: 'YouTube', note: 'Title, channel and a timestamped transcript', icon: 'play' },
   { kind: 'github', label: 'GitHub', note: 'READMEs, issues, PRs and discussions', icon: 'git' },
   { kind: 'reddit', label: 'Reddit', note: 'Threads with nested comments', icon: 'chat' },
@@ -37,7 +41,7 @@ export const SOURCES = [
   { kind: 'image', label: 'Images', note: 'Vision model describes and transcribes', icon: 'image' },
 ];
 
-export const ROADMAP_SOURCES = ['Audio & podcasts', 'Any video (Whisper)', 'Facebook', 'LinkedIn', 'Threads', 'TikTok', 'Notion', 'Google Docs', 'EPUB'];
+export const ROADMAP_SOURCES = ['Audio & podcasts', 'Any video (Whisper)', 'TikTok', 'Notion', 'Google Docs', 'EPUB'];
 
 /** Ingestion rules the service enforces today (src/convert/robots.ts, optouts.ts; terms and /legal/abuse). */
 export const RESPONSIBLE = [

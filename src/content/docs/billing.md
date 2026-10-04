@@ -1,7 +1,7 @@
 ---
 title: "Billing & credits"
 description: "How anymd credits work, what each source costs, plans, overage, offers, and how checkout and the customer portal work."
-updated: "2026-09-26"
+updated: "2026-10-04"
 ---
 
 anymd bills in **credits**, and you pay when your agents learn something new. Processing a new source uses credits by its complexity (one credit is one web page); reusing what your agents already know is free: cached reads, library search and MCP recall cost nothing.
@@ -11,6 +11,10 @@ anymd bills in **credits**, and you pay when your agents learn something new. Pr
 | Action | Credits |
 |---|---|
 | Web page, GitHub, Reddit, Hacker News, X post | 1 |
+| Facebook, Instagram, Threads or LinkedIn post | 10 |
+| Each additional X thread post | 1 |
+| Each started batch of 20 comments or replies | 10 |
+| Each successfully analyzed article image | 5 |
 | YouTube video with transcript | 3 |
 | PDF, DOCX, XLSX, CSV and other documents (per file) | 3 |
 | Image (vision description) | 5 |
@@ -19,6 +23,8 @@ anymd bills in **credits**, and you pay when your agents learn something new. Pr
 | Failed conversion | 0 |
 
 Every conversion response tells you what it cost in the `X-Anymd-Credits` header. `fresh=1` skips the cache, so it is charged like a new conversion.
+
+Enrichment is opt-in for comments and article-image analysis. `maxCredits` defaults to 100 and accepts 1–1,000; `maxComments` defaults to 100 and accepts 1–1,000; `maxImages` defaults to 10 and accepts 1–20. A request is bounded at 40 provider calls and 55 seconds. Successful returned units consume credits; failed or unavailable units do not. Partial sections are reported in the response's `enrichment` coverage instead of being charged as complete.
 
 ## Plans
 

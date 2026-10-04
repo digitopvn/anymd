@@ -60,13 +60,20 @@ const readUrlSchema = {
   properties: {
     url: { type: 'string', description: 'The public URL to read, with or without https://' },
     save: { type: 'boolean', description: 'Save to the library when signed in (default true)' },
+    includeComments: { type: 'boolean', description: 'Read raw comments and replies (extra credits)' },
+    analyzeImages: { type: 'boolean', description: 'OCR and describe article images (extra credits)' },
+    maxComments: { type: 'integer', minimum: 1, maximum: 1000, default: 100 },
+    maxImages: { type: 'integer', minimum: 1, maximum: 20, default: 10 },
+    maxCredits: { type: 'integer', minimum: 1, maximum: 1000, default: 100 },
   },
   required: ['url'],
 };
 
 async function readUrl(input: Input): Promise<string> {
   const save = typeof input.save === 'boolean' ? input.save : undefined;
-  const { data } = await convertUrl(requiredString(input, 'url', 4000), save);
+  const options: Record<string, unknown> = {};
+  for (const key of ['includeComments', 'analyzeImages', 'maxComments', 'maxImages', 'maxCredits']) if (input[key] !== undefined) options[key] = input[key];
+  const { data } = await convertUrl(requiredString(input, 'url', 4000), save, options);
   return data.markdown;
 }
 

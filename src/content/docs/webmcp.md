@@ -1,7 +1,7 @@
 ---
 title: "WebMCP"
 description: "anymd.cc registers WebMCP tools in the browser so in-page AI agents can convert URLs, read page Markdown and search your library."
-updated: "2026-09-26"
+updated: "2026-10-04"
 ---
 
 [MCP](/docs/mcp) connects agents to anymd over the network. **WebMCP** is the in-browser counterpart: a web page declares tools, and an AI agent running in the browser (an extension, a built-in assistant, an automation harness) calls them directly instead of scraping the DOM.
@@ -29,6 +29,8 @@ Tools run with the page's own session. If you're signed in to anymd.cc, library 
 | `get_page_markdown` | Return the current page as Markdown (its `.md` twin) | Everyone |
 | `search_library` | Search your saved documents | Signed in |
 | `list_documents` | List recent library documents | Signed in |
+
+`read_url` and `convert_url` accept the same conversion options as the REST endpoint: `save`, `fresh`, `includeComments`, `analyzeImages`, `maxComments` (default 100, maximum 1,000), `maxImages` (default 10, maximum 20) and `maxCredits` (default 100, maximum 1,000). Comments and image analysis are signed-in opt-ins. A signed-in X read can expand a same-author thread automatically; anonymous X reads retain the basic post conversion. Responses expose credit breakdown and partial enrichment coverage, and cached reads are free.
 
 ## Extra tools in the page editor
 

@@ -9,6 +9,7 @@ import { blockCatalog } from '../cms/blocks';
 import { applyPageOps, createPage, getPage, listPages, OpSchema, PageError, pageView, publishPage, TEMPLATES, unpublishPage } from '../cms/pages';
 import { createPost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { runConversion } from '../convert/service';
+import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError } from '../convert/types';
 import type { Env, Principal, Scope, WaitUntil } from '../env';
 import { deleteDocument, getDocument, listDocuments } from '../library/store';
@@ -41,13 +42,14 @@ const READ = { readOnlyHint: true, openWorldHint: false };
 
 /** Reading a URL. Exposed as `read_url`, and as `convert_url` for clients built before the rename. */
 const READ_URL_INPUT = z.object({
+  ...enrichmentOptions,
   url: z.string().describe('The public URL to read, e.g. https://example.com/post'),
   save: z.boolean().optional().describe('Save to the library (default true)'),
   fresh: z.boolean().optional().describe('Bypass the 1-hour cache'),
 });
-const READ_URL_TEXT = 'Saves to the library by default (save=false to skip). Costs 1–5 credits by source complexity; cached reads are free.';
+const READ_URL_TEXT = 'Saves to the library by default (save=false to skip). X expands same-author threads automatically. Comments and image OCR are opt-in and cost extra credits. maxCredits defaults to 100; partial results explain missing content. Cached reads are free.';
 const readUrl = async (a: z.infer<typeof READ_URL_INPUT>, t: ToolContext) => {
-  const r = await runConversion(t.env, t.ctx, { url: a.url, channel: 'mcp', principal: t.principal, save: a.save, fresh: a.fresh });
+  const r = await runConversion(t.env, t.ctx, { ...a, channel: 'mcp', principal: t.principal });
   const { content: _content, ...rest } = convertPayload(r);
   return rest;
 };

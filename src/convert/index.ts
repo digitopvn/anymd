@@ -2,13 +2,18 @@ import { xAdapter } from './x-twitter';
 import { youtubeAdapter } from './youtube';
 import { hackerNewsAdapter } from './hackernews';
 import { webAdapter } from './web';
+import { facebookAdapter } from './facebook';
+import { instagramAdapter } from './instagram';
+import { threadsAdapter } from './threads';
+import { linkedinAdapter } from './linkedin';
+import { ENRICHMENT_CREDITS } from '../billing/plans';
 import { documentCreditCost } from './document';
 import { ConvertError, type ConvertContext, type ConvertResult, type SourceAdapter, type SourceKind } from './types';
 
 export * from './types';
 
 /** Order matters: specialised adapters first, the web adapter (Defuddle + its site extractors) last. */
-const ADAPTERS: SourceAdapter[] = [xAdapter, youtubeAdapter, hackerNewsAdapter, webAdapter];
+const ADAPTERS: SourceAdapter[] = [xAdapter, facebookAdapter, instagramAdapter, threadsAdapter, linkedinAdapter, youtubeAdapter, hackerNewsAdapter, webAdapter];
 
 const BLOCKED_HOSTNAMES = new Set(['localhost', 'anymd.cc', 'www.anymd.cc', 'staging.anymd.cc', 'metadata.google.internal']);
 
@@ -59,6 +64,7 @@ export async function convertUrl(url: URL, ctx: ConvertContext): Promise<Convert
 /** Credits a conversion costs. 1 credit = one web page. */
 export function creditCost(kind: SourceKind): number {
   if (kind === 'youtube') return 3;
+  if (['facebook', 'instagram', 'threads', 'linkedin'].includes(kind)) return ENRICHMENT_CREDITS.socialPost;
   return documentCreditCost(kind);
 }
 
@@ -86,5 +92,6 @@ export function formatMarkdown(result: ConvertResult, options: { frontmatter?: b
   if (result.replies != null) fm.push(`replies: ${result.replies}`);
   if (result.views != null) fm.push(`views: ${result.views}`);
   fm.push('---');
-  return fm.join('\n') + '\n\n' + (result.title && !/^#\s/.test(result.content) ? `# ${result.title}\n\n` : '') + result.content + '\n';
+  const title = result.title.replace(/[\\`*_[\]{}<>#!|]/g, '\\$&').replace(/[\r\n]+/g, ' ');
+  return fm.join('\n') + '\n\n' + (title && !/^#\s/.test(result.content) ? `# ${title}\n\n` : '') + result.content + '\n';
 }

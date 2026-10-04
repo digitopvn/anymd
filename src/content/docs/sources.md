@@ -1,7 +1,7 @@
 ---
 title: "Supported sources"
-description: "What anymd converts today (web pages, X, YouTube, GitHub, Reddit, Hacker News, PDFs, Office files, images), what each returns, limits, and what's planned."
-updated: "2026-09-26"
+description: "What anymd converts today (web pages, social posts, X, YouTube, GitHub, Reddit, Hacker News, PDFs, Office files and images), what each returns, limits, and what's planned."
+updated: "2026-10-04"
 ---
 
 anymd picks a converter per URL. Specialised adapters go first; everything else goes through the general web pipeline. The `kind` field in the frontmatter (and the `X-Anymd-Kind` header) tells you which one ran.
@@ -12,6 +12,10 @@ anymd picks a converter per URL. Specialised adapters go first; everything else 
 |---|---|---|---|
 | Any web page | `web` | Main content with clutter removed | 1 |
 | X / Twitter | `x` | Posts, long-form Articles, quotes, polls, media, engagement stats | 1 |
+| Facebook | `facebook` | Public post text, author, media and optional comments | 10 |
+| Instagram | `instagram` | Public post or reel text, author and media; optional comments | 10 |
+| Threads | `threads` | Public post text, author and carousel media; optional comments | 10 |
+| LinkedIn | `linkedin` | Public post text, author, media and optional comments | 10 |
 | YouTube | `youtube` | Title, channel, thumbnail and a timestamped transcript | 3 |
 | GitHub | `github` | READMEs, issues, PRs, discussions | 1 |
 | Reddit | `reddit` | Threads with comments | 1 |
@@ -43,6 +47,14 @@ Before fetching a page itself, anymd checks the site's `robots.txt` for the `any
 ## X / Twitter
 
 Status URLs on `x.com` and `twitter.com` (including `mobile.`) go through the [FxTwitter](https://github.com/FixTweet/FxTwitter) API. You get the post text, long-form Articles, quoted posts, polls, photos and videos, plus `likes`, `retweets`, `replies` and `views` in the frontmatter.
+
+Anonymous reads keep the basic post conversion. Signed-in reads can expand the rooted same-author thread automatically; each additional post is a separate 1-credit unit. Thread membership follows the provider's relationship and conversation identifiers, so unrelated replies and other authors are excluded.
+
+## Social posts
+
+Facebook, Instagram, Threads and LinkedIn adapters require an account and a configured `RAPIDAPI_KEY`; they accept public post URLs and cost 10 credits for the base post. Comments are opt-in with `includeComments=1` and are charged in started batches of 20. The response can include media without enabling comment retrieval.
+
+Comment retrieval depends on upstream provider availability. Threads uses the `threads-api4.p.rapidapi.com` provider and supports nested replies within the bounded request budget. When that provider reports `has_next_page: true` without a cursor, anymd marks coverage `source_incomplete` instead of treating the page as a successful complete result. Instagram base post, media and image analysis are available, but chronological comments can time out and fall back to a popular subset; reply requests can return 429, so reply coverage is not fully proven. Check `enrichment.comments.complete`, `count` and `reason` instead of assuming comments are complete.
 
 ## YouTube
 
@@ -87,9 +99,6 @@ These are on the roadmap and **not available yet**:
 
 - Audio and podcasts
 - Any video (speech-to-text, beyond YouTube captions)
-- Facebook
-- LinkedIn
-- Threads
 - TikTok
 - Notion
 - Google Docs

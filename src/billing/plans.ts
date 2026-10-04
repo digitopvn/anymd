@@ -92,6 +92,9 @@ export const PLANS: Plan[] = [
 
 export const ANONYMOUS_DAILY_LIMIT = 50;
 
+/** Fixed prices for successful enrichment units; no charge for empty/failed units. */
+export const ENRICHMENT_CREDITS = { threadPost: 1, commentBatch: 10, commentsPerBatch: 20, image: 5, socialPost: 10 } as const;
+
 export function getPlan(id: string | null | undefined): Plan {
   return PLANS.find((p) => p.id === id) ?? PLANS[0];
 }
@@ -102,6 +105,10 @@ export const CREDIT_TABLE: { kind: string; label: string; credits: number }[] = 
   { kind: 'youtube', label: 'YouTube video with transcript', credits: 3 },
   { kind: 'pdf', label: 'PDF, DOCX, XLSX, CSV (per file)', credits: 3 },
   { kind: 'image', label: 'Image → Markdown (vision description)', credits: 5 },
+  { kind: 'social', label: 'Facebook, Instagram, Threads or LinkedIn post', credits: ENRICHMENT_CREDITS.socialPost },
+  { kind: 'thread', label: 'Each additional X thread post', credits: ENRICHMENT_CREDITS.threadPost },
+  { kind: 'comments', label: 'Each started batch of 20 retrieved comments/replies', credits: ENRICHMENT_CREDITS.commentBatch },
+  { kind: 'image-analysis', label: 'Each successfully analyzed article image', credits: ENRICHMENT_CREDITS.image },
   { kind: 'search', label: 'Library search, reads, MCP reads', credits: 0 },
 ];
 

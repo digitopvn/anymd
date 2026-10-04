@@ -1,7 +1,7 @@
 ---
 title: "REST API"
 description: "The anymd REST API v1: authentication, errors, conversion, library, search, usage, keys and admin endpoints with curl, JavaScript and Python examples."
-updated: "2026-09-26"
+updated: "2026-10-04"
 ---
 
 Base URL: `https://anymd.cc/api/v1`. Everything is JSON unless noted.
@@ -41,6 +41,7 @@ Every error has the same shape and a matching HTTP status:
 | 400 | `invalid_url`, `blocked_host`, `invalid_request` |
 | 401 | `unauthorized`, `invalid_api_key` |
 | 402 | `quota_exceeded` |
+| 408 | `processing_limit` |
 | 403 | `forbidden` (missing scope), `bad_origin` |
 | 404 | `not_found`, `upstream_status` |
 | 409 | `revision_conflict`, `slug_taken` |
@@ -48,6 +49,7 @@ Every error has the same shape and a matching HTTP status:
 | 415 | `unsupported_type` |
 | 422 | `empty_content`, `document_failed`, `invalid_props`, `idempotency_mismatch` |
 | 429 | `anonymous_limit`, rate limits |
+| 503 | `provider_unavailable` |
 | 502 | `fetch_failed`, `upstream_status` |
 
 Read `code`, not `message`. Messages are for humans and may change.
@@ -90,9 +92,18 @@ Convert a URL. Scope: `convert`.
 | `frontmatter` | boolean | `true` | Include the YAML frontmatter block |
 | `save` | boolean | `true` | Save to your library (needs `library:write`) |
 | `fresh` | boolean | `false` | Skip the cache |
+| `includeComments` | boolean | `false` | Retrieve comments and replies (extra credits) |
+| `analyzeImages` | boolean | `false` | OCR and describe article images (extra credits) |
+| `maxComments` | integer | `100` | Comment limit, from 1 to 1,000 |
+| `maxImages` | integer | `10` | Article-image limit, from 1 to 20 |
+| `maxCredits` | integer | `100` | Per-request budget, from 1 to 1,000 |
 | `format` | `"json"` \| `"markdown"` | | `markdown` returns `text/markdown` instead of JSON |
 
 The JSON response carries the Markdown, the extracted metadata, the library document id (when saved), credits charged, cache status and trace id. See the OpenAPI spec for the exact schema. The `X-Anymd-*` headers from the [URL API](/docs/url) are set here too.
+
+For social URLs, `kind` is `facebook`, `instagram`, `threads` or `linkedin`; these adapters require an authenticated caller. X remains readable anonymously, while signed-in X conversions can expand the rooted same-author thread automatically. Comments and article-image analysis are opt-in. The response includes `credit_breakdown` with `base`, `thread`, `comments` and `images`, plus an `enrichment` object whose sections expose `complete`, `count`, `fetchedAt` and, when incomplete, `reason`. Provider failures, the 40-call/55-second processing bounds and item or credit limits produce partial coverage rather than a false complete result.
+
+The base social post costs 10 credits. Each additional X thread post costs 1, each started 20-comment batch costs 10, and each successfully analyzed article image costs 5. Cached reads cost 0. A later signed-in save of the same URL preserves previously saved complete or richer enrichment when the new read is plain or partial.
 
 **curl**
 

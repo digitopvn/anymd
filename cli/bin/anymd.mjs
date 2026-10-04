@@ -69,8 +69,9 @@ const usageError = (message) =>
 const LONG_VALUE = {
   key: 'key', base: 'base', output: 'output', mode: 'mode', limit: 'limit',
   domain: 'domain', slug: 'slug', title: 'title', template: 'template', file: 'file',
+  'max-comments': 'maxComments', 'max-images': 'maxImages', 'max-credits': 'maxCredits',
 };
-const LONG_BOOL = { json: 'json', 'no-save': 'noSave', fresh: 'fresh', help: 'help', version: 'version' };
+const LONG_BOOL = { json: 'json', 'no-save': 'noSave', fresh: 'fresh', help: 'help', version: 'version', 'include-comments': 'includeComments', 'analyze-images': 'analyzeImages' };
 const SHORT = { h: 'help', v: 'version', o: 'output' };
 
 /** Parse argv into `{ flags, positionals }`. Supports `--name value`, `--name=value`, `-o value` and `--`. */
@@ -449,9 +450,20 @@ async function cmdConvert(ctx, args) {
   const [raw] = expectArgs(args, 1, 'anymd convert <url> [--json] [-o file] [--no-save] [--fresh]');
   const target = normalizeTargetUrl(raw);
   const { json, noSave, fresh } = ctx.flags;
+  const extras = {};
+  for (const [name, max] of [['maxComments', 1000], ['maxImages', 20], ['maxCredits', 1000]]) {
+    if (ctx.flags[name] !== undefined) {
+      const value = Number(ctx.flags[name]);
+      if (!Number.isInteger(value) || value < 1 || value > max) throw usageError(`${name} must be an integer between 1 and ${max}`);
+      extras[name] = value;
+    }
+  }
+  if (ctx.flags.includeComments) extras.includeComments = true;
+  if (ctx.flags.analyzeImages) extras.analyzeImages = true;
+  if (extras.includeComments || extras.analyzeImages) requireKey(ctx);
   let res;
   if (ctx.key) {
-    const body = { url: target, format: json ? 'json' : 'markdown' };
+    const body = { url: target, format: json ? 'json' : 'markdown', ...extras };
     if (noSave) body.save = false;
     if (fresh) body.fresh = true;
     res = await request(ctx, 'POST', '/api/v1/convert', {
@@ -461,7 +473,7 @@ async function cmdConvert(ctx, args) {
   } else {
     res = await request(ctx, 'GET', `/${target}`, {
       auth: false,
-      query: { format: json ? 'json' : undefined, fresh: fresh ? '1' : undefined, save: noSave ? '0' : undefined },
+      query: { format: json ? 'json' : undefined, fresh: fresh ? '1' : undefined, save: noSave ? '0' : undefined, ...extras },
       accept: json ? 'application/json' : 'text/markdown',
     });
   }
@@ -769,6 +781,11 @@ ${bold('Options')}
   -o, --output <f>  Write the result to a file instead of stdout
   --no-save         Do not save the conversion to your library
   --fresh           Bypass the cache
+  --include-comments  Read comments and replies (requires a key; extra credits)
+  --analyze-images    OCR and describe article images (requires a key; extra credits)
+  --max-comments <n>  Comment/reply limit, 1–1000 (default 100)
+  --max-images <n>    Image limit, 1–20 (default 10)
+  --max-credits <n>   Hard request credit limit, 1–1000 (default 100)
   --mode <m>        Search mode: ${SEARCH_MODES.join(', ')}
   --limit <n>       Number of results
   --key <amd_…>     API key (overrides ANYMD_API_KEY and the config file)

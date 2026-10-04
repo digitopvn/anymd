@@ -28,6 +28,7 @@ import {
 import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { convertBlobToMarkdown, documentCreditCost, mimeFor } from '../convert/document';
 import { runConversion } from '../convert/service';
+import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError, countWords, type ConvertResult } from '../convert/types';
 import type { AppBindings, Principal } from '../env';
 import { embedDocument, getDocument, listDocuments, saveDocument, deleteDocument, updateTags } from '../library/store';
@@ -107,6 +108,7 @@ api.get('/me', requireScope(), async (c) => {
 // ─── Convert ────────────────────────────────────────────────────────────────
 
 const ConvertBody = z.object({
+  ...enrichmentOptions,
   url: z.string().min(1).max(4000),
   language: z.string().max(20).optional(),
   selector: z.string().max(200).optional(),
@@ -120,6 +122,8 @@ const ConvertBody = z.object({
 api.post('/convert', requireScope('convert'), async (c) => {
   const b = await body(c, ConvertBody);
   const r = await runConversion(c.env, c.executionCtx, {
+    includeComments: b.includeComments, analyzeImages: b.analyzeImages,
+    maxComments: b.maxComments, maxImages: b.maxImages, maxCredits: b.maxCredits,
     url: b.url,
     channel: channelFor(c),
     principal: c.get('principal'),
@@ -436,4 +440,3 @@ admin.put('/settings', requireScope('settings:write'), async (c) => {
 });
 
 api.route('/admin', admin);
-
