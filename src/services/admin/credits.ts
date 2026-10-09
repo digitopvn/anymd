@@ -1,6 +1,7 @@
 /**
  * Credit grants: support allowances on top of a plan. An active grant (not revoked, not expired)
- * raises the user's monthly allowance by its credits in every month it is active. Grants default to
+ * raises the user's allowance: a recurring grant by its full credits every month, a one-time grant
+ * (the default) by what is left of its single pool (see `billing/grant-pool-ledger.ts`). Grants default to
  * expiring at the end of the current month (UTC), or of the next month when fewer than
  * MIN_DEFAULT_GRANT_DAYS remain (so a grant made on the last day still lasts a week or more); only
  * `recurring: true` grants may run longer or forever. Granting and
@@ -11,13 +12,9 @@ import { z } from 'zod';
 import { getUser } from '../../auth/identity';
 import type { Env, Principal } from '../../env';
 import { newId, now } from '../../lib/util';
-import { monthStart } from '../../lib/usage';
+import { nextMonthStart } from '../../lib/usage';
 
-/** The first instant of the next calendar month (UTC): the end of `ts`'s month. */
-export function nextMonthStart(ts: number): number {
-  const d = new Date(monthStart(ts));
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
-}
+export { nextMonthStart };
 
 /** A default grant lasts at least this many days. */
 export const MIN_DEFAULT_GRANT_DAYS = 7;
@@ -45,6 +42,7 @@ interface GrantRow {
   revoked_at: number | null;
   revoked_by: string | null;
   revoke_reason: string;
+  recurring: number | null;
 }
 
 function grantState(g: GrantRow, ts = now()): 'active' | 'expired' | 'revoked' {
@@ -65,6 +63,8 @@ export function grantView(g: GrantRow) {
     created_by: g.created_by,
     expires_at: g.expires_at,
     expires: iso(g.expires_at),
+    /** null for grants stored before one-time pools existed; they renew every month. */
+    recurring: g.recurring === null ? null : g.recurring === 1,
     revoked_at: g.revoked_at,
     revoked_by: g.revoked_by,
     revoke_reason: g.revoke_reason || null,
@@ -107,7 +107,7 @@ export const GrantCreditsInput = z.object({
   reason: z.string().trim().min(3).max(300).describe('Why the credits are granted; shown in the audit log'),
   source: z.enum(['admin', 'promo']).optional().describe('Default admin'),
   expiresAt: Timestamp.optional().describe('When the grant stops counting. Default: the end of this month (UTC), or of next month when fewer than 7 days remain. Later than the default needs recurring: true'),
-  recurring: z.boolean().optional().describe('true: the credits are added again every month until expiresAt (or forever when it is omitted)'),
+  recurring: z.boolean().optional().describe('true: the credits renew in full every month until expiresAt (or forever when it is omitted). Default false: a one-time pool spent once over the grant\'s lifetime'),
   idempotencyKey: IdempotencyKey.describe('Required: retrying with the same key returns the original grant'),
 });
 
@@ -120,7 +120,7 @@ export async function grantCredits(env: Env, actor: Principal, raw: unknown) {
   if (input.expiresAt !== undefined && input.expiresAt <= ts) throw new AdminError('expiresAt must be in the future.', 422, 'invalid_request');
   const defaultExpiry = defaultGrantExpiry(ts);
   if (!input.recurring && input.expiresAt !== undefined && input.expiresAt > defaultExpiry) {
-    throw new AdminError(`A grant adds its credits again in every month it is active. Pass recurring: true to confirm, or an expiresAt no later than ${new Date(defaultExpiry).toISOString()}.`, 422, 'invalid_request');
+    throw new AdminError(`A one-time grant cannot run past its default expiry. Pass recurring: true for credits that renew every month, or an expiresAt no later than ${new Date(defaultExpiry).toISOString()}.`, 422, 'invalid_request');
   }
   const expiresAt = input.expiresAt ?? (input.recurring ? null : defaultExpiry);
   const user = await getUser(env, input.userId);
@@ -130,7 +130,7 @@ export async function grantCredits(env: Env, actor: Principal, raw: unknown) {
   const findPrior = () => env.DB.prepare('SELECT * FROM credit_grants WHERE user_id = ? AND idempotency_key = ?').bind(user.id, input.idempotencyKey).first<GrantRow>();
   const replay = (prior: GrantRow) => {
     // A defaulted expiry depends on the month of the first request, so a replay compares the explicit fields only.
-    const sameExpiry = input.expiresAt !== undefined ? prior.expires_at === input.expiresAt : input.recurring ? prior.expires_at === null : prior.expires_at !== null;
+    const sameExpiry = (input.expiresAt !== undefined ? prior.expires_at === input.expiresAt : input.recurring ? prior.expires_at === null : prior.expires_at !== null) && prior.recurring === (input.recurring ? 1 : 0);
     const same = prior.credits === input.credits && prior.reason === input.reason && prior.source === source && sameExpiry;
     if (!same) throw new AdminError('idempotencyKey was already used for a different grant to this user. Use a new key for a new grant.', 422, 'idempotency_mismatch', { grantId: prior.id });
     return { grant: grantView(prior), replayed: true };
@@ -142,7 +142,7 @@ export async function grantCredits(env: Env, actor: Principal, raw: unknown) {
   // INSERT OR IGNORE + the unique (user_id, idempotency_key) index makes a concurrent duplicate a no-op;
   // the audit row is only written when this insert created the grant.
   await env.DB.batch([
-    env.DB.prepare('INSERT OR IGNORE INTO credit_grants (id,user_id,source,reference,credits,created_at,expires_at,reason,created_by,idempotency_key) VALUES (?,?,?,?,?,?,?,?,?,?)').bind(
+    env.DB.prepare('INSERT OR IGNORE INTO credit_grants (id,user_id,source,reference,credits,created_at,expires_at,reason,created_by,idempotency_key,recurring) VALUES (?,?,?,?,?,?,?,?,?,?,?)').bind(
       id,
       user.id,
       source,
@@ -153,11 +153,12 @@ export async function grantCredits(env: Env, actor: Principal, raw: unknown) {
       input.reason,
       actor.userId,
       input.idempotencyKey,
+      input.recurring ? 1 : 0,
     ),
     auditStatement(
       env,
       actor,
-      { action: 'credits.grant', targetType: 'user', target: user.id, diff: { credits: input.credits }, meta: { grant: id, source, reason: input.reason, expires_at: input.expiresAt ?? null }, idempotencyKey: input.idempotencyKey },
+      { action: 'credits.grant', targetType: 'user', target: user.id, diff: { credits: input.credits }, meta: { grant: id, source, reason: input.reason, expires_at: expiresAt, recurring: Boolean(input.recurring) }, idempotencyKey: input.idempotencyKey },
       ts,
       { sql: 'EXISTS (SELECT 1 FROM credit_grants WHERE id = ?)', binds: [id] },
     ),

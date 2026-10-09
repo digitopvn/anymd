@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { grantBands, meteredUnits, meterPeriodStart } from '../src/billing/grant-covered-usage';
+import { calendarPeriod, grantBands, meteredUnits, meterPeriodStart } from '../src/billing/grant-covered-usage';
+import { grantAllowance } from '../src/billing/grant-pool-ledger';
 import { ingestPolarUsage } from '../src/billing/polar';
 import { getPlan } from '../src/billing/plans';
 import { monthStart } from '../src/lib/usage';
@@ -149,5 +150,89 @@ describe('Polar ingestion with credit grants', () => {
     charge('c_now', 30, mid);
     await ingestPolarUsage(env, user.id, 30, 'web', 'c_now'); // inside the new period's included credits
     expect(sent).toEqual([30]);
+  });
+});
+
+describe('one-time grants are a single pool across months', () => {
+  let t: TestEnv | null = null;
+  afterEach(() => {
+    t?.close();
+    t = null;
+    vi.unstubAllGlobals();
+  });
+
+  const included = getPlan('pro').credits;
+  const month1 = Date.UTC(2026, 7, 1);
+  const month2 = Date.UTC(2026, 8, 1);
+  const day = (month: number, d: number) => month + (d - 1) * DAY;
+
+  async function setup(recurring: 0 | 1 | null) {
+    t = createTestEnv({ POLAR_ACCESS_TOKEN: 'test-placeholder' } as never);
+    const user = await seedUser(t, 'user', { plan: 'pro' });
+    const sent: number[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: unknown, init: RequestInit) => {
+        sent.push(JSON.parse(String(init.body)).events[0].metadata.credits);
+        return new Response('{}', { status: 200 });
+      }),
+    );
+    const db = t.db;
+    const charge = (id: string, credits: number, createdAt: number) =>
+      db.prepare('INSERT INTO conversion_charges (id,user_id,reserved,credits,settled,created_at,expires_at) VALUES (?,?,?,?,1,?,?)').run(id, user.id, credits, credits, createdAt, createdAt + 300_000);
+    // 5,000 credits granted on day 26 of month 1; a one-time grant lasts to the end of month 2.
+    db.prepare("INSERT INTO credit_grants (id,user_id,source,credits,created_at,expires_at,recurring) VALUES ('g1',?,'admin',5000,?,?,?)").run(
+      user.id,
+      day(month1, 26),
+      recurring === 1 ? null : Date.UTC(2026, 9, 1),
+      recurring,
+    );
+    charge('m1_included', included, day(month1, 2)); // month 1's included credits, used before the grant
+    const allowance = (ts: number) => grantAllowance(t!.env, user.id, ts, calendarPeriod(ts), included, async (at) => calendarPeriod(at));
+    return { env: t.env, user, sent, charge, allowance };
+  }
+
+  it('covers in month 2 only what month 1 left: 3,000 of 5,000 used leaves at most 2,000', async () => {
+    const { env, user, sent, charge, allowance } = await setup(0);
+    charge('m1_after', 3000, day(month1, 27)); // covered by the grant
+    charge('m2_included', included, day(month2, 2));
+    charge('m2_over', 4000, day(month2, 3));
+    await ingestPolarUsage(env, user.id, 4000, 'web', 'm2_over'); // 2,000 left in the pool + 2,000 overage
+    expect(sent).toEqual([2000]);
+    expect(await allowance(day(month2, 3))).toBe(2000);
+  });
+
+  it('covers nothing in month 2 once the pool was used up in month 1', async () => {
+    const { env, user, sent, charge, allowance } = await setup(0);
+    charge('m1_after', 6000, day(month1, 27)); // 5,000 granted + 1,000 overage
+    charge('m2_included', included, day(month2, 2));
+    charge('m2_over', 4000, day(month2, 3));
+    await ingestPolarUsage(env, user.id, 4000, 'web', 'm2_over');
+    expect(sent).toEqual([4000]);
+    expect(await allowance(day(month2, 3))).toBe(0);
+  });
+
+  it('renews a recurring grant in full every month', async () => {
+    const { env, user, sent, charge, allowance } = await setup(1);
+    charge('m1_after', 6000, day(month1, 27));
+    charge('m2_included', included, day(month2, 2));
+    charge('m2_over', 6000, day(month2, 3));
+    await ingestPolarUsage(env, user.id, 6000, 'web', 'm2_over'); // 5,000 granted again + 1,000 overage
+    expect(sent).toEqual([1000]);
+    expect(await allowance(day(month2, 3))).toBe(5000);
+  });
+
+  it('keeps grants stored before one-time pools existed renewing, as they were created', async () => {
+    const { env, user, sent, charge } = await setup(null);
+    charge('m1_after', 6000, day(month1, 27));
+    charge('m2_included', included, day(month2, 2));
+    charge('m2_over', 6000, day(month2, 3));
+    await ingestPolarUsage(env, user.id, 6000, 'web', 'm2_over');
+    expect(sent).toEqual([1000]);
+  });
+
+  it('gives a fresh one-time grant its whole pool in the month it was made', async () => {
+    const { allowance } = await setup(0);
+    expect(await allowance(day(month1, 28))).toBe(5000);
   });
 });

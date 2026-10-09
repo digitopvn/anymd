@@ -26,6 +26,9 @@ ALTER TABLE credit_grants ADD COLUMN idempotency_key TEXT;
 ALTER TABLE credit_grants ADD COLUMN revoked_at INTEGER;
 ALTER TABLE credit_grants ADD COLUMN revoked_by TEXT;
 ALTER TABLE credit_grants ADD COLUMN revoke_reason TEXT NOT NULL DEFAULT '';
+-- 1: renews its credits every month it is active; 0: a one-time pool over its lifetime.
+-- NULL (grants stored before this column) keeps the earlier behavior and renews.
+ALTER TABLE credit_grants ADD COLUMN recurring INTEGER;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_grants_idempotency ON credit_grants(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_credit_grants_created ON credit_grants(created_at DESC);
 

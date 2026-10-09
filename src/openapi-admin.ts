@@ -115,7 +115,7 @@ export const ADMIN_OPS: Record<string, Record<string, Op>> = {
     get: { summary: 'Credit grants', description: 'Filter by user, state (active, expired, revoked) and source.', tag: 'Admin', scope: 'credits:read', params: queryParams(GrantQuery), ok: paged(ref('CreditGrant')) },
     post: {
       summary: 'Grant credits',
-      description: 'Owner-only by template. Raises the allowance in every month the grant is active. Default expiry: the end of the current month (UTC), or of next month when fewer than 7 days remain; `recurring: true` for monthly credits. On paid plans a grant covers usage from when it is granted onward, not overage already billed. `idempotencyKey` (or the Idempotency-Key header) is required: a retry returns the original grant with 200 and `replayed: true`.',
+      description: 'Owner-only by template. By default a grant is a one-time pool spent once over its lifetime and expires at the end of the current month (UTC), or of next month when fewer than 7 days remain; `recurring: true` renews the credits in full every month. On paid plans a grant covers usage from when it is granted onward, not overage already billed. `idempotencyKey` (or the Idempotency-Key header) is required: a retry returns the original grant with 200 and `replayed: true`.',
       tag: 'Admin',
       scope: 'credits:write',
       params: [IDEMPOTENCY_HEADER],

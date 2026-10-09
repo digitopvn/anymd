@@ -113,8 +113,10 @@ describe('audit of large changes', () => {
     await updateSettings(t.env, actor, { patch: Object.fromEntries(keys.map((k) => [k, 'y'.repeat(1000)])) });
     const rows = auditRows(t, 'settings.update');
     expect(rows).toHaveLength(2);
-    const meta = JSON.parse(String(rows[1].meta));
-    expect(String(rows[1].meta).length).toBeLessThanOrEqual(4000);
+    // Both writes may share a millisecond, so pick the second by the version it produced.
+    const second = rows.find((r) => JSON.parse(String(r.meta)).version === 3)!;
+    const meta = JSON.parse(String(second.meta));
+    expect(String(second.meta).length).toBeLessThanOrEqual(4000);
     expect(Object.keys(meta.diff).sort()).toEqual(keys);
     expect(meta.diff.note_a.from).toMatch(/^x+… \(1000 chars\)$/);
     expect(meta.diff.note_a.to).toMatch(/^y+… \(1000 chars\)$/);
@@ -181,18 +183,27 @@ describe('idempotency claim ownership', () => {
     const gate = new Promise<void>((res, rej) => ((finish = res), (fail = rej)));
     return { run: async () => (await gate, value), finish, fail };
   }
-  const age = (key: string) => t.db.prepare('UPDATE idempotency_keys SET created_at = ? WHERE key = ?').run(Date.now() - PENDING_TTL_MS - 1000, key);
-  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const claim = (key: string) => t.db.prepare('SELECT response, created_at FROM idempotency_keys WHERE key = ?').get(key) as { response: string; created_at: number } | undefined;
+  /** Waits (bounded) until the key's claim row satisfies `ok`. */
+  async function until(key: string, ok: (row: { response: string; created_at: number } | undefined) => boolean) {
+    for (let i = 0; i < 200 && !ok(claim(key)); i++) await new Promise((r) => setTimeout(r, 1));
+    expect(ok(claim(key))).toBe(true);
+  }
+  /** Lets the first holder claim the key, makes its claim stale, and returns the stale token. */
+  async function claimedAndStale(key: string) {
+    await until(key, (row) => Boolean(row));
+    t.db.prepare('UPDATE idempotency_keys SET created_at = ? WHERE key = ?').run(Date.now() - PENDING_TTL_MS - 1000, key);
+    return claim(key)!.response;
+  }
 
   it('keeps the result of the request that took over when the slow first holder finishes late', async () => {
     const actor = await owner();
     const slow = gated({ by: 'slow' });
     const fast = gated({ by: 'takeover' });
     const first = withIdempotency(t.env, actor, 'test.op', 'k-own', {}, slow.run);
-    await tick();
-    age('k-own');
+    const stale = await claimedAndStale('k-own');
     const second = withIdempotency(t.env, actor, 'test.op', 'k-own', {}, fast.run);
-    await tick();
+    await until('k-own', (row) => row?.response !== stale); // taken over with a new token
     slow.finish();
     expect(await first).toEqual({ by: 'slow', replayed: false });
     // The late holder did not overwrite the claim: the new holder is still running.
@@ -207,10 +218,9 @@ describe('idempotency claim ownership', () => {
     const slow = gated({ by: 'slow' });
     const fast = gated({ by: 'takeover' });
     const first = withIdempotency(t.env, actor, 'test.op', 'k-fail', {}, slow.run);
-    await tick();
-    age('k-fail');
+    const stale = await claimedAndStale('k-fail');
     const second = withIdempotency(t.env, actor, 'test.op', 'k-fail', {}, fast.run);
-    await tick();
+    await until('k-fail', (row) => row?.response !== stale); // taken over with a new token
     slow.fail(new Error('late failure'));
     await expect(first).rejects.toThrow('late failure');
     expect((await failure(withIdempotency(t.env, actor, 'test.op', 'k-fail', {}, async () => ({ by: 'third' })))).code).toBe('idempotency_in_progress');
