@@ -29,9 +29,12 @@ anymd search "vector databases" --mode hybrid --limit 10
 | `anymd convert <url> [--json] [-o file] [--no-save] [--fresh] [enrichment flags]` | Without a key: the public URL API (`GET /<url>`). With a key: `POST /api/v1/convert`, saved to your library unless `--no-save`. |
 | `anymd file <path> [--json] [-o file]` | Upload a local file to `POST /api/v1/convert/file`. |
 | `anymd search <query> [--mode hybrid\|bm25\|fulltext\|semantic] [--limit 10] [--json]` | Ranked list: score, title, URL, snippet. |
-| `anymd ls [--limit 20] [--domain x]` | Table of library documents. |
+| `anymd ls [--limit 20] [--domain x] [--tag a,b]` | Table of library documents. `--tag` keeps documents carrying every listed tag. |
 | `anymd get <id> [-o file]` | A library document as Markdown (`--json` for the record). |
 | `anymd rm <id>` | Delete a library document. |
+| `anymd tag <id> [--add a,b] [--remove c]` | Add and/or remove tags; prints the resulting tags. |
+| `anymd tag <id> --set a,b` | Replace all tags (`--set ""` clears). At most 20 tags per document. |
+| `anymd tags [--limit 100]` | Your tags with document counts, most used first. |
 | `anymd usage` | Plan, quota and usage totals. |
 | `anymd login [--key amd_…]` | Validate a key with `GET /api/v1/me` and save it. |
 | `anymd logout` | Remove the saved key. |
