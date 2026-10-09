@@ -12,7 +12,7 @@ import { runConversion } from '../convert/service';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError } from '../convert/types';
 import type { Env, Principal, Scope, WaitUntil } from '../env';
-import { deleteDocument, getDocument, listDocuments } from '../library/store';
+import { deleteDocument, editTags, getDocument, listDocuments, listTags, MAX_TAG_FILTERS, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags } from '../library/store';
 import { convertPayload, searchForPrincipal, usageSummary } from '../services';
 
 const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
@@ -39,6 +39,8 @@ interface ToolDef {
 }
 
 const READ = { readOnlyHint: true, openWorldHint: false };
+const TAG_LIST_INPUT = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAGS).optional();
+const TAG_FILTER_INPUT = z.array(z.string().min(1).max(MAX_TAG_LENGTH)).min(1).max(MAX_TAG_FILTERS).optional().describe('Only documents carrying every one of these tags');
 
 /** Reading a URL. Exposed as `read_url`, and as `convert_url` for clients built before the rename. */
 const READ_URL_INPUT = z.object({
@@ -99,18 +101,23 @@ const TOOLS: ToolDef[] = [
     run: async (a, t) => {
       const doc = await getDocument(t.env, t.principal.userId, a.id);
       if (!doc) throw new ToolError('Document not found');
-      return { ...doc, tags: doc.tags.split(' ').filter(Boolean) };
+      return { ...doc, tags: parseStoredTags(doc.tags) };
     },
   },
   {
     name: 'list_documents',
     title: 'List documents',
-    description: 'Most recent library documents (metadata only). Filter by domain.',
+    description: 'Most recent library documents (metadata only). Filter by domain and/or tags (documents must carry every tag).',
     scope: 'library:read',
-    input: z.object({ limit: z.number().int().min(1).max(100).optional(), domain: z.string().optional(), before: z.number().optional().describe('Cursor: created_at of the last item') }),
+    input: z.object({
+      limit: z.number().int().min(1).max(100).optional(),
+      domain: z.string().optional(),
+      tags: TAG_FILTER_INPUT,
+      before: z.number().optional().describe('Cursor: created_at of the last item'),
+    }),
     annotations: READ,
     run: async (a, t) => {
-      const items = await listDocuments(t.env, t.principal.userId, { limit: a.limit ?? 20, domain: a.domain, before: a.before });
+      const items = await listDocuments(t.env, t.principal.userId, { limit: a.limit ?? 20, domain: a.domain, tags: a.tags, before: a.before });
       return { items, next_cursor: items.length === (a.limit ?? 20) ? items[items.length - 1].created_at : null };
     },
   },
@@ -125,6 +132,36 @@ const TOOLS: ToolDef[] = [
       if (!(await deleteDocument(t.env, t.principal.userId, a.id))) throw new ToolError('Document not found');
       return { ok: true };
     },
+  },
+  // ─── Library tags ─────────────────────────────────────────────────────────
+  {
+    name: 'tag_document',
+    title: 'Tag document',
+    description: `Add and/or remove tags on a library document, or replace them all with set. Tags are lowercased and keep only a-z, 0-9, - and _. At most ${MAX_TAGS} tags per document; an add that would exceed it fails. Returns the resulting tags.`,
+    scope: 'library:write',
+    input: z.object({
+      id: z.string().min(1).describe('Document id'),
+      add: TAG_LIST_INPUT.describe('Tags to add'),
+      remove: TAG_LIST_INPUT.describe('Tags to remove'),
+      set: TAG_LIST_INPUT.describe('Replace all tags with these (cannot be combined with add/remove; [] clears)'),
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: async (a, t) => {
+      if (a.set && (a.add || a.remove)) throw new ToolError('Use either set, or add and/or remove, not both.');
+      if (!a.set && !a.add && !a.remove) throw new ToolError('Pass add, remove or set.');
+      const tags = await editTags(t.env, t.principal.userId, a.id, { add: a.add, remove: a.remove, set: a.set });
+      if (!tags) throw new ToolError('Document not found');
+      return { id: a.id, tags };
+    },
+  },
+  {
+    name: 'list_tags',
+    title: 'List tags',
+    description: 'Tags used in this library with the number of documents carrying each, most used first. Use with list_documents tags filter.',
+    scope: 'library:read',
+    input: z.object({ limit: z.number().int().min(1).max(500).optional().describe('Max tags (default 100)') }),
+    annotations: READ,
+    run: async (a, t) => ({ items: await listTags(t.env, t.principal.userId, a.limit ?? 100) }),
   },
   {
     name: 'usage_summary',

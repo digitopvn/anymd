@@ -10,7 +10,7 @@ import type { AppBindings } from '../env';
 import { deleteAccount, documentsToMarkdown, exportDocuments } from '../lib/account';
 import { renderMarkdown } from '../lib/markdown';
 import { quotaState, monthStart } from '../lib/usage';
-import { getDocument, librarySummary, listDocuments } from '../library/store';
+import { getDocument, librarySummary, listDocuments, listTags } from '../library/store';
 import { searchForPrincipal, parseMode, usageSummary } from '../services';
 import {
   AccountPage,
@@ -70,13 +70,18 @@ dashboardRoutes.get('/library', async (c) => {
   const user = c.get('user')!;
   const domain = c.req.query('domain') || undefined;
   const kind = c.req.query('kind') || undefined;
+  const tag = c.req.query('tag')?.trim().toLowerCase().slice(0, 40) || undefined;
   const limit = 30;
-  const [lib, docs] = await Promise.all([librarySummary(c.env, user.id), listDocuments(c.env, user.id, { limit, domain, kind, before: Number(c.req.query('before')) || undefined })]);
+  const [lib, docs, tags] = await Promise.all([
+    librarySummary(c.env, user.id),
+    listDocuments(c.env, user.id, { limit, domain, kind, tags: tag ? [tag] : undefined, before: Number(c.req.query('before')) || undefined }),
+    listTags(c.env, user.id, 12),
+  ]);
   return shell(
     c,
     '/dashboard/library',
     'Library',
-    <LibraryPage docs={docs} domains={lib.domains} kinds={lib.kinds} filter={{ domain, kind }} nextCursor={docs.length === limit ? docs[docs.length - 1].created_at : null} total={lib.docs} />,
+    <LibraryPage docs={docs} domains={lib.domains} kinds={lib.kinds} tags={tags} filter={{ domain, kind, tag }} nextCursor={docs.length === limit ? docs[docs.length - 1].created_at : null} total={lib.docs} />,
   );
 });
 

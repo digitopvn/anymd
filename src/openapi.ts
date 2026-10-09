@@ -92,8 +92,32 @@ const OPS: Record<string, Record<string, Op>> = {
         { name: 'before', in: 'query', schema: int('Cursor: `next_cursor` from the previous page') },
         { name: 'domain', in: 'query', schema: str() },
         { name: 'kind', in: 'query', schema: str('Source kind, e.g. web, x, youtube, pdf') },
+        { name: 'tag', in: 'query', schema: str('Whole-tag filter. Repeat (`tag=a&tag=b`) or comma-separate for documents carrying every tag; up to 10') },
       ],
       ok: obj({ items: arr(ref('DocumentSummary')), next_cursor: nullable(int()) }),
+      errors: [422],
+    },
+  },
+  '/library/tags': {
+    get: {
+      summary: 'List tags',
+      description: 'Tags in your library with the number of documents carrying each, most used first.',
+      tag: 'Library',
+      scope: 'library:read',
+      params: [{ name: 'limit', in: 'query', schema: int(undefined, { minimum: 1, maximum: 500, default: 100 }) }],
+      ok: obj({ items: arr(obj({ tag: str(), count: int() }, ['tag', 'count'])) }),
+    },
+  },
+  '/library/{id}/tags': {
+    post: {
+      summary: 'Add, remove or set document tags',
+      description: 'Adds and/or removes tags without touching the rest, or replaces them all with `set` (not combinable with add/remove). Tags are normalized like PATCH. An edit that would leave more than 20 tags fails with `too_many_tags` instead of truncating.',
+      tag: 'Library',
+      scope: 'library:write',
+      params: [idParam('Document')],
+      body: obj({ add: arr(str(), 'Tags to add'), remove: arr(str(), 'Tags to remove'), set: arr(str(), 'Replace all tags; [] clears') }),
+      ok: obj({ id: str(), tags: arr(str()) }, ['id', 'tags']),
+      errors: [404, 409, 422],
     },
   },
   '/library/{id}': {

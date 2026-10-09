@@ -140,6 +140,17 @@ function DocRow({ d }: { d: DocumentSummary }) {
         <p class="mt-0.5 truncate text-xs text-muted">
           {d.domain} · {formatNumber(d.word_count)} words · {timeAgo(d.created_at)}
         </p>
+        {d.tags ? (
+          <ul class="mt-1.5 flex flex-wrap gap-1.5 text-xs" aria-label="Tags">
+            {d.tags.split(' ').filter(Boolean).map((t) => (
+              <li>
+                <a href={`/dashboard/library?tag=${encodeURIComponent(t)}`} class="chip !py-0.5 !text-xs">
+                  #{t}
+                </a>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
     </li>
   );
@@ -214,7 +225,7 @@ export function OverviewPage(props: { user: UserRow; quota: QuotaState; docs: nu
   );
 }
 
-export function LibraryPage({ docs, domains, kinds, filter, nextCursor, total }: { docs: DocumentSummary[]; domains: { domain: string; n: number }[]; kinds: { kind: string; n: number }[]; filter: { domain?: string; kind?: string }; nextCursor: number | null; total: number }) {
+export function LibraryPage({ docs, domains, kinds, tags = [], filter, nextCursor, total }: { docs: DocumentSummary[]; domains: { domain: string; n: number }[]; kinds: { kind: string; n: number }[]; tags?: { tag: string; count: number }[]; filter: { domain?: string; kind?: string; tag?: string }; nextCursor: number | null; total: number }) {
   const qs = (extra: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
     for (const [k, v] of Object.entries({ ...filter, ...extra })) if (v) p.set(k, v);
@@ -231,7 +242,7 @@ export function LibraryPage({ docs, domains, kinds, filter, nextCursor, total }:
         </button>
       </form>
       <div class="mb-4 flex flex-wrap gap-2 text-sm">
-        <a href="/dashboard/library" class={`chip ${!filter.domain && !filter.kind ? '!bg-ink !text-paper !border-ink' : ''}`}>
+        <a href="/dashboard/library" class={`chip ${!filter.domain && !filter.kind && !filter.tag ? '!bg-ink !text-paper !border-ink' : ''}`}>
           All · {formatNumber(total)}
         </a>
         {kinds.map((k) => (
@@ -245,10 +256,34 @@ export function LibraryPage({ docs, domains, kinds, filter, nextCursor, total }:
           </a>
         ))}
       </div>
+      {tags.length || filter.tag ? (
+        <nav class="mb-4 flex flex-wrap items-center gap-2 text-sm" aria-label="Filter by tag">
+          <span class="font-semibold">Tags</span>
+          {filter.tag && !tags.some((t) => t.tag === filter.tag) ? (
+            <a href={`/dashboard/library${qs({ tag: undefined })}`} class="chip !bg-ink !text-paper !border-ink" aria-current="true">
+              #{filter.tag} ×
+            </a>
+          ) : null}
+          {tags.map((t) => {
+            const active = filter.tag === t.tag;
+            return (
+              <a href={`/dashboard/library${qs({ tag: active ? undefined : t.tag, before: undefined })}`} class={`chip ${active ? '!bg-ink !text-paper !border-ink' : ''}`} aria-current={active ? 'true' : undefined} title={active ? 'Remove tag filter' : undefined}>
+                #{t.tag} · {t.count}
+              </a>
+            );
+          })}
+        </nav>
+      ) : null}
       {docs.length ? (
         <div class="card overflow-hidden">
           <ul>{docs.map((d) => <DocRow d={d} />)}</ul>
         </div>
+      ) : filter.tag ? (
+        <Empty icon="book" title="No documents with this tag" body={`Nothing in this view is tagged #${filter.tag}.`}>
+          <a href="/dashboard/library" class="btn btn-ghost">
+            Show all documents
+          </a>
+        </Empty>
       ) : (
         <Empty icon="book" title="Your library is empty" body="Every URL you convert while signed in lands here — searchable by keyword, meaning and your agents over MCP.">
           <a href="/dashboard" class="btn btn-primary">
