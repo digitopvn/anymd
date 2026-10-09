@@ -99,7 +99,7 @@ const OPS: Record<string, Record<string, Op>> = {
       scope: 'convert',
       bodyType: 'multipart/form-data',
       body: obj({ file: str('The file', { format: 'binary' }), save: str('"0" to skip saving', { enum: ['0', '1'] }) }, ['file']),
-      ok: obj({ name: str(), bytes: int(), kind: str(), title: str(), word_count: int(), markdown: str(), document_id: nullable(str()), credits: int(), trace_id: str(), duration_ms: int() }),
+      ok: obj({ name: str(), bytes: int(), kind: str(), title: str(), word_count: int(), markdown: str(), document_id: nullable(str()), saved: bool(), not_saved_reason: nullable(str('Why the result is not in the library: not_requested, anonymous, missing_scope (credential lacks library:write) or library_limit', { enum: ['not_requested', 'anonymous', 'missing_scope', 'library_limit'] })), credits: int(), trace_id: str(), duration_ms: int() }),
       errors: [400, 402, 413, 415, 422],
     },
   },
@@ -266,6 +266,8 @@ const SCHEMAS: Record<string, Schema> = {
     markdown: str('Markdown including frontmatter'),
     content: str('Markdown body without frontmatter'),
     document_id: nullable(str()),
+    saved: bool('Whether the conversion was saved to the library'),
+    not_saved_reason: nullable(str('Why the result is not in the library: not_requested, anonymous, missing_scope (credential lacks library:write) or library_limit', { enum: ['not_requested', 'anonymous', 'missing_scope', 'library_limit'] })),
     credits: int(),
     credit_breakdown: obj({ base: int(), thread: int(), comments: int(), images: int() }),
     reading_options: obj({

@@ -29,6 +29,9 @@ export function convertPayload(r: ConvertResponse) {
     markdown: r.markdown,
     content: x.content,
     document_id: r.documentId,
+    saved: r.documentId !== null,
+    // Why the conversion is not in the library; `missing_scope` means the credential lacks library:write.
+    not_saved_reason: r.notSavedReason,
     credits: r.credits,
     credit_breakdown: r.creditBreakdown ?? { base: r.credits, thread: 0, comments: 0, images: 0 },
     enrichment: x.enrichment ?? {},

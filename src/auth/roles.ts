@@ -52,14 +52,20 @@ export const ROLE_TEMPLATES: Record<RoleName, { label: string; description: stri
 
 export const ALL_SCOPES: Scope[] = ROLE_TEMPLATES.owner.scopes;
 
-/** Scopes that reach other users' data or site-wide state. Shown as elevated on the consent screen. */
-export const ELEVATED_SCOPES: ReadonlySet<Scope> = new Set(ALL_SCOPES.filter((s) => !CUSTOMER.includes(s)));
+/**
+ * Scopes shown as elevated on the consent screen: everything that reaches other users' data or
+ * site-wide state, plus `keys:manage`, which manages long-lived credentials of the account.
+ */
+export const ELEVATED_SCOPES: ReadonlySet<Scope> = new Set([...ALL_SCOPES.filter((s) => !CUSTOMER.includes(s)), 'keys:manage']);
 
 /** Admin control-plane scopes (everything outside customer and content work). */
 export const ADMIN_SCOPES: ReadonlySet<Scope> = new Set([...ADMIN_READ, ...ADMIN_WRITE, ...OWNER_ONLY]);
 
-/** What an OAuth client gets when it asks for no scopes: read the web and recall the library. */
-export const OAUTH_DEFAULT_SCOPES: Scope[] = ['convert', 'library:read'];
+/**
+ * What an OAuth client gets when it asks for no scopes: read the web, and save to and recall its
+ * own library. Nothing elevated: no other users' data, no site state, no credential management.
+ */
+export const OAUTH_DEFAULT_SCOPES: Scope[] = ['convert', 'library:read', 'library:write'];
 
 /** Human labels for consent screens, key forms and docs. */
 export const SCOPE_LABELS: Record<Scope, string> = {
@@ -149,13 +155,22 @@ export function oauthConsentScopes(role: RoleName, requested: readonly string[])
 }
 
 /**
- * Effective scopes of an OAuth token. Grants issued before least-privilege consent (no `v` in
- * their props) could hold every scope of the role without asking; they keep only non-admin scopes
- * and must be re-authorized to reach the admin control plane.
+ * Effective scopes of an OAuth token: the grant's scopes capped by the current role, narrowed to
+ * the token's own scopes when it was downscoped at refresh or exchange.
+ *
+ * Grants issued before least-privilege consent (no `v` in their props) could hold every scope of
+ * the role without asking; they keep only non-admin scopes and must be re-authorized to reach the
+ * admin control plane. Such a grant stored with no scopes meant "the whole role"; it now resolves to
+ * the role's non-elevated scopes, so existing connectors keep reading and saving.
  */
-export function oauthPrincipalScopes(role: RoleName, grantScopes: readonly string[], grantVersion: number | undefined): Scope[] {
-  const capped = capScopes(role, grantScopes);
-  return grantVersion && grantVersion >= OAUTH_GRANT_VERSION ? capped : capped.filter((s) => !ADMIN_SCOPES.has(s));
+export function oauthPrincipalScopes(role: RoleName, grantScopes: readonly string[], grantVersion: number | undefined, tokenScopes: readonly string[] = []): Scope[] {
+  let scopes: Scope[];
+  if (grantVersion && grantVersion >= OAUTH_GRANT_VERSION) scopes = capScopes(role, grantScopes);
+  else if (grantScopes.length) scopes = capScopes(role, grantScopes).filter((s) => !ADMIN_SCOPES.has(s));
+  else scopes = capScopes(role, null).filter((s) => !ELEVATED_SCOPES.has(s));
+  if (!tokenScopes.length) return scopes;
+  const token = new Set(expandScopes(tokenScopes));
+  return scopes.filter((s) => token.has(s));
 }
 
 /** Bumped when the meaning of a stored OAuth grant changes. */

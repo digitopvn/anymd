@@ -165,7 +165,19 @@ describe('MCP rate limits', () => {
     expect(blocked.body.error.data.bucket).toBe('mutation');
     // Reads keep working while the mutation bucket is spent.
     expect((await rpc(t.env, p, 'tools/call', { name: 'list_site_optouts', arguments: {} })).status).toBe(200);
-    expect(mutation.calls).toHaveLength(2);
+    // The first change counted against the credential and the account; the second stopped at the credential.
+    expect(mutation.calls).toHaveLength(3);
+  });
+
+  it('caps mutations per account too, so more credentials do not multiply the budget', async () => {
+    t.env.RL_MCP = counter();
+    const mutation = counter(1);
+    t.env.RL_MCP_MUTATION = mutation;
+    const add = (key: string, domain: string) => rpc(t.env, { ...p, apiKeyId: key }, 'tools/call', { name: 'add_site_optout', arguments: { domain } });
+    expect((await add('key_one', 'one.example')).status).toBe(200);
+    const other = await add('key_two', 'two.example');
+    expect(other.status).toBe(429);
+    expect(mutation.calls.filter((k) => k.includes(':user:'))).toHaveLength(2);
   });
 
   it('keeps conversions and reads out of the mutation bucket, and counts tag edits in it', () => {

@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import { createApiKey, getUser, type ApiKeyRow, type UserRow } from '../../auth/identity';
-import { ADMIN_SCOPES, isRole, KEY_PRESETS } from '../../auth/roles';
+import { expandScopes, isRole, KEY_PRESETS } from '../../auth/roles';
 import type { Env, Principal } from '../../env';
 import { now, safeJson } from '../../lib/util';
 import { auditStatement, recordAudit } from './audit';
@@ -77,14 +77,19 @@ export const CreateKeyInput = z.object({
  */
 export async function createOwnKey(env: Env, actor: Principal, raw: unknown): Promise<{ key: string } & ReturnType<typeof keyView>> {
   assertScope(actor, 'keys:manage');
+  // A key minted through an OAuth connection would outlive the grant (revoking the app would not
+  // revoke the key), so connected apps never create keys; the user does, in the dashboard.
+  if (actor.kind === 'oauth') {
+    throw new AdminError('Connected apps cannot create API keys. Create keys in the dashboard (API keys page) instead.', 403, 'oauth_key_creation_forbidden');
+  }
   const input = parseInput(CreateKeyInput, raw);
   const user = await getUser(env, actor.userId);
   if (!user) throw new AdminError('Account not found', 401, 'unauthorized');
   if ((await activeKeyCount(env, user.id)) >= keyLimit(user.plan, user.role)) throw new AdminError('Free accounts can have 2 active API keys. Revoke one or upgrade.', 403, 'key_limit');
   if (input.preset && !input.scopes?.length && !KEY_PRESETS.some((p) => p.id === input.preset)) throw new AdminError(`Unknown preset. Use one of: ${KEY_PRESETS.map((p) => p.id).join(', ')}`, 422, 'unknown_preset');
-  const requested = scopesForPreset(input.preset, input.scopes) ?? actor.scopes;
-  // A key minted through an OAuth connection would outlive the grant, so it never carries admin scopes.
-  const scopes = requested.filter((s) => actor.scopes.includes(s as never) && !(actor.kind === 'oauth' && ADMIN_SCOPES.has(s as never)));
+  // Legacy names (`users:write`) translate before filtering, as they do for stored keys.
+  const requested = expandScopes(scopesForPreset(input.preset, input.scopes) ?? actor.scopes);
+  const scopes = requested.filter((s) => actor.scopes.includes(s as never));
   if (!scopes.length) throw new AdminError('None of the requested scopes are available to this credential.', 422, 'no_scopes');
   const { key, row } = await createApiKey(env, user, { name: input.name, scopes, expiresInDays: input.expiresInDays });
   try {

@@ -22,19 +22,27 @@ describe('OAuth discovery advertises only the baseline', () => {
     const ctx = { waitUntil: () => {}, passThroughOnException: () => {} };
     const res = await app.fetch(new Request('https://anymd.test/mcp', { method: 'POST', body: '{}' }), t.env, ctx as never);
     expect(res.status).toBe(401);
-    expect(res.headers.get('www-authenticate')).toMatch('scope="convert library:read"');
+    expect(res.headers.get('www-authenticate')).toMatch('scope="convert library:read library:write"');
   });
 });
 
-describe('API keys minted over OAuth', () => {
-  it('never carry admin scopes, so they cannot outlive the grant with admin power', async () => {
+describe('API keys and OAuth connections', () => {
+  it('never lets a connected app mint a key, since the key would outlive the grant', async () => {
     const owner = await seedUser(t, 'owner');
     const p: Principal = { kind: 'oauth', userId: owner.id, role: 'owner', scopes: scopesForRole('owner'), clientId: 'client_a' };
-    const out = ok(await callTool(t.env, p, 'create_api_key', { name: 'from agent', preset: 'full' }));
-    expect(out.scopes).toEqual(expect.arrayContaining(['convert', 'keys:manage']));
-    expect(out.scopes.some((s: string) => ['users:read', 'credits:write', 'settings:write', 'audit:read'].includes(s))).toBe(false);
-    const onlyAdmin = await callTool(t.env, p, 'create_api_key', { name: 'admin only', scopes: ['users:read'] });
-    expect(onlyAdmin.result.structuredContent.error.code).toBe('no_scopes');
+    for (const args of [{ name: 'from agent', preset: 'full' }, { name: 'convert', preset: 'convert-only' }]) {
+      const res = await callTool(t.env, p, 'create_api_key', args);
+      expect(res.result.isError).toBe(true);
+      expect(res.result.structuredContent.error.code).toBe('oauth_key_creation_forbidden');
+    }
+    expect(await t.env.DB.prepare('SELECT COUNT(*) AS n FROM api_keys').first('n')).toBe(0);
+  });
+
+  it('translates legacy scope names before checking what the creating credential holds', async () => {
+    const owner = await seedUser(t, 'owner');
+    const p: Principal = { kind: 'session', userId: owner.id, role: 'owner', scopes: scopesForRole('owner') };
+    const out = ok(await callTool(t.env, p, 'create_api_key', { name: 'legacy names', scopes: ['users:write', 'settings:write'] }));
+    expect(out.scopes.sort()).toEqual(['settings:read', 'settings:write', 'users:roles:write']);
   });
 });
 
@@ -55,7 +63,41 @@ describe('legacy batches', () => {
     const batch = ['a', 'b', 'c'].map((d, i) => ({ jsonrpc: '2.0', id: i, method: 'tools/call', params: { name: 'add_site_optout', arguments: { domain: `${d}.example` } } }));
     const res = await send(t.env, p, batch);
     expect(res.status).toBe(429);
-    expect(res.body.error.data.bucket).toBe('mutation');
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.map((r: { id: number }) => r.id)).toEqual([0, 1, 2]);
+    expect(res.body[0].error.data.bucket).toBe('mutation');
+  });
+
+  it('are refused for protocol versions that dropped batching, and kept for older ones', async () => {
+    const admin = await seedUser(t, 'admin');
+    const p: Principal = { kind: 'session', userId: admin.id, role: 'admin', scopes: scopesForRole('admin') };
+    const batch = [{ jsonrpc: '2.0', id: 1, method: 'ping' }];
+    for (const v of ['2025-06-18', '2025-11-25']) {
+      const res = await send(t.env, p, batch, { 'MCP-Protocol-Version': v });
+      expect(res.status, v).toBe(400);
+      expect(res.body.error.code, v).toBe(-32600);
+    }
+    for (const headers of [{ 'MCP-Protocol-Version': '2025-03-26' }, {}] as Record<string, string>[]) {
+      const res = await send(t.env, p, batch, headers);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+    }
+  });
+
+  it('answer non-object messages with -32600 without spending the rate limit', async () => {
+    const admin = await seedUser(t, 'admin');
+    const p: Principal = { kind: 'session', userId: admin.id, role: 'admin', scopes: scopesForRole('admin') };
+    const limiter = counter();
+    t.env.RL_MCP = limiter;
+    for (const payload of [null, 7, 'x']) {
+      const res = await send(t.env, p, payload);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe(-32600);
+    }
+    const mixed = await send(t.env, p, [null, { jsonrpc: '2.0', id: 2, method: 'ping' }]);
+    expect(mixed.status).toBe(200);
+    expect(mixed.body).toEqual([expect.objectContaining({ id: null, error: expect.objectContaining({ code: -32600 }) }), expect.objectContaining({ id: 2, result: {} })]);
+    expect(limiter.calls).toHaveLength(1);
   });
 });
 

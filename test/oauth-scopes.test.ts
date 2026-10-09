@@ -3,6 +3,7 @@ import {
   ADMIN_SCOPES,
   ALL_SCOPES,
   capScopes,
+  ELEVATED_SCOPES,
   expandScopes,
   KEY_PRESETS,
   OAUTH_DEFAULT_SCOPES,
@@ -20,8 +21,8 @@ describe('OAuth consent scopes', () => {
   it('gives a client that requests nothing the least-privilege baseline, for every role', () => {
     for (const role of ROLES) {
       const { granted } = oauthConsentScopes(role, []);
-      expect(granted).toEqual(OAUTH_DEFAULT_SCOPES);
-      expect(granted.some((s) => ADMIN_SCOPES.has(s))).toBe(false);
+      expect(granted).toEqual(capScopes(role, OAUTH_DEFAULT_SCOPES));
+      expect(granted.some((s) => ELEVATED_SCOPES.has(s))).toBe(false);
     }
   });
 
@@ -41,7 +42,41 @@ describe('OAuth consent scopes', () => {
   });
 });
 
+describe('OAuth baseline', () => {
+  it('lets a default connection read, save and recall its own library, and nothing elevated', () => {
+    expect(OAUTH_DEFAULT_SCOPES).toEqual(['convert', 'library:read', 'library:write']);
+    expect(OAUTH_DEFAULT_SCOPES.some((s) => ELEVATED_SCOPES.has(s))).toBe(false);
+  });
+
+  it('shows keys:manage as elevated on the consent screen, since it manages long-lived credentials', () => {
+    expect(ELEVATED_SCOPES.has('keys:manage')).toBe(true);
+    for (const s of ADMIN_SCOPES) expect(ELEVATED_SCOPES.has(s), s).toBe(true);
+  });
+});
+
 describe('OAuth principal scopes', () => {
+  it('resolves a legacy grant stored with no scopes to the role\'s non-elevated scopes, not to nothing', () => {
+    for (const role of ROLES) {
+      const scopes = oauthPrincipalScopes(role, [], undefined);
+      expect(scopes, role).toEqual(scopesForRole(role).filter((s) => !ELEVATED_SCOPES.has(s)));
+      expect(scopes, role).toEqual(expect.arrayContaining(['convert', 'library:read']));
+      expect(scopes.some((s) => ELEVATED_SCOPES.has(s)), role).toBe(false);
+    }
+    expect(oauthPrincipalScopes('user', [], undefined)).toEqual(['convert', 'library:read', 'library:write', 'usage:read']);
+    // A current grant that holds nothing still holds nothing.
+    expect(oauthPrincipalScopes('owner', [], OAUTH_GRANT_VERSION)).toEqual([]);
+  });
+
+  it('narrows to the token\'s own scopes when it was downscoped, and ignores an empty token scope', () => {
+    const grant = ['convert', 'library:read', 'settings:read', 'settings:write'];
+    expect(oauthPrincipalScopes('owner', grant, OAUTH_GRANT_VERSION, ['convert', 'settings:read'])).toEqual(['convert', 'settings:read']);
+    expect(oauthPrincipalScopes('owner', grant, OAUTH_GRANT_VERSION, [])).toEqual(capScopes('owner', grant));
+    // A token never widens the grant.
+    expect(oauthPrincipalScopes('owner', ['convert'], OAUTH_GRANT_VERSION, ['convert', 'users:read'])).toEqual(['convert']);
+    // Legacy token scope names are translated before narrowing.
+    expect(oauthPrincipalScopes('owner', ['users:roles:write'], OAUTH_GRANT_VERSION, ['users:write'])).toEqual(['users:roles:write']);
+  });
+
   it('re-caps a grant by the current role, so a demotion takes effect immediately', () => {
     const grant = ['convert', 'users:read', 'settings:write'];
     expect(oauthPrincipalScopes('admin', grant, OAUTH_GRANT_VERSION).sort()).toEqual([...grant, 'settings:read'].sort());

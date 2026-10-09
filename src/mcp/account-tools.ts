@@ -39,7 +39,7 @@ export const ACCOUNT_TOOLS: ToolDef[] = [
     name: 'create_api_key',
     title: 'Create API key',
     description:
-      'Create an API key for yourself from a preset or explicit scopes. It never gets scopes this connection lacks, and your role caps it again on every use. The secret is returned once: hand it to the user and do not repeat it.',
+      'Create an API key for yourself from a preset or explicit scopes. It never gets scopes this credential lacks, and your role caps it again on every use. Not available to OAuth connections (a key would outlive the connection). The secret is returned once: hand it to the user and do not repeat it.',
     scope: 'keys:manage',
     input: CreateKeyInput,
     annotations: WRITE,

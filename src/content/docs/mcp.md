@@ -26,7 +26,7 @@ anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) se
 | Token | `/oauth/token` |
 | Registration | `/oauth/register` |
 
-Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert` and `library:read`; anything more, admin scopes above all, must be requested by name and approved on the consent screen. See [API keys & roles](/docs/api-keys-roles#oauth).
+Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert`, `library:read` and `library:write` (read the web, save to and search your own library); anything more, admin scopes above all, must be requested by name and approved on the consent screen. When a read is not saved, the result says so: `saved: false` with `not_saved_reason` (`missing_scope` means the connection lacks `library:write`). See [API keys & roles](/docs/api-keys-roles#oauth).
 
 ## Client setup
 
@@ -137,7 +137,7 @@ The ops format, revision rules and the safe editing loop are in the admin [build
 | `list_oauth_grants` | `{}` | `keys:manage` |
 | `revoke_my_oauth_grant` | `{ grantId }` | `keys:manage` |
 
-`create_api_key` returns the secret once; a new key never gets scopes the calling credential lacks. Keys created over an OAuth connection never carry admin scopes, because they would outlive the grant: create admin keys in the dashboard.
+`create_api_key` returns the secret once; a new key never gets scopes the calling credential lacks. OAuth connections cannot create keys at all (`oauth_key_creation_forbidden`), because a key would outlive the grant: create keys with an API key, a session, or in the dashboard.
 
 ## System administration
 
@@ -233,11 +233,11 @@ Things to ask an admin agent:
 One endpoint serves both protocol eras, and existing clients need no change.
 
 - **2026-07-28 (stateless).** No `initialize`. Each request names its version in `params._meta["io.modelcontextprotocol/protocolVersion"]` and mirrors it in the `MCP-Protocol-Version` header, with `Mcp-Method` (and `Mcp-Name` for `tools/call`; non-ASCII values as `=?base64?…?=`). A header that disagrees with the body gets `400` with error `-32020`; an unknown version gets `400` with `-32022` and the supported list. `server/discover` describes the server; results carry `resultType`, and lists carry `ttlMs` and `cacheScope: "private"`. One message per request: no batches, no `ping`.
-- **2025-11-25 and earlier.** `initialize`, `ping` and JSON-RPC batches (up to 20 messages; each message counts toward the rate limits) work as before.
+- **2025-11-25 and earlier.** `initialize` and `ping` work as before. JSON-RPC batches (up to 20 messages; each message counts toward the rate limits) work for clients on 2025-03-26 or earlier, or that send no `MCP-Protocol-Version` header; a batch sent with `2025-06-18` or later gets `400` with `-32600`, since those versions dropped batching. A message that is not a JSON object gets `-32600` without counting toward the limits.
 
 ## Rate limits
 
-MCP has its own limits, separate from the REST API, counted per user and per credential (each API key or OAuth client has its own budget): one for every request and a stricter one for tools that change data. Over the limit you get HTTP `429` with `Retry-After` and JSON-RPC error `-32005` (`data.bucket` is `request` or `mutation`). Wait and retry.
+MCP has its own limits, separate from the REST API, counted per user and per credential (each API key or OAuth client has its own budget): one for every request and a stricter one for tools that change data. Changes also count against one budget for the whole account, so more keys or clients do not multiply it. Over the limit you get HTTP `429` with `Retry-After` and JSON-RPC error `-32005` (`data.bucket` is `request` or `mutation`; a batch gets an array with one error per request). Wait and retry.
 
 ## Troubleshooting
 

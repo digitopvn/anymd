@@ -101,10 +101,11 @@ curl https://anymd.cc/api/v1/me -H "Authorization: Bearer $ANYMD_API_KEY"
 
 MCP clients can skip keys and sign in with OAuth 2.1 (Dynamic Client Registration + PKCE). Setup: [MCP server](/docs/mcp).
 
-- **Least privilege by default.** A client that asks for no scopes gets `convert` and `library:read`, never everything your role allows. The MCP endpoint advertises only those two scopes in its 401 challenge and protected-resource metadata, so spec-following clients start there.
-- **Elevated scopes are explicit.** A client must request admin scopes by name, and the consent screen lists them separately so you see exactly what you approve. Scopes your role lacks are dropped and shown as unavailable.
-- **Capped on every request.** The grant is intersected with your current role each time, so a demotion takes effect immediately.
-- **Older grants.** Grants approved before this consent model keep their non-admin scopes but lose admin scopes. Reconnect the client to grant them explicitly.
+- **Least privilege by default.** A client that asks for no scopes gets `convert`, `library:read` and `library:write`: it can read the web and save to and search *your own* library, never everything your role allows. The MCP endpoint advertises only these three scopes in its 401 challenge and protected-resource metadata, so spec-following clients start there.
+- **Elevated scopes are explicit.** A client must request admin, content, pages or `keys:manage` scopes by name, and the consent screen lists them separately as elevated so you see exactly what you approve. Scopes your role lacks are dropped and shown as unavailable.
+- **No keys from connected apps.** An OAuth connection can list and revoke your keys (with `keys:manage`) but never create one (`403 oauth_key_creation_forbidden`): a key would outlive the connection. Create keys in the dashboard.
+- **Capped on every request.** The grant is intersected with your current role each time, so a demotion takes effect immediately. A token the client downscoped at refresh keeps only its own scopes.
+- **Older grants.** Grants approved before this consent model keep their non-admin scopes but lose admin scopes. One stored with no scopes (it meant "everything my role allows") now gets your role's non-elevated scopes (`convert`, `library:read`, `library:write`, `usage:read` where your role has them). Reconnect the client to grant more explicitly.
 
 ## An admin agent with least privilege
 

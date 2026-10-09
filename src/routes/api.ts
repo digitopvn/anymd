@@ -26,7 +26,7 @@ import {
 } from '../cms/pages';
 import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { convertBlobToMarkdown, documentCreditCost, mimeFor } from '../convert/document';
-import { runConversion } from '../convert/service';
+import { runConversion, type NotSavedReason } from '../convert/service';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { applyPreferencesPatch, canWriteReadingPreferences, getReadingPreferences, PREFERENCES_WRITE_SCOPE, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences, type StoredReadingPreferences } from '../convert/reading-preferences';
 import { DEFAULT_READING_PREFERENCES, READING_LIMITS } from '../lib/reading-options';
@@ -219,9 +219,11 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
     const title = markdown.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() || file.name;
     const result: ConvertResult = { title, author: '', published: '', description: '', domain: 'upload', content: markdown, wordCount: countWords(markdown), source: `upload://${file.name}`, sourceKind: kind };
     let documentId: string | null = null;
-    if (form.save !== '0' && p.scopes.includes('library:write')) {
+    let notSavedReason: NotSavedReason | null = form.save === '0' ? 'not_requested' : !p.scopes.includes('library:write') ? 'missing_scope' : null;
+    if (!notSavedReason) {
       const saved = await saveDocument(c.env, p.userId, result, markdown, getPlan(user?.plan ?? 'free').libraryLimit);
       documentId = saved?.id ?? null;
+      if (!saved) notSavedReason = 'library_limit';
       if (saved?.changed) c.executionCtx.waitUntil(embedDocument(c.env, p.userId, saved.id).catch(() => 0));
     }
     c.executionCtx.waitUntil(
@@ -230,7 +232,7 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
     c.header('X-Anymd-Credits', String(credits));
     c.header('X-Anymd-Trace', tracer.id);
     c.header('X-Anymd-Kind', kind);
-    return c.json({ name: file.name, bytes: file.size, kind, title, word_count: result.wordCount, markdown, document_id: documentId, credits, trace_id: tracer.id, duration_ms: tracer.elapsed() });
+    return c.json({ name: file.name, bytes: file.size, kind, title, word_count: result.wordCount, markdown, document_id: documentId, saved: documentId !== null, not_saved_reason: notSavedReason, credits, trace_id: tracer.id, duration_ms: tracer.elapsed() });
   } catch (err) {
     const e = err instanceof ConvertError ? err : new ConvertError('Could not convert this file', 422, 'document_failed');
     c.executionCtx.waitUntil(

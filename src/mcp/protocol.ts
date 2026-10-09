@@ -5,7 +5,7 @@
  *   in `params._meta` and mirrors it, the method and (for tools/call) the tool name in the
  *   `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` headers. `server/discover` describes the
  *   server. Results carry `resultType`; list results carry `ttlMs` and `cacheScope`. No batching, no ping.
- * - Legacy (2025-11-25 and earlier): `initialize` handshake, `ping`, and batches for older clients.
+ * - Legacy (2025-11-25 and earlier): `initialize` handshake and `ping`; JSON-RPC batches only for clients on 2025-03-26 or earlier (later versions dropped batching).
  *
  * A request is modern when it names a modern version in `_meta` or in the header, or calls
  * `server/discover`; anything else is served as legacy, so existing clients keep working unchanged.

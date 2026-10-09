@@ -55,7 +55,7 @@ const READ_URL_INPUT = z.object({
   fresh: z.boolean().optional().describe('Bypass the 1-hour cache'),
   removeImages: z.boolean().optional().describe('Strip image/media references (no credit effect)'),
 });
-const READ_URL_TEXT = 'Saves to the library by default (save=false to skip). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free.';
+const READ_URL_TEXT = 'Saves to the library by default (save=false to skip) when this connection holds library:write; the result reports saved and, when not saved, not_saved_reason (missing_scope means re-authorize with library:write). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free.';
 const readUrl = async (a: z.infer<typeof READ_URL_INPUT>, t: ToolContext) => {
   const r = await runConversion(t.env, t.ctx, { ...a, channel: 'mcp', principal: t.principal });
   const { content: _content, ...rest } = convertPayload(r);
@@ -395,7 +395,13 @@ async function callTool(params: Record<string, unknown> | undefined, t: ToolCont
 
 type Era = 'modern' | 'legacy';
 
+/** A JSON-RPC message must be an object; `null`, arrays and scalars are invalid requests. */
+function isMessageObject(msg: unknown): msg is JsonRpcMessage {
+  return typeof msg === 'object' && msg !== null && !Array.isArray(msg);
+}
+
 async function handleMessage(msg: JsonRpcMessage, t: ToolContext, era: Era): Promise<object | null> {
+  if (!isMessageObject(msg)) return rpcError(null, RPC.INVALID_REQUEST, 'Invalid Request: a JSON-RPC message must be an object');
   const id = msg.id ?? null;
   const isNotification = msg.id === undefined;
   if (msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') return isNotification ? null : rpcError(id, RPC.INVALID_REQUEST, 'Invalid Request');
@@ -450,9 +456,13 @@ function json(body: unknown, status = 200, headers: Record<string, string> = {})
   return Response.json(body, { status, headers: { ...CORS, ...headers } });
 }
 
-function rateLimitedResponse(id: JsonRpcId, limited: RateLimited): Response {
+/** A batch is answered with an array (one error per request in it), a single message with one error. */
+function rateLimitedResponse(messages: JsonRpcMessage[], batch: boolean, limited: RateLimited): Response {
   const message = limited.bucket === 'mutation' ? 'Too many changes. Slow down and retry later.' : 'Too many requests. Slow down and retry later.';
-  return json(rpcError(id, RPC.RATE_LIMITED, message, { code: 'rate_limited', bucket: limited.bucket, retryAfter: limited.retryAfter }), 429, { 'Retry-After': String(limited.retryAfter) });
+  const error = (id: JsonRpcId) => rpcError(id, RPC.RATE_LIMITED, message, { code: 'rate_limited', bucket: limited.bucket, retryAfter: limited.retryAfter });
+  const ids = messages.filter((m) => isMessageObject(m) && m.id !== undefined).map((m) => m.id ?? null);
+  const body = batch ? (ids.length ? ids : [null]).map(error) : error(isMessageObject(messages[0]) ? (messages[0].id ?? null) : null);
+  return json(body, 429, { 'Retry-After': String(limited.retryAfter) });
 }
 
 /**
@@ -470,16 +480,34 @@ function stepUpResponse(env: Env, id: JsonRpcId, d: ScopeDenial, p: Principal): 
 /** Legacy batches are bounded so one HTTP request cannot fan out into an unbounded number of calls. */
 const MAX_BATCH = 20;
 
+/**
+ * JSON-RPC batching exists in 2025-03-26 and earlier; 2025-06-18 dropped it. A client that names a
+ * later version in its header gets a batch rejected; older clients (which send no version header,
+ * or name one of these) keep batching.
+ */
+const BATCH_VERSIONS = new Set(['2025-03-26', '2024-11-05']);
+
+function batchAllowed(versionHeader: string | null): boolean {
+  return !versionHeader || BATCH_VERSIONS.has(versionHeader.trim());
+}
+
 function callsMutation(m: JsonRpcMessage, p: Principal): boolean {
-  if (m?.method !== 'tools/call') return false;
+  if (!isMessageObject(m) || m.method !== 'tools/call') return false;
   const tool = TOOL_BY_NAME.get(String(m.params?.name ?? ''));
   return Boolean(tool && p.scopes.includes(tool.scope) && isMutation(tool));
 }
 
-/** Every message counts against the request bucket and every mutating call against the mutation bucket, batched or not. */
+/**
+ * Every valid message counts against the request bucket, and every mutating call against the
+ * credential's and the account's mutation buckets, batched or not. Invalid messages are answered
+ * with -32600 without spending the budget.
+ */
 async function rateLimit(env: Env, p: Principal, messages: JsonRpcMessage[]): Promise<RateLimited | null> {
   for (const m of messages) {
-    const limited = (await checkMcpRate(env, p, 'request')) ?? (callsMutation(m, p) ? await checkMcpRate(env, p, 'mutation') : null);
+    if (!isMessageObject(m)) continue;
+    const limited =
+      (await checkMcpRate(env, p, 'request')) ??
+      (callsMutation(m, p) ? ((await checkMcpRate(env, p, 'mutation')) ?? (await checkMcpRate(env, p, 'mutation', 'user'))) : null);
     if (limited) return limited;
   }
   return null;
@@ -502,12 +530,15 @@ export async function handleMcp(request: Request, env: Env, ctx: WaitUntil, prin
     if (failure) return json(rpcError((payload as JsonRpcMessage).id ?? null, failure.code, failure.message, failure.data), failure.status);
   }
   const batch = Array.isArray(payload);
+  if (!batch && !isMessageObject(payload)) return json(rpcError(null, RPC.INVALID_REQUEST, 'Invalid Request: a JSON-RPC message must be an object'), 400);
   const messages = (batch ? payload : [payload]) as JsonRpcMessage[];
-  const firstId = messages[0]?.id ?? null;
+  if (batch && !batchAllowed(request.headers.get('mcp-protocol-version'))) {
+    return json(rpcError(null, RPC.INVALID_REQUEST, 'JSON-RPC batching was removed in protocol version 2025-06-18. Send one message per request.'), 400);
+  }
   if (batch && (messages.length === 0 || messages.length > MAX_BATCH)) return json(rpcError(null, RPC.INVALID_REQUEST, `A batch must hold between 1 and ${MAX_BATCH} messages.`), 400);
 
   const limited = await rateLimit(env, principal, messages);
-  if (limited) return rateLimitedResponse(firstId, limited);
+  if (limited) return rateLimitedResponse(messages, batch, limited);
 
   // A single call to a tool the OAuth grant lacks (but the role allows) asks the client to step up.
   if (!batch) {

@@ -159,18 +159,18 @@ export interface OAuthGrantProps {
 
 /** OAuth-authenticated MCP calls. The provider has already validated the token. */
 const mcpApiHandler = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext & { props?: OAuthGrantProps; auth?: { clientId?: string } }): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext & { props?: OAuthGrantProps; auth?: { clientId?: string; scope?: string[] } }): Promise<Response> {
     const userId = ctx.props?.userId;
     const user = userId ? await getUser(env, userId) : null;
     if (!user || user.status === 'suspended') return mcpUnauthorized(env);
     const role = isRole(user.role) ? user.role : 'user';
     // Re-cap on every call so a demotion takes effect on existing tokens immediately; grants from
-    // before least-privilege consent never carry admin scopes.
+    // before least-privilege consent never carry admin scopes; a downscoped token keeps only its own scopes.
     const principal: Principal = {
       kind: 'oauth',
       userId: user.id,
       role,
-      scopes: oauthPrincipalScopes(role, ctx.props?.scopes ?? [], ctx.props?.v),
+      scopes: oauthPrincipalScopes(role, ctx.props?.scopes ?? [], ctx.props?.v, ctx.auth?.scope ?? []),
       clientId: ctx.auth?.clientId ?? ctx.props?.clientId,
       requestId: request.headers.get('cf-ray') ?? crypto.randomUUID(),
     };

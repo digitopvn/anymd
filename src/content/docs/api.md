@@ -113,7 +113,7 @@ Convert a URL. Scope: `convert`.
 | `maxCredits` | integer | saved, else `100` | Per-request budget, from 1 to 1,000 |
 | `format` | `"json"` \| `"markdown"` | | `markdown` returns `text/markdown` instead of JSON |
 
-The JSON response carries the Markdown, the extracted metadata, the library document id (when saved), credits charged, cache status and trace id. See the OpenAPI spec for the exact schema. The `X-Anymd-*` headers from the [URL API](/docs/url) are set here too.
+The JSON response carries the Markdown, the extracted metadata, the library document id (when saved), `saved` and, when it was not saved, `not_saved_reason` (`not_requested`, `anonymous`, `missing_scope` when the credential lacks `library:write`, or `library_limit`), credits charged, cache status and trace id. See the OpenAPI spec for the exact schema. The `X-Anymd-*` headers from the [URL API](/docs/url) are set here too.
 
 For social URLs, `kind` is `facebook`, `instagram`, `threads` or `linkedin`; these adapters require an authenticated caller. X is readable anonymously; thread expansion, comments and article-image analysis are opt-in (see [deep reading](#deep-reading-options-and-saved-defaults)). The response's `reading_options` shows the effective value of every option and whether it came from the `request`, your saved `preference` or the safe `default`. The response includes `credit_breakdown` with `base`, `thread`, `comments` and `images`, plus an `enrichment` object whose sections expose `complete`, `count`, `fetchedAt` and, when incomplete, `reason`. Provider failures, the 40-call/55-second processing bounds and item or credit limits produce partial coverage rather than a false complete result.
 
