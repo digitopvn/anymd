@@ -1,7 +1,7 @@
 ---
 title: "CLI"
 description: "The anymd command: convert URLs and files, search your library, manage pages and print MCP config from your terminal."
-updated: "2026-10-04"
+updated: "2026-10-09"
 ---
 
 `anymd` is a zero-dependency command-line client. It needs Node.js 18 or newer and nothing else.
@@ -43,15 +43,24 @@ Without a key the CLI works anonymously, with the same 50-per-day limit as the [
 | `anymd convert <url> [--json] [-o file] [--no-save] [--fresh] [enrichment flags]` | Convert with options |
 | `anymd file <path>` | Convert a local file (PDF, DOCX, XLSX, CSV, images…) |
 | `anymd search <query> [--mode hybrid] [--limit 10] [--json]` | Search your library |
-| `anymd ls [--limit 20] [--domain x]` | List library documents |
+| `anymd ls [--limit 20] [--domain x] [--tag a,b]` | List library documents (`--tag`: every tag must match) |
 | `anymd get <id>` | Print a saved document |
 | `anymd rm <id>` | Delete a saved document |
+| `anymd tag <id> [--add a,b] [--remove c]` · `--set a,b` | Edit a document's tags and print the result (`--set ""` clears) |
+| `anymd tags [--limit 100]` | List your tags with document counts |
 | `anymd usage` | Credits used and remaining |
 | `anymd login [--key amd_…]` · `anymd logout` · `anymd whoami` | Manage credentials |
 | `anymd pages ls` · `get <id>` · `create --slug --title [--template]` · `ops <id> --file ops.json` · `publish <id>` · `blocks` | Page builder |
 | `anymd mcp` | Print MCP config snippets for your clients |
 
 ## Recipes
+
+Tag a saved document, then list everything with that tag:
+
+```bash
+anymd tag doc_… --add rag,research --remove todo
+anymd ls --tag rag
+```
 
 Save an article as a file:
 

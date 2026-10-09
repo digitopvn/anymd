@@ -1,7 +1,7 @@
 ---
 title: "REST API"
 description: "The anymd REST API v1: authentication, errors, conversion, library, search, usage, keys and admin endpoints with curl, JavaScript and Python examples."
-updated: "2026-10-04"
+updated: "2026-10-09"
 ---
 
 Base URL: `https://anymd.cc/api/v1`. Everything is JSON unless noted.
@@ -44,10 +44,10 @@ Every error has the same shape and a matching HTTP status:
 | 408 | `processing_limit` |
 | 403 | `forbidden` (missing scope), `bad_origin` |
 | 404 | `not_found`, `upstream_status` |
-| 409 | `revision_conflict`, `slug_taken` |
+| 409 | `revision_conflict`, `slug_taken`, `tag_conflict` |
 | 413 | `too_large` |
 | 415 | `unsupported_type` |
-| 422 | `empty_content`, `document_failed`, `invalid_props`, `idempotency_mismatch` |
+| 422 | `empty_content`, `document_failed`, `invalid_props`, `idempotency_mismatch`, `invalid_request`, `too_many_tags` |
 | 429 | `anonymous_limit`, rate limits |
 | 503 | `provider_unavailable` |
 | 502 | `fetch_failed`, `upstream_status` |
@@ -61,8 +61,10 @@ Read `code`, not `message`. Messages are for humans and may change.
 | POST | `/convert` | `convert` |
 | POST | `/convert/file` | `convert` |
 | GET | `/library` | `library:read` |
+| GET | `/library/tags` | `library:read` |
 | GET | `/library/:id` | `library:read` |
 | PATCH | `/library/:id` | `library:write` |
+| POST | `/library/:id/tags` | `library:write` |
 | DELETE | `/library/:id` | `library:write` |
 | GET, POST | `/search` | `library:read` |
 | GET | `/usage` | `usage:read` |
@@ -176,7 +178,18 @@ Every signed-in conversion is saved to your private library, one document per so
 
 ### GET /library
 
-`?limit=20&before=<ts>&domain=&kind=` returns `{ items, next_cursor }`, newest first. Pass `next_cursor` as `before` to get the next page. Filter by `domain` (e.g. `github.com`) or `kind` (e.g. `youtube`).
+`?limit=20&before=<ts>&domain=&kind=&tag=` returns `{ items, next_cursor }`, newest first. Pass `next_cursor` as `before` to get the next page. Filter by `domain` (e.g. `github.com`), `kind` (e.g. `youtube`) or `tag`.
+
+`tag` matches whole tags: `tag=ai` finds documents tagged `ai`, never `rai` or `ai-safety`. Repeat it (`tag=ai&tag=rag`) or comma-separate it (`tag=ai,rag`) to require every tag, up to 10. Tag values are normalized like stored tags.
+
+```bash
+curl "https://anymd.cc/api/v1/library?tag=rag&tag=research" \
+  -H "Authorization: Bearer $ANYMD_API_KEY"
+```
+
+### GET /library/tags
+
+Your tags with how many documents carry each, most used first: `{ "items": [{ "tag": "rag", "count": 12 }, …] }`. `?limit=` defaults to 100 (maximum 500).
 
 ```bash
 curl "https://anymd.cc/api/v1/library?limit=20&kind=youtube" \
@@ -194,13 +207,26 @@ curl "https://anymd.cc/api/v1/library/doc_…?format=md" \
 
 ### PATCH /library/:id
 
-Replace tags. Tags are lowercased and limited to letters, digits, `-` and `_`.
+Replace all tags. Tags are lowercased and limited to letters, digits, `-` and `_`; a document keeps at most 20.
 
 ```bash
 curl -X PATCH https://anymd.cc/api/v1/library/doc_… \
   -H "Authorization: Bearer $ANYMD_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"tags":["research","rag"]}'
+```
+
+### POST /library/:id/tags
+
+Edit tags without replacing the rest: `{ "add"?: [...], "remove"?: [...] }`, or `{ "set": [...] }` to replace them all (`set` can't be combined with `add`/`remove`; `[]` clears). Tags are normalized like `PATCH`. Returns `{ id, tags }` with the resulting tags.
+
+An edit that would leave more than 20 tags fails with `422 too_many_tags` and changes nothing; nothing is silently dropped.
+
+```bash
+curl -X POST https://anymd.cc/api/v1/library/doc_…/tags \
+  -H "Authorization: Bearer $ANYMD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"add":["rag"],"remove":["todo"]}'
 ```
 
 ### DELETE /library/:id
