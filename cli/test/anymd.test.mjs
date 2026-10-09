@@ -434,6 +434,9 @@ describe('run: tag commands', () => {
     assert.match(h.stderr, /not both/);
     assert.equal(await h.exec(['tag', 'doc_1']), 1);
     assert.equal(await h.exec(['tag', '--add', 'a']), 1);
+    assert.equal(await h.exec(['tag', 'doc_1', '--add', '']), 1);
+    assert.match(h.stderr, /--add needs at least one tag/);
+    assert.equal(await h.exec(['tag', 'doc_1', '--remove', ' , ']), 1);
     assert.equal(h.calls.length, 0);
   });
 

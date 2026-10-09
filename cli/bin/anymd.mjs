@@ -564,6 +564,7 @@ async function cmdTag(ctx, args) {
   if (ctx.flags.remove !== undefined) body.remove = parseTagList(ctx.flags.remove, '--remove');
   if (ctx.flags.set !== undefined) body.set = parseTagList(ctx.flags.set, '--set');
   if (body.set && (body.add || body.remove)) throw usageError('use either --set, or --add and/or --remove, not both');
+  for (const flag of ['add', 'remove']) if (body[flag]?.length === 0) throw usageError(`--${flag} needs at least one tag (use --set "" to clear all tags)`);
   if (!body.set && !body.add && !body.remove) throw usageError(`usage: ${usage}`);
   const data = await readJson(await request(ctx, 'POST', `/api/v1/library/${enc(id)}/tags`, { json: body }));
   if (ctx.flags.json) return ctx.out(toJson(data));
