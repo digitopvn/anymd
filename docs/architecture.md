@@ -30,10 +30,11 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 | `src/auth/` | Principal resolution, scope guards, same-origin writes (`middleware.ts`), users/sessions/API keys (`identity.ts`), role templates and key presets (`roles.ts`) |
 | `src/billing/` | Plans, credit table, offers (`plans.ts`); `provider.ts` routes checkout and portal to the provider named by `BILLING_PROVIDER`: Creem (`creem.ts`: checkout, portal, webhooks) or Polar (`polar.ts`: also usage ingest for metered overage) |
 | `src/cms/` | Page-builder block registry (`blocks.ts`) and page document service: ops, revisions, publish (`pages.ts`) |
+| `src/services/admin/` | The admin control plane: users, credentials, settings, opt-outs, credits, billing (read-only), audit and observability. Each service checks its scope, validates input, enforces rank rules, applies idempotency and optimistic concurrency, and writes the audit row in the same D1 batch as the change. REST, web admin and MCP are thin adapters over it |
 | `src/lib/` | Usage + quota accounting (`usage.ts`), tracer, Markdown rendering (`markdown.ts`), email, utilities |
 | `src/content/` | Bundled Markdown (blog, docs, legal) and site copy (`site.ts`); loader in `index.ts` |
 | `src/views/` | Hono JSX layouts and pages |
-| `src/routes/`, `src/mcp/` | HTTP routes and the MCP server |
+| `src/routes/`, `src/mcp/` | HTTP routes and the MCP server. `src/mcp/protocol.ts` serves the 2026-07-28 stateless protocol and 2025-era clients from one endpoint; `rate-limit.ts` holds the MCP buckets; tools live in `server.ts` plus `cms-parity-tools.ts`, `account-tools.ts` and `admin-tools.ts` |
 | `client/` | Browser islands, bundled by `scripts/build-client.mjs` |
 | `cli/` | The `anymd` CLI (zero dependencies) |
 | `migrations/` | D1 schema |
@@ -42,7 +43,7 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 
 ### Principal
 
-`resolvePrincipal` (`src/auth/middleware.ts`) runs once per request: API key (`Authorization: Bearer` or `X-API-Key`) → session cookie → anonymous. A presented key that doesn't resolve is a hard `401`, never a silent downgrade to anonymous. Key scopes are intersected with the owner's **current** role on every request (`capScopes`), so demotion takes effect immediately without key rotation.
+`resolvePrincipal` (`src/auth/middleware.ts`) runs once per request: API key (`Authorization: Bearer` or `X-API-Key`) → session cookie → anonymous. A presented key that doesn't resolve is a hard `401`, never a silent downgrade to anonymous. Key scopes are intersected with the owner's **current** role on every request (`capScopes`), so demotion takes effect immediately without key rotation. Suspended accounts resolve to no principal for sessions, keys and OAuth. OAuth grants are re-capped the same way (`oauthPrincipalScopes`); grants from before least-privilege consent keep no admin scopes.
 
 ### Conversion
 
@@ -74,12 +75,12 @@ The schema is owned by `migrations/`. Tables group as:
 
 | Area | Tables | Notes |
 |---|---|---|
-| Identity | `users`, `sessions`, `api_keys` | Sessions and keys store SHA-256 hashes, never raw tokens. Key `scopes` is a JSON array. |
+| Identity | `users`, `sessions`, `api_keys` | Sessions and keys store SHA-256 hashes, never raw tokens. Key `scopes` is a JSON array. `users.status` (`active`/`suspended`) gates every credential. |
 | Library | `documents`, `documents_fts` | Unique per `(user_id, url_hash)`. FTS5 is an external-content table kept in sync by triggers. `embedded_chunks` tracks vectors `<doc_id>#<n>` in Vectorize. |
 | Metering | `usage_events`, `traces` | Monthly credit use is summed from `usage_events` since the UTC month start. |
-| Billing | `subscriptions`, `credit_grants`, `webhook_events` | `webhook_events` makes Creem and Polar webhook handling idempotent. `users.creem_customer_id` opens the Creem portal. |
+| Billing | `subscriptions`, `credit_grants`, `webhook_events` | `webhook_events` makes Creem and Polar webhook handling idempotent and records the provider and outcome. `users.creem_customer_id` opens the Creem portal. Credit grants carry reason, actor, idempotency key and revocation; only active grants raise the allowance. Plans are owned by the billing provider. |
 | Content | `posts`, `pages`, `page_revisions`, `idempotency_keys` | Page `draft`/`published` are JSON page documents. |
-| Admin | `audit_log`, `settings`, `stats` | Page mutations and billing webhook events write to `audit_log`. |
+| Admin | `audit_log`, `settings`, `settings_state`, `site_optouts`, `stats` | Every privileged change writes `audit_log` with actor, auth kind, credential, `via`, request id and a scrubbed diff. `settings_state.version` makes settings writes optimistic. |
 
 Add schema changes as a new numbered file in `migrations/`; never edit an applied migration.
 
