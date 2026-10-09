@@ -4,20 +4,17 @@
  */
 import { Hono, type MiddlewareHandler } from 'hono';
 import type { Child } from 'hono/jsx';
-import type { UserRow } from '../auth/identity';
-import { getUser } from '../auth/identity';
-import { requireUserPage, sameOriginWrites, type AppContext } from '../auth/middleware';
-import { isRole, roleAtLeast } from '../auth/roles';
-import { PLANS, type PlanId } from '../billing/plans';
+import { markVia, requireUserPage, sameOriginWrites, type AppContext } from '../auth/middleware';
 import { createPage, getPage, listPages, PageError, TEMPLATES } from '../cms/pages';
-import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost, type PostRow } from '../cms/posts';
-import { BUNDLED_POSTS, PAGE_BUILDER_GUIDE } from '../content';
-import { addOptout, listOptouts, normalizeOptoutDomain, removeOptout } from '../convert/optouts';
+import { createPost, deletePost, forkBundledPost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost, type PostRow } from '../cms/posts';
+import { PAGE_BUILDER_GUIDE } from '../content';
 import type { AppBindings, Scope } from '../env';
 import { renderMarkdown } from '../lib/markdown';
-import { getSettings, putSettings } from '../lib/settings';
-import { newId } from '../lib/util';
-import { OptoutsPage, PageEditorPage, PagesListPage, PostEditorPage, PostsListPage, SETTING_FIELDS, SettingsPage, UsersPage } from '../views/admin';
+import { addSiteOptout, listSiteOptouts, removeSiteOptout } from '../services/admin/optouts';
+import { readSettings, SETTING_FIELDS, updateSettings } from '../services/admin/settings';
+import { AdminError } from '../services/admin/shared';
+import { listUsers, setUserStatus, updateUserRole } from '../services/admin/users';
+import { OptoutsPage, PageEditorPage, PagesListPage, PostEditorPage, PostsListPage, SettingsPage, UsersPage, type UserFilters } from '../views/admin';
 import { DashShell } from '../views/dashboard';
 import { formData, renderMessage, renderPage } from './shared';
 
@@ -30,6 +27,7 @@ const can = (c: AppContext, scope: Scope) => c.get('principal').scopes.includes(
 function needs(scope: Scope): MiddlewareHandler<AppBindings> {
   return async (c, next) => {
     if (!can(c, scope)) return renderMessage(c, 403, 'Not allowed', `Your role does not include ${scope}. Ask an admin to change your role.`, <a class="btn btn-dark" href="/dashboard">Back to dashboard</a>);
+    markVia(c, 'web');
     await next();
   };
 }
@@ -143,24 +141,9 @@ adminRoutes.post('/posts/new', needs('content:write'), async (c) => {
 /** Copy a bundled (file-based) post into the database so it can be edited. */
 adminRoutes.post('/posts/fork', needs('content:write'), async (c) => {
   const f = await formData(c);
-  const existing = await getPostRow(c.env, f.slug ?? '');
-  if (existing) return c.redirect(`/admin/posts/${existing.id}`);
-  const src = BUNDLED_POSTS.find((p) => p.slug === f.slug);
-  if (!src) return renderMessage(c, 404, 'Post not found', 'That bundled post does not exist.');
-  const row = await createPost(c.env, c.get('principal'), {
-    slug: src.slug,
-    title: src.title,
-    markdown: src.markdown,
-    excerpt: src.excerpt,
-    category: (['article', 'announcement', 'guide'].includes(src.category) ? src.category : 'article') as 'article',
-    tags: src.tags,
-    cover_url: src.coverUrl,
-    seo_title: src.seoTitle,
-    seo_description: src.seoDescription,
-  });
-  // Keep the original date so the fork does not jump to the top of the blog once published.
-  await c.env.DB.prepare('UPDATE posts SET published_at = ?, author_name = ? WHERE id = ?').bind(src.publishedAt || null, src.authorName, row.id).run();
-  return c.redirect(`/admin/posts/${row.id}?saved=forked`);
+  const out = await forkBundledPost(c.env, c.get('principal'), f.slug ?? '');
+  if (!out) return renderMessage(c, 404, 'Post not found', 'That bundled post does not exist.');
+  return c.redirect(out.forked ? `/admin/posts/${out.post.id}?saved=forked` : `/admin/posts/${out.post.id}`);
 });
 
 const SAVED: Record<string, string> = {
@@ -199,26 +182,60 @@ adminRoutes.post('/posts/:id', needs('content:write'), async (c) => {
 });
 
 // ─── Users & roles ──────────────────────────────────────────────────────────
+// Thin adapters over services/admin: the services own rank rules, concurrency guards and audit.
 
-adminRoutes.get('/users', needs('users:read'), async (c) => {
-  const { results } = await c.env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 500').all<UserRow>();
-  return shell(c, '/admin/users', 'Users & roles', <UsersPage users={results} canWrite={can(c, 'users:write')} me={c.get('user')!.id} />);
-});
+/** Business-rule failures render inline; anything else is a real error. */
+function adminFailure(err: unknown): string {
+  if (err instanceof AdminError) return err.message;
+  throw err;
+}
 
-adminRoutes.post('/users/:id', needs('users:write'), async (c) => {
-  const f = await formData(c);
-  const actor = c.get('principal');
-  const target = await getUser(c.env, c.req.param('id'));
-  if (!target) return renderMessage(c, 404, 'User not found', 'The account may have been deleted.');
-  if (target.id === actor.userId) return renderMessage(c, 403, 'Not allowed', 'You cannot change your own role or plan.', <a class="btn btn-dark" href="/admin/users">Back</a>);
-  const role = f.role && isRole(f.role) ? f.role : undefined;
-  const plan = PLANS.some((p) => p.id === f.plan) ? (f.plan as PlanId) : undefined;
-  if (role && role !== target.role && actor.role !== 'owner' && (roleAtLeast(role, actor.role) || roleAtLeast(target.role, actor.role))) {
-    return renderMessage(c, 403, 'Not allowed', 'You can only manage roles below your own.', <a class="btn btn-dark" href="/admin/users">Back</a>);
+const USER_NOTICES: Record<string, string> = { role: 'Role updated.', suspended: 'Account suspended and signed out.', active: 'Account reactivated.' };
+
+async function usersList(c: AppContext, error?: string, status = 200) {
+  const q = c.req.query();
+  const filters: UserFilters = { search: q.search || undefined, role: q.role || undefined, status: q.status || undefined };
+  let page: Awaited<ReturnType<typeof listUsers>> = { items: [], next_cursor: null };
+  try {
+    page = await listUsers(c.env, c.get('principal'), { ...filters, cursor: q.cursor || undefined, limit: 50 });
+  } catch (err) {
+    error = adminFailure(err);
+    status = 400;
   }
-  await c.env.DB.prepare('UPDATE users SET role = COALESCE(?, role), plan = COALESCE(?, plan), updated_at = ? WHERE id = ?').bind(role ?? null, plan ?? null, Date.now(), target.id).run();
-  await c.env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)').bind(newId('aud_'), `${actor.kind}:${actor.userId}`, 'user.update', target.id, JSON.stringify({ role, plan }), Date.now()).run();
-  return c.redirect('/admin/users');
+  return shell(
+    c,
+    '/admin/users',
+    'Users & roles',
+    <UsersPage
+      users={page.items}
+      nextCursor={page.next_cursor}
+      filters={filters}
+      canWriteRole={can(c, 'users:roles:write')}
+      canSuspend={can(c, 'users:sessions:write')}
+      me={c.get('user')!.id}
+      notice={USER_NOTICES[q.saved ?? '']}
+      error={error}
+    />,
+    { status },
+  );
+}
+
+adminRoutes.get('/users', needs('users:read'), (c) => usersList(c));
+
+adminRoutes.post('/users/:id', needs('users:read'), async (c) => {
+  const f = await formData(c);
+  const userId = c.req.param('id');
+  try {
+    if (f.intent === 'status') {
+      const out = await setUserStatus(c.env, c.get('principal'), { userId, status: f.status, reason: f.reason ?? '', expectedStatus: f.expectedStatus || undefined });
+      return c.redirect(`/admin/users?saved=${out.user.status}`);
+    }
+    await updateUserRole(c.env, c.get('principal'), { userId, role: f.role, expectedRole: f.expectedRole || undefined });
+    return c.redirect('/admin/users?saved=role');
+  } catch (err) {
+    const message = adminFailure(err);
+    return usersList(c, message, err instanceof AdminError ? err.status : 400);
+  }
 });
 
 // ─── Site opt-outs ──────────────────────────────────────────────────────────
@@ -226,31 +243,61 @@ adminRoutes.post('/users/:id', needs('users:write'), async (c) => {
 const OPTOUT_NOTICES: Record<string, string> = { added: 'Domain blocked. Conversions stop right away.', removed: 'Domain unblocked.' };
 
 async function optoutsList(c: AppContext, error?: string, status = 200) {
-  return shell(c, '/admin/optouts', 'Site opt-outs', <OptoutsPage optouts={await listOptouts(c.env)} error={error} notice={OPTOUT_NOTICES[c.req.query('saved') ?? '']} />, { status });
+  const search = c.req.query('search') || undefined;
+  let page: Awaited<ReturnType<typeof listSiteOptouts>> = { items: [], next_cursor: null, total: 0 };
+  try {
+    page = await listSiteOptouts(c.env, c.get('principal'), { search, cursor: c.req.query('cursor') || undefined, limit: 100 });
+  } catch (err) {
+    error = adminFailure(err);
+    status = 400;
+  }
+  return shell(
+    c,
+    '/admin/optouts',
+    'Site opt-outs',
+    <OptoutsPage optouts={page.items} total={page.total} search={search} nextCursor={page.next_cursor} canWrite={can(c, 'optouts:write')} error={error} notice={OPTOUT_NOTICES[c.req.query('saved') ?? '']} />,
+    { status },
+  );
 }
 
-adminRoutes.get('/optouts', needs('settings:write'), (c) => optoutsList(c));
+adminRoutes.get('/optouts', needs('optouts:read'), (c) => optoutsList(c));
 
-adminRoutes.post('/optouts', needs('settings:write'), async (c) => {
+adminRoutes.post('/optouts', needs('optouts:write'), async (c) => {
   const f = await formData(c);
-  const actor = c.get('principal');
-  const domain = normalizeOptoutDomain(f.domain ?? '');
-  if (!domain) return optoutsList(c, 'Enter a domain such as example.com.', 422);
-  if (f.intent === 'remove') await removeOptout(c.env, domain);
-  else await addOptout(c.env, domain, (f.reason ?? '').trim().slice(0, 300), actor.userId);
-  const action = f.intent === 'remove' ? 'optout.remove' : 'optout.add';
-  await c.env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)').bind(newId('aud_'), `${actor.kind}:${actor.userId}`, action, domain, '{}', Date.now()).run();
+  try {
+    if (f.intent === 'remove') await removeSiteOptout(c.env, c.get('principal'), { domain: f.domain ?? '' });
+    else await addSiteOptout(c.env, c.get('principal'), { domain: f.domain ?? '', reason: (f.reason ?? '').trim().slice(0, 300) });
+  } catch (err) {
+    const message = adminFailure(err);
+    return optoutsList(c, message, err instanceof AdminError ? err.status : 400);
+  }
   return c.redirect(`/admin/optouts?saved=${f.intent === 'remove' ? 'removed' : 'added'}`);
 });
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 
-adminRoutes.get('/settings', needs('settings:write'), async (c) => shell(c, '/admin/settings', 'Settings', <SettingsPage values={await getSettings(c.env)} notice={c.req.query('saved') ? 'Settings saved. Public pages pick them up within a minute.' : undefined} />));
+async function settingsPage(c: AppContext, error?: string, status = 200) {
+  const { settings, version } = await readSettings(c.env, c.get('principal'));
+  return shell(
+    c,
+    '/admin/settings',
+    'Settings',
+    <SettingsPage values={settings} version={version} canWrite={can(c, 'settings:write')} error={error} notice={c.req.query('saved') ? 'Settings saved. Public pages pick them up right away.' : undefined} />,
+    { status },
+  );
+}
+
+adminRoutes.get('/settings', needs('settings:read'), (c) => settingsPage(c));
 
 adminRoutes.post('/settings', needs('settings:write'), async (c) => {
   const f = await formData(c);
-  const values: Record<string, string> = {};
-  for (const field of SETTING_FIELDS) values[field.key] = (f[field.key] ?? '').trim().slice(0, 1000);
-  await putSettings(c.env, values);
+  const patch: Record<string, string> = {};
+  for (const field of SETTING_FIELDS) patch[field.key] = (f[field.key] ?? '').trim().slice(0, 1000);
+  try {
+    await updateSettings(c.env, c.get('principal'), { patch, expectedVersion: Number(f.expectedVersion) || undefined });
+  } catch (err) {
+    const message = adminFailure(err);
+    return settingsPage(c, message, err instanceof AdminError ? err.status : 400);
+  }
   return c.redirect('/admin/settings?saved=1');
 });

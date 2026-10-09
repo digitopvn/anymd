@@ -1,9 +1,8 @@
 /** Signed-in dashboard pages. Mutations are plain form POSTs so everything works without JS. */
 import { Hono } from 'hono';
-import { createApiKey, getUser, SESSION_COOKIE, type ApiKeyRow } from '../auth/identity';
+import { SESSION_COOKIE, type ApiKeyRow } from '../auth/identity';
 import { deleteCookie } from 'hono/cookie';
-import { requireUserPage, sameOriginWrites, type AppContext } from '../auth/middleware';
-import { KEY_PRESETS } from '../auth/roles';
+import { markVia, requireUserPage, sameOriginWrites, type AppContext } from '../auth/middleware';
 import { billingEnabled, createCheckout, customerPortalUrl, providerName } from '../billing/provider';
 import type { PlanId } from '../billing/plans';
 import type { AppBindings } from '../env';
@@ -24,11 +23,11 @@ import {
   TraceDetailPage,
   TracesPage,
   UsagePage,
-  type GrantView,
   type TraceRow,
 } from '../views/dashboard';
 import type { Child } from 'hono/jsx';
-import { activeKeyCount, keyLimit } from './api';
+import { activeKeyCount, createOwnKey, grantsOf, revokeOwnGrant, revokeOwnKey } from '../services/admin/credentials';
+import { AdminError } from '../services/admin/shared';
 import { formData, originOf, renderMessage, renderPage } from './shared';
 
 export const dashboardRoutes = new Hono<AppBindings>();
@@ -128,20 +127,11 @@ dashboardRoutes.get('/traces/:id', async (c) => {
 
 // ─── API keys & connected apps ─────────────────────────────────────────────
 
-async function grantsFor(c: AppContext, userId: string): Promise<GrantView[]> {
-  try {
-    const { items } = await c.env.OAUTH_PROVIDER.listUserGrants(userId);
-    return items.map((g) => ({ id: g.id, clientName: String((g.metadata as { clientName?: string } | undefined)?.clientName ?? g.clientId), scopes: g.scope, createdAt: g.createdAt * (g.createdAt < 1e12 ? 1000 : 1) }));
-  } catch {
-    return [];
-  }
-}
-
 async function keysPage(c: AppContext, extra: { newKey?: string; error?: string } = {}, status = 200) {
   const user = c.get('user')!;
   const [{ results }, grants] = await Promise.all([
     c.env.DB.prepare('SELECT * FROM api_keys WHERE user_id = ? ORDER BY revoked_at IS NOT NULL, created_at DESC').bind(user.id).all<ApiKeyRow>(),
-    grantsFor(c, user.id),
+    grantsOf(c.env, user.id),
   ]);
   c.header('Cache-Control', 'no-store');
   return shell(c, '/dashboard/keys', 'API keys', <KeysPage keys={results} grants={grants} role={c.get('principal').role} newKey={extra.newKey} error={extra.error} />, { status });
@@ -149,26 +139,36 @@ async function keysPage(c: AppContext, extra: { newKey?: string; error?: string 
 
 dashboardRoutes.get('/keys', (c) => keysPage(c));
 
+// Key and grant changes go through the credentials service, which caps scopes, enforces the key limit and audits.
 dashboardRoutes.post('/keys', async (c) => {
+  markVia(c, 'web');
   const f = await formData(c);
-  const user = (await getUser(c.env, c.get('user')!.id))!;
   const name = (f.name ?? '').trim();
   if (!name) return keysPage(c, { error: 'Give the key a name so you can recognise it later.' }, 400);
-  if ((await activeKeyCount(c.env, user.id)) >= keyLimit(user.plan, user.role)) return keysPage(c, { error: 'Free accounts can have 2 active keys. Revoke one or upgrade to Pro.' }, 403);
-  const preset = KEY_PRESETS.find((p) => p.id === f.preset) ?? KEY_PRESETS[0];
-  const days = Number(f.expires_in_days) || null;
-  const { key } = await createApiKey(c.env, user, { name, scopes: preset.scopes, expiresInDays: days });
-  // The secret is shown exactly once, on this response.
-  return keysPage(c, { newKey: key }, 201);
+  try {
+    const { key } = await createOwnKey(c.env, c.get('principal'), { name, preset: f.preset || 'convert-only', expiresInDays: Number(f.expires_in_days) || undefined });
+    // The secret is shown exactly once, on this response.
+    return keysPage(c, { newKey: key }, 201);
+  } catch (err) {
+    if (!(err instanceof AdminError)) throw err;
+    const message = err.code === 'key_limit' ? 'Free accounts can have 2 active keys. Revoke one or upgrade to Pro.' : err.message;
+    return keysPage(c, { error: message }, err.status);
+  }
 });
 
 dashboardRoutes.post('/keys/:id/revoke', async (c) => {
-  await c.env.DB.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL').bind(Date.now(), c.req.param('id'), c.get('user')!.id).run();
+  markVia(c, 'web');
+  await revokeOwnKey(c.env, c.get('principal'), c.req.param('id')).catch((err) => {
+    if (!(err instanceof AdminError)) throw err;
+  });
   return c.redirect('/dashboard/keys');
 });
 
 dashboardRoutes.post('/grants/:id/revoke', async (c) => {
-  await c.env.OAUTH_PROVIDER.revokeGrant(decodeURIComponent(c.req.param('id')), c.get('user')!.id).catch(() => undefined);
+  markVia(c, 'web');
+  await revokeOwnGrant(c.env, c.get('principal'), c.req.param('id')).catch((err) => {
+    if (!(err instanceof AdminError)) console.error('grant revoke', err instanceof Error ? err.message : err);
+  });
   return c.redirect('/dashboard/keys');
 });
 
