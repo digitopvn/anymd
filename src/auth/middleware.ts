@@ -30,10 +30,16 @@ export const resolvePrincipal: MiddlewareHandler<AppBindings> = async (c, next) 
       if (user) principal = sessionPrincipal(user);
     }
   }
-  c.set('principal', principal);
+  // Correlates audit rows with the edge request (Cloudflare's ray id when present).
+  c.set('principal', { ...principal, requestId: c.req.header('cf-ray') ?? crypto.randomUUID() });
   c.set('user', user);
   await next();
 };
+
+/** Record which adapter and route acts, e.g. `api:PATCH /api/v1/admin/users/:id`; audit rows carry it. */
+export function markVia(c: AppContext, adapter: 'api' | 'web'): void {
+  c.set('principal', { ...c.get('principal'), via: `${adapter}:${c.req.method} ${c.req.routePath}` });
+}
 
 export function apiError(c: AppContext, status: number, code: string, message: string, extra: Record<string, unknown> = {}) {
   return c.json({ error: { code, message, ...extra } }, status as 400);
@@ -48,6 +54,7 @@ export function requireScope(...scopes: Scope[]): MiddlewareHandler<AppBindings>
     if (!p.userId && !anonymousOk) return apiError(c, 401, 'unauthorized', 'Sign in or send an API key: Authorization: Bearer amd_…');
     const missing = scopes.filter((s) => !p.scopes.includes(s));
     if (missing.length) return apiError(c, 403, 'forbidden', `Missing scope: ${missing.join(', ')}`, { required: scopes });
+    markVia(c, 'api');
     await next();
   };
 }
