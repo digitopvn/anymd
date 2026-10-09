@@ -192,6 +192,18 @@ export function normalizeTags(tags: string[]): string[] {
   return [...new Set(tags.map(normalizeTag).filter(Boolean))];
 }
 
+/**
+ * Parse a tag filter from any channel: items may be comma-separated (`["ai,rag"]` = `["ai","rag"]`),
+ * blanks are dropped, and an empty result means "no filter". Throws a 422 TagError past the limits.
+ */
+export function parseTagFilter(values: readonly string[] | undefined): string[] | undefined {
+  const tags = (values ?? []).flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
+  if (!tags.length) return undefined;
+  if (tags.length > MAX_TAG_FILTERS) throw new TagError('invalid_request', `Filter by at most ${MAX_TAG_FILTERS} tags.`);
+  if (tags.some((t) => t.length > MAX_TAG_LENGTH)) throw new TagError('invalid_request', `Tags can be at most ${MAX_TAG_LENGTH} characters.`);
+  return tags;
+}
+
 /** Split the stored space-separated column into an array. */
 export function parseStoredTags(tags: string): string[] {
   return tags.split(' ').filter(Boolean);

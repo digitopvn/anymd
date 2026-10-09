@@ -32,7 +32,7 @@ import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError, countWords, type ConvertResult } from '../convert/types';
 import type { AppBindings, Principal } from '../env';
 import { embedDocument, getDocument, listDocuments, saveDocument, deleteDocument, updateTags } from '../library/store';
-import { editTags, listTags, MAX_TAG_FILTERS, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags, TagError } from '../library/store';
+import { editTags, listTags, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags, parseTagFilter } from '../library/store';
 import { getSettings, putSettings } from '../lib/settings';
 import { Tracer } from '../lib/tracer';
 import { canSpend, recordUsage } from '../lib/usage';
@@ -185,19 +185,11 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
 
 api.get('/library', requireScope('library:read'), async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 20, 1), 100);
-  const tags = tagFilter(c.req.queries('tag'));
+  // `?tag=a&tag=b` or `?tag=a,b`: documents carrying every tag.
+  const tags = parseTagFilter(c.req.queries('tag'));
   const items = await listDocuments(c.env, me(c).userId, { limit, before: Number(c.req.query('before')) || undefined, domain: c.req.query('domain') || undefined, kind: c.req.query('kind') || undefined, tags });
   return c.json({ items, next_cursor: items.length === limit ? items[items.length - 1].created_at : null });
 });
-
-/** `?tag=a&tag=b` or `?tag=a,b`: documents carrying every tag. */
-function tagFilter(values: string[] | undefined): string[] | undefined {
-  const tags = (values ?? []).flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
-  if (!tags.length) return undefined;
-  if (tags.length > MAX_TAG_FILTERS) throw new TagError('invalid_request', `Filter by at most ${MAX_TAG_FILTERS} tags.`);
-  if (tags.some((t) => t.length > MAX_TAG_LENGTH)) throw new TagError('invalid_request', `Tags can be at most ${MAX_TAG_LENGTH} characters.`);
-  return tags;
-}
 
 // Registered before /library/:id so "tags" is not taken for a document id.
 api.get('/library/tags', requireScope('library:read'), async (c) => {

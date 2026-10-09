@@ -12,7 +12,7 @@ import { runConversion } from '../convert/service';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError } from '../convert/types';
 import type { Env, Principal, Scope, WaitUntil } from '../env';
-import { deleteDocument, editTags, getDocument, listDocuments, listTags, MAX_TAG_FILTERS, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags } from '../library/store';
+import { deleteDocument, editTags, getDocument, listDocuments, listTags, MAX_TAG_FILTERS, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags, parseTagFilter } from '../library/store';
 import { convertPayload, searchForPrincipal, usageSummary } from '../services';
 
 const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
@@ -40,7 +40,7 @@ interface ToolDef {
 
 const READ = { readOnlyHint: true, openWorldHint: false };
 const TAG_LIST_INPUT = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAGS).optional();
-const TAG_FILTER_INPUT = z.array(z.string().min(1).max(MAX_TAG_LENGTH)).min(1).max(MAX_TAG_FILTERS).optional().describe('Only documents carrying every one of these tags');
+const TAG_FILTER_INPUT = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAG_FILTERS).optional().describe('Only documents carrying every one of these tags ([] means no filter)');
 
 /** Reading a URL. Exposed as `read_url`, and as `convert_url` for clients built before the rename. */
 const READ_URL_INPUT = z.object({
@@ -117,7 +117,7 @@ const TOOLS: ToolDef[] = [
     }),
     annotations: READ,
     run: async (a, t) => {
-      const items = await listDocuments(t.env, t.principal.userId, { limit: a.limit ?? 20, domain: a.domain, tags: a.tags, before: a.before });
+      const items = await listDocuments(t.env, t.principal.userId, { limit: a.limit ?? 20, domain: a.domain, tags: parseTagFilter(a.tags), before: a.before });
       return { items, next_cursor: items.length === (a.limit ?? 20) ? items[items.length - 1].created_at : null };
     },
   },

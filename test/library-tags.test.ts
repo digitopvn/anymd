@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { AppBindings, Env, Principal } from '../src/env';
 import { handleMcp } from '../src/mcp/server';
 import { api } from '../src/routes/api';
-import { addTags, applyTagEdit, editTags, listDocuments, listTags, normalizeTags, removeTags, TagError, updateTags } from '../src/library/store';
+import { addTags, applyTagEdit, editTags, listDocuments, listTags, normalizeTags, parseTagFilter, removeTags, TagError, updateTags } from '../src/library/store';
 
 interface SqliteStatement {
   get(...values: unknown[]): unknown;
@@ -154,6 +154,46 @@ describe('tag storage', () => {
   });
 });
 
+describe('concurrent tag edits', () => {
+  /** Wrap the DB so another writer changes the row right before each of the first `races` guarded UPDATEs. */
+  function racingEnv(id: string, races: number): Env {
+    const base = env.DB;
+    let raced = 0;
+    const DB = {
+      prepare(query: string) {
+        if (query.startsWith('UPDATE documents SET tags') && raced < races) {
+          raced++;
+          db.prepare('UPDATE documents SET tags = ? WHERE id = ?').run(`other${raced}`, id);
+        }
+        return base.prepare(query);
+      },
+    } as unknown as D1Database;
+    return { ...env, DB };
+  }
+
+  it('retries on a concurrent change and applies the edit to the fresh value', async () => {
+    const id = insertDoc('u1', 'ai');
+    expect(await addTags(racingEnv(id, 1), 'u1', id, ['rag'])).toEqual(['other1', 'rag']);
+    expect(storedTags(id)).toBe('other1 rag');
+  });
+
+  it('gives up with 409 tag_conflict when the row keeps changing', async () => {
+    const id = insertDoc('u1', 'ai');
+    await expect(addTags(racingEnv(id, 3), 'u1', id, ['rag'])).rejects.toMatchObject({ code: 'tag_conflict', status: 409 });
+    expect(storedTags(id)).toBe('other3');
+  });
+});
+
+describe('tag filter parsing', () => {
+  it('splits commas, drops blanks, treats empty as no filter and enforces limits', () => {
+    expect(parseTagFilter(['ai,rag', ' llm ', ''])).toEqual(['ai', 'rag', 'llm']);
+    expect(parseTagFilter([])).toBeUndefined();
+    expect(parseTagFilter([' , '])).toBeUndefined();
+    expect(() => parseTagFilter([Array.from({ length: 11 }, (_, i) => `t${i}`).join(',')])).toThrowError(TagError);
+    expect(() => parseTagFilter(['x'.repeat(41)])).toThrowError(/at most 40/);
+  });
+});
+
 // ─── MCP ──────────────────────────────────────────────────────────────────────
 
 async function rpc(method: string, params: Record<string, unknown> | undefined, scopes: Principal['scopes']) {
@@ -197,6 +237,11 @@ describe('mcp tag tools', () => {
     expect(missing.content[0].text.includes('Document not found')).toBe(true);
     const listed = await rpc('tools/call', { name: 'list_documents', arguments: { tags: ['ai'] } }, scopes);
     expect(listed.structuredContent.items.map((d: { id: string }) => d.id)).toEqual([id]);
+    const comma = await rpc('tools/call', { name: 'list_documents', arguments: { tags: ['ai,rag'] } }, scopes);
+    expect(comma.structuredContent.items.map((d: { id: string }) => d.id)).toEqual([id]);
+    const unfiltered = await rpc('tools/call', { name: 'list_documents', arguments: { tags: [] } }, scopes);
+    expect(unfiltered.isError).toBeUndefined();
+    expect(unfiltered.structuredContent.items).toHaveLength(2);
     const tags = await rpc('tools/call', { name: 'list_tags', arguments: {} }, scopes);
     expect(tags.structuredContent.items).toEqual([{ tag: 'ai', count: 1 }, { tag: 'other', count: 1 }, { tag: 'rag', count: 1 }]);
   });
