@@ -6,6 +6,7 @@ import { initDashboard } from './dashboard';
 import { requestText } from './lib/api';
 import { copyText, isAiTarget, sendToAi } from './lib/clipboard';
 import { initConverters } from './lib/converter';
+import { initReadingOptions } from './lib/reading-options';
 import { $, $$, closestTarget, disclosure, reducedMotion, setupTabs, store, uid } from './lib/dom';
 import { initWebMcp } from './lib/webmcp';
 
@@ -450,6 +451,7 @@ function boot(): void {
   run('copy', initCopy);
   run('page-actions', initPageActions);
   run('cookies', initCookieBadge);
+  run('reading-options', initReadingOptions);
   run('converter', initConverters);
   run('dashboard', initDashboard);
   run('webmcp', initWebMcp);

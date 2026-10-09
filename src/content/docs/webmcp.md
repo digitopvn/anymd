@@ -32,7 +32,7 @@ Tools run with the page's own session. If you're signed in to anymd.cc, library 
 | `list_tags` | Your tags with document counts | Signed in |
 | `tag_document` | Add, remove or set a document's tags | Signed in (needs `library:write`) |
 
-`read_url` and `convert_url` accept the same conversion options as the REST endpoint: `save`, `fresh`, `includeComments`, `analyzeImages`, `maxComments` (default 100, maximum 1,000), `maxImages` (default 10, maximum 20) and `maxCredits` (default 100, maximum 1,000). Comments and image analysis are signed-in opt-ins. A signed-in X read can expand a same-author thread automatically; anonymous X reads retain the basic post conversion. Responses expose credit breakdown and partial enrichment coverage, and cached reads are free.
+`read_url` and `convert_url` accept the same conversion options as the REST endpoint: `save`, `removeImages`, `expandThread`, `maxThreadPosts` (default 20, maximum 100), `includeComments`, `analyzeImages`, `maxComments` (default 100, maximum 1,000), `maxImages` (default 10, maximum 20) and `maxCredits` (default 100, maximum 1,000). Thread expansion, comments and image analysis are signed-in opt-ins. Options left out follow the signed-in user's saved deep reading defaults, otherwise they are off; X reads return the single requested post unless thread expansion is enabled. Responses expose credit breakdown and partial enrichment coverage, and cached reads are free.
 
 ## Extra tools in the page editor
 

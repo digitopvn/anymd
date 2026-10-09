@@ -47,7 +47,7 @@ Every error has the same shape and a matching HTTP status:
 | 409 | `revision_conflict`, `slug_taken`, `tag_conflict` |
 | 413 | `too_large` |
 | 415 | `unsupported_type` |
-| 422 | `empty_content`, `document_failed`, `invalid_props`, `idempotency_mismatch`, `invalid_request`, `too_many_tags` |
+| 422 | `empty_content`, `document_failed`, `invalid_props`, `idempotency_mismatch`, `invalid_request`, `too_many_tags`, `invalid_preferences` |
 | 429 | `anonymous_limit`, rate limits |
 | 503 | `provider_unavailable` |
 | 502 | `fetch_failed`, `upstream_status` |
@@ -72,6 +72,8 @@ Read `code`, not `message`. Messages are for humans and may change.
 | GET, POST | `/keys` | `keys:manage` |
 | DELETE | `/keys/:id` | `keys:manage` |
 | GET | `/me` | any signed-in caller |
+| GET | `/account/reading-preferences` | `convert` (signed-in callers) |
+| PUT, DELETE | `/account/reading-preferences` | `keys:manage` |
 | POST | `/billing/checkout`, `/billing/portal` | browser session |
 | * | `/admin/pages…`, `/admin/blocks`, `/admin/templates` | `pages:*` (admins: [builder guide](/admin/docs/page-builder)) |
 | * | `/admin/posts…` | `content:*` |
@@ -90,20 +92,22 @@ Convert a URL. Scope: `convert`.
 | `url` | string | required | Any public http(s) URL |
 | `language` | string | | Preferred language, e.g. `"vi"` |
 | `selector` | string | | CSS selector for the main content |
-| `removeImages` | boolean | `false` | Strip images |
+| `removeImages` | boolean | saved `keepImages`, else `false` | Strip image/media references (no credit effect) |
 | `frontmatter` | boolean | `true` | Include the YAML frontmatter block |
 | `save` | boolean | `true` | Save to your library (needs `library:write`) |
 | `fresh` | boolean | `false` | Skip the cache |
-| `includeComments` | boolean | `false` | Retrieve comments and replies (extra credits) |
-| `analyzeImages` | boolean | `false` | OCR and describe article images (extra credits) |
-| `maxComments` | integer | `100` | Comment limit, from 1 to 1,000 |
-| `maxImages` | integer | `10` | Article-image limit, from 1 to 20 |
-| `maxCredits` | integer | `100` | Per-request budget, from 1 to 1,000 |
+| `expandThread` | boolean | saved, else `false` | Expand the rooted same-author X thread (extra credits, account) |
+| `maxThreadPosts` | integer | saved, else `20` | Thread posts including the requested post, from 1 to 100 |
+| `includeComments` | boolean | saved, else `false` | Retrieve comments and replies (extra credits, account) |
+| `analyzeImages` | boolean | saved, else `false` | OCR and describe article images (extra credits, account) |
+| `maxComments` | integer | saved, else `100` | Comment limit, from 1 to 1,000 |
+| `maxImages` | integer | saved, else `10` | Article-image limit, from 1 to 20 |
+| `maxCredits` | integer | saved, else `100` | Per-request budget, from 1 to 1,000 |
 | `format` | `"json"` \| `"markdown"` | | `markdown` returns `text/markdown` instead of JSON |
 
 The JSON response carries the Markdown, the extracted metadata, the library document id (when saved), credits charged, cache status and trace id. See the OpenAPI spec for the exact schema. The `X-Anymd-*` headers from the [URL API](/docs/url) are set here too.
 
-For social URLs, `kind` is `facebook`, `instagram`, `threads` or `linkedin`; these adapters require an authenticated caller. X remains readable anonymously, while signed-in X conversions can expand the rooted same-author thread automatically. Comments and article-image analysis are opt-in. The response includes `credit_breakdown` with `base`, `thread`, `comments` and `images`, plus an `enrichment` object whose sections expose `complete`, `count`, `fetchedAt` and, when incomplete, `reason`. Provider failures, the 40-call/55-second processing bounds and item or credit limits produce partial coverage rather than a false complete result.
+For social URLs, `kind` is `facebook`, `instagram`, `threads` or `linkedin`; these adapters require an authenticated caller. X is readable anonymously; thread expansion, comments and article-image analysis are opt-in (see [deep reading](#deep-reading-options-and-saved-defaults)). The response's `reading_options` shows the effective value of every option and whether it came from the `request`, your saved `preference` or the safe `default`. The response includes `credit_breakdown` with `base`, `thread`, `comments` and `images`, plus an `enrichment` object whose sections expose `complete`, `count`, `fetchedAt` and, when incomplete, `reason`. Provider failures, the 40-call/55-second processing bounds and item or credit limits produce partial coverage rather than a false complete result.
 
 The base social post costs 10 credits. Each additional X thread post costs 1, each started 20-comment batch costs 10, and each successfully analyzed article image costs 5. Cached reads cost 0. A later signed-in save of the same URL preserves previously saved complete or richer enrichment when the new read is plain or partial.
 
@@ -149,6 +153,49 @@ res.raise_for_status()
 data = res.json()
 print(res.headers.get("X-Anymd-Credits"), res.headers.get("X-Anymd-Cache"))
 ```
+
+### Deep reading options and saved defaults
+
+Every option above resolves with one rule, in every channel (web converter, URL API, REST, CLI, MCP, WebMCP):
+
+```
+explicit request option > your saved reading preference > safe default
+```
+
+The safe default for every credit-consuming enrichment (`expandThread`, `includeComments`, `analyzeImages`) is **off**: a signed-in request that sets nothing gets the base conversion only. Signing in never turns enrichment on by itself. When an explicit option conflicts with a saved one (for example `analyzeImages: true` while your saved defaults remove images), the explicit option wins; two explicit conflicting options return `400 invalid_options`. Saved defaults never raise your plan's credits, and a request's own `maxCredits` always wins over the saved cap.
+
+> **Behavior change (October 2026):** signed-in X conversions used to expand same-author threads automatically. They no longer do. Send `expandThread: true` or save it as a default to keep the old behavior.
+
+#### GET /account/reading-preferences
+
+Returns `{ preferences, saved, updated_at, defaults, limits }`. `saved: false` means nothing is stored and the safe defaults apply. Scope: `convert`; signed-in callers only.
+
+#### PUT /account/reading-preferences
+
+Scope: `keys:manage`. Saved defaults decide what every other key, OAuth client and the web converter may spend when they leave an option out, so a **Convert only** key can read them but not change them: use a key with **Everything my role allows** (or the dashboard). Every change is written to the audit log with the auth kind, key id and the changed fields.
+
+A partial update: send only the fields to change; the rest keep their saved value. Unknown fields and out-of-range values are rejected (never silently clamped) with `422 invalid_preferences` and a `details` list naming each field and its allowed range. `analyzeImages` requires `keepImages`.
+
+| Field | Type | Default | Range / notes |
+|---|---|---|---|
+| `expandThread` | boolean | `false` | Extra credits |
+| `maxThreadPosts` | integer | `20` | 1–100 |
+| `includeComments` | boolean | `false` | Extra credits |
+| `maxComments` | integer | `100` | 1–1,000 |
+| `keepImages` | boolean | `true` | No extra credits; same as `images=1` / `removeImages: false` |
+| `analyzeImages` | boolean | `false` | Extra credits; needs `keepImages` |
+| `maxImages` | integer | `10` | 1–20 |
+| `maxCredits` | integer | `100` | 1–1,000; cap per conversion including the base price |
+
+```bash
+curl -X PUT https://anymd.cc/api/v1/account/reading-preferences \
+  -H "Authorization: Bearer amd_…" -H "Content-Type: application/json" \
+  -d '{"expandThread": true, "maxThreadPosts": 30}'
+```
+
+#### DELETE /account/reading-preferences
+
+Removes the saved defaults; the safe defaults apply again. Scope: `keys:manage`; audited. The same settings live in the dashboard under [Account → Deep reading defaults](/dashboard/account#reading-defaults).
 
 ### POST /convert/file
 

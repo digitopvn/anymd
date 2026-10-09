@@ -1,7 +1,7 @@
 ---
 title: "Supported sources"
 description: "What anymd converts today (web pages, social posts, X, YouTube, GitHub, Reddit, Hacker News, PDFs, Office files and images), what each returns, limits, and what's planned."
-updated: "2026-10-04"
+updated: "2026-10-09"
 ---
 
 anymd picks a converter per URL. Specialised adapters go first; everything else goes through the general web pipeline. The `kind` field in the frontmatter (and the `X-Anymd-Kind` header) tells you which one ran.
@@ -48,7 +48,7 @@ Before fetching a page itself, anymd checks the site's `robots.txt` for the `any
 
 Status URLs on `x.com` and `twitter.com` (including `mobile.`) go through the [FxTwitter](https://github.com/FixTweet/FxTwitter) API. You get the post text, long-form Articles, quoted posts, polls, photos and videos, plus `likes`, `retweets`, `replies` and `views` in the frontmatter.
 
-Anonymous reads keep the basic post conversion. Signed-in reads can expand the rooted same-author thread automatically; each additional post is a separate 1-credit unit. Thread membership follows the provider's relationship and conversation identifiers, so unrelated replies and other authors are excluded.
+Every read converts the requested post. Signed-in callers can opt in to the rooted same-author thread with `expandThread` (per request or as a saved default), bounded by `maxThreadPosts` (default 20, maximum 100); each additional post is a separate 1-credit unit. Threads no longer expand automatically for signed-in callers. Thread membership follows the provider's relationship and conversation identifiers, so unrelated replies and other authors are excluded.
 
 ## Social posts
 

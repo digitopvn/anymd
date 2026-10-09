@@ -32,6 +32,7 @@ export function convertPayload(r: ConvertResponse) {
     credits: r.credits,
     credit_breakdown: r.creditBreakdown ?? { base: r.credits, thread: 0, comments: 0, images: 0 },
     enrichment: x.enrichment ?? {},
+    reading_options: r.readingOptions,
     cached: r.cached,
     trace_id: r.traceId,
     duration_ms: r.durationMs,

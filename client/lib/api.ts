@@ -101,22 +101,29 @@ function asPayload(raw: unknown): ConvertPayload {
  * Convert a URL. Signed-in callers use POST /api/v1/convert (saved to the library); the REST
  * scope guard rejects anonymous callers, so they fall back to the public URL API.
  */
+/** Omitted options fall back to the signed-in user's saved reading preferences, then to the safe defaults. */
 export interface ConversionOptions {
+  expandThread?: boolean;
+  maxThreadPosts?: number;
   includeComments?: boolean;
   analyzeImages?: boolean;
   maxComments?: number;
   maxImages?: number;
   maxCredits?: number;
+  removeImages?: boolean;
 }
+
+export const CONVERSION_OPTION_KEYS = ['expandThread', 'maxThreadPosts', 'includeComments', 'analyzeImages', 'maxComments', 'maxImages', 'maxCredits', 'removeImages'] as const;
 
 function fallbackQuery(save: boolean | undefined, options: ConversionOptions): string {
   const params = new URLSearchParams();
-  for (const key of ['includeComments', 'analyzeImages'] as const) {
+  for (const key of ['expandThread', 'includeComments', 'analyzeImages'] as const) {
     if (options[key] !== undefined) params.set(key, options[key] ? '1' : '0');
   }
-  for (const key of ['maxComments', 'maxImages', 'maxCredits'] as const) {
+  for (const key of ['maxThreadPosts', 'maxComments', 'maxImages', 'maxCredits'] as const) {
     if (options[key] !== undefined) params.set(key, String(options[key]));
   }
+  if (options.removeImages !== undefined) params.set('images', options.removeImages ? '0' : '1');
   if (save !== undefined) params.set('save', save ? '1' : '0');
   return params.toString();
 }
@@ -127,7 +134,7 @@ export async function convertUrl(url: string, save?: boolean, options: Conversio
     return { data: asPayload(data), headers: res.headers };
   } catch (err) {
     if (!(err instanceof ApiFailure && err.status === 401)) throw err;
-    if (options.includeComments || options.analyzeImages) throw err;
+    if (options.expandThread || options.includeComments || options.analyzeImages) throw err;
   }
   try {
     const target = url.replace(/#.*$/, '').replace(/^\/+/, '');
@@ -142,4 +149,17 @@ export async function convertUrl(url: string, save?: boolean, options: Conversio
     if (err instanceof ApiFailure) err.anonymous = true;
     throw err;
   }
+}
+
+/** Shape of GET/PUT /api/v1/account/reading-preferences. */
+export interface StoredReadingPreferences {
+  preferences: import('../../src/lib/reading-options').ReadingPreferences;
+  saved: boolean;
+  updated_at: number | null;
+}
+
+export async function getReadingPreferences(): Promise<StoredReadingPreferences> {
+  const { data } = await request<StoredReadingPreferences>('/api/v1/account/reading-preferences');
+  if (!data || typeof data !== 'object' || !data.preferences || typeof data.preferences !== 'object') throw new ApiFailure(500, 'bad_response', 'The server sent an unexpected response.');
+  return data;
 }

@@ -46,6 +46,9 @@ anymd search "vector databases" --mode hybrid --limit 10
 | `anymd pages publish <id>` | Publish the page to `/p/<slug>`. |
 | `anymd pages blocks` | Block catalog (types, sizes, slots). |
 | `anymd mcp` | Print MCP config snippets for Claude Code, Cursor and Claude Desktop. |
+| `anymd prefs [show]` | Show your saved reading (deep reading) defaults. |
+| `anymd prefs set <field>=<value>…` | Change saved defaults, e.g. `anymd prefs set expandThread=on maxThreadPosts=30`. Fields: `expandThread`, `includeComments`, `keepImages`, `analyzeImages` (true/false) and `maxThreadPosts`, `maxComments`, `maxImages`, `maxCredits` (integers). |
+| `anymd prefs reset` | Delete saved defaults; deep reading is off again. `set` and `reset` need a key with `keys:manage` (the "Everything my role allows" preset). |
 
 `--json` prints the raw API response for every read command. `-o, --output <file>` writes
 the result to a file and prints a one-line summary (bytes, credits, cache) on stderr.
@@ -56,13 +59,17 @@ These flags are available on `anymd convert` and the bare `anymd <url>` form:
 
 | Flag | Default and bounds | Effect |
 |---|---|---|
+| `--expand-thread` | Off; requires a key | Expand the rooted same-author X thread; 1 credit per additional post |
+| `--max-thread-posts <n>` | `20`, from 1 to 100 | Maximum thread posts, including the requested one |
 | `--include-comments` | Off; requires a key | Retrieve comments and replies; extra credits apply |
 | `--analyze-images` | Off; requires a key | OCR and describe eligible images in the converted Markdown; extra credits apply |
 | `--max-comments <n>` | `100`, from 1 to 1,000 | Maximum comments/replies to retain |
 | `--max-images <n>` | `10`, from 1 to 20 | Maximum images to analyze |
 | `--max-credits <n>` | `100`, from 1 to 1,000 | Hard credit limit for the request |
+| `--no-expand-thread`, `--no-include-comments`, `--no-analyze-images` | | Turn a saved default off for this conversion only |
+| `--keep-images`, `--no-images` | Keep | Keep or strip image/media URLs (no credit effect) |
 
-Anonymous X reads keep the basic post conversion. With a key, X can expand a rooted same-author thread automatically. Facebook, Instagram, Threads and LinkedIn post adapters require a signed-in caller. JSON responses include `credit_breakdown` and `enrichment` coverage, so provider failures and partial results remain visible; cached reads are free.
+Flags you leave out follow your saved reading defaults (`anymd prefs`), otherwise the safe defaults: thread expansion, comments and image analysis are off. A flag on one conversion never changes the saved defaults. X posts convert as the single requested post unless you pass `--expand-thread` or save it as a default; keys no longer expand threads automatically. Facebook, Instagram, Threads and LinkedIn post adapters require a signed-in caller. JSON responses include `credit_breakdown` and `enrichment` coverage, so provider failures and partial results remain visible; cached reads are free.
 
 ## Configuration
 

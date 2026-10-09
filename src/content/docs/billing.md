@@ -1,7 +1,7 @@
 ---
 title: "Billing & credits"
 description: "How anymd credits work, what each source costs, plans, overage, offers, and how checkout and the customer portal work."
-updated: "2026-10-04"
+updated: "2026-10-09"
 ---
 
 anymd bills in **credits**, and you pay when your agents learn something new. Processing a new source uses credits by its complexity (one credit is one web page); reusing what your agents already know is free: cached reads, library search and MCP recall cost nothing.
@@ -24,7 +24,23 @@ anymd bills in **credits**, and you pay when your agents learn something new. Pr
 
 Every conversion response tells you what it cost in the `X-Anymd-Credits` header. `fresh=1` skips the cache, so it is charged like a new conversion.
 
-Enrichment is opt-in for comments and article-image analysis. `maxCredits` defaults to 100 and accepts 1–1,000; `maxComments` defaults to 100 and accepts 1–1,000; `maxImages` defaults to 10 and accepts 1–20. A request is bounded at 40 provider calls and 55 seconds. Successful returned units consume credits; failed or unavailable units do not. Partial sections are reported in the response's `enrichment` coverage instead of being charged as complete.
+## Deep reading
+
+Thread expansion, comments and article-image analysis can spend credits beyond the base price, so they are **off by default** and run only when you opt in: on a single request, or as a saved default in [Account → Deep reading defaults](/dashboard/account#reading-defaults) (also `PUT /api/v1/account/reading-preferences` and `anymd prefs set`). Signing in never turns them on. One rule decides each option: **request option > your saved default > safe default (off)**. A one-time change in the converter or on a request does not change your saved defaults.
+
+| Option | Default | Bounds | Credits |
+|---|---|---|---|
+| Keep image/media URLs (`images`, `keepImages`) | On | | 0 |
+| Expand X threads (`expandThread`) | Off | `maxThreadPosts` 1–100, default 20 | 1 per additional post |
+| Comments & replies (`includeComments`) | Off | `maxComments` 1–1,000, default 100 | 10 per started batch of 20 |
+| Read text & details in images (`analyzeImages`) | Off | `maxImages` 1–20, default 10 | 5 per analyzed image |
+| Max credits per conversion (`maxCredits`) | 100 | 1–1,000 | Cap including the base price |
+
+The worst case is bounded before you convert: for example, threads up to 20 posts add at most 19 credits, and 10 analyzed images add at most 50, always capped by `maxCredits`. Saved defaults never raise your plan's allowance, and a request's own `maxCredits` wins over the saved one. Each response's `credit_breakdown` (`base`, `thread`, `comments`, `images`) and the trace in **Dashboard → Traces** show which enrichment produced a charge and whether it came from the request, your saved default or the safe default.
+
+> Until October 2026, signed-in X conversions expanded same-author threads automatically. They now return the single requested post unless thread expansion is enabled.
+
+`maxCredits` defaults to 100 and accepts 1–1,000; `maxThreadPosts` defaults to 20 and accepts 1–100; `maxComments` defaults to 100 and accepts 1–1,000; `maxImages` defaults to 10 and accepts 1–20. A request is bounded at 40 provider calls and 55 seconds. Successful returned units consume credits; failed or unavailable units do not. Partial sections are reported in the response's `enrichment` coverage instead of being charged as complete.
 
 ## Plans
 

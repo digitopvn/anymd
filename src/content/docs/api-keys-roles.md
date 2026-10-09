@@ -1,7 +1,7 @@
 ---
 title: "API keys & roles"
 description: "Create scoped anymd API keys, pick presets, and understand how roles cap what every key and OAuth grant can do."
-updated: "2026-09-26"
+updated: "2026-10-09"
 ---
 
 Every call to anymd runs as a **principal** with a set of **scopes**. Scopes come from your **role**, and each API key or OAuth grant can only narrow them, never widen them.
@@ -42,7 +42,7 @@ Rule of thumb: give each integration its own key with the smallest preset that w
 | `library:read` | List, read and search your library |
 | `library:write` | Save conversions, tag and delete documents |
 | `usage:read` | Usage, credits and traces |
-| `keys:manage` | Create, list and revoke your API keys |
+| `keys:manage` | Create, list and revoke your API keys; change or reset your saved deep reading defaults |
 | `content:read` · `content:write` · `content:publish` | Blog posts: read drafts, edit, publish |
 | `pages:read` · `pages:write` · `pages:publish` | Landing pages: read, edit, publish |
 | `settings:write` | Site settings |
