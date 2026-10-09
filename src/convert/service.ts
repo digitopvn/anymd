@@ -32,6 +32,12 @@ export interface ConvertRequest extends EnrichmentOptions {
   clientIp?: string;
 }
 
+/**
+ * Why a conversion was not saved to the library: the caller opted out, is anonymous, its credential
+ * lacks `library:write` (e.g. a "Convert only" key), or the library is full.
+ */
+export type NotSavedReason = 'not_requested' | 'anonymous' | 'missing_scope' | 'library_limit';
+
 export interface ConvertResponse {
   creditBreakdown?: CreditBreakdown;
   /** Effective reading options after `request > saved preference > default`, with each value's source. */
@@ -39,6 +45,8 @@ export interface ConvertResponse {
   result: ConvertResult;
   markdown: string;
   documentId: string | null;
+  /** Null when the conversion was saved. */
+  notSavedReason: NotSavedReason | null;
   credits: number;
   cached: boolean;
   traceId: string;
@@ -181,9 +189,11 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
     const creditBreakdown: CreditBreakdown | undefined = cached ? { base: 0, thread: 0, comments: 0, images: 0 } : budget?.breakdown;
 
     let documentId: string | null = null;
-    if (principal.userId && req.save !== false && principal.scopes.includes('library:write')) {
+    let notSavedReason: NotSavedReason | null = req.save === false ? 'not_requested' : !principal.userId ? 'anonymous' : !principal.scopes.includes('library:write') ? 'missing_scope' : null;
+    if (!notSavedReason && principal.userId) {
       const saved = await tracer.span('library.save', () => saveDocument(env, principal.userId!, result!, formatMarkdown(result!, { frontmatter: false }), getPlan(plan).libraryLimit));
       documentId = saved?.id ?? null;
+      if (!saved) notSavedReason = 'library_limit';
       if (saved?.changed) ctx.waitUntil(embedDocument(env, principal.userId, saved.id).catch(() => 0));
     }
 
@@ -199,9 +209,9 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
         tracer,
       ).catch(() => undefined),
     );
-    if (principal.userId && credits > 0) ctx.waitUntil(ingestPolarUsage(env, principal.userId, credits, result.sourceKind).catch(() => undefined));
+    if (principal.userId && credits > 0) ctx.waitUntil(ingestPolarUsage(env, principal.userId, credits, result.sourceKind, reserved ? tracer.id : undefined).catch(() => undefined));
 
-    return { result, markdown, documentId, credits, cached, traceId: tracer.id, durationMs, creditBreakdown, readingOptions: options };
+    return { result, markdown, documentId, notSavedReason, credits, cached, traceId: tracer.id, durationMs, creditBreakdown, readingOptions: options };
   } catch (err) {
     if (reserved && !settled) await settleConversion(env, tracer.id, 0).catch(() => undefined);
     const e = err instanceof ConvertError ? err : new ConvertError(err instanceof Error ? err.message : 'Conversion failed', 500, 'internal');

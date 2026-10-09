@@ -3,6 +3,7 @@ import { getPlan } from '../billing/plans';
 import type { Tracer } from './tracer';
 import { newId, now } from './util';
 import { CHARGES_SQL, UNRESERVED_USAGE_SQL } from './conversion-budget';
+import { grantAllowance } from '../billing/grant-pool-ledger';
 
 export type Channel = 'web' | 'api' | 'mcp' | 'cli' | 'webmcp' | 'url';
 
@@ -27,6 +28,14 @@ export function monthStart(ts = now()): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
 }
 
+/** The first instant of the next calendar month (UTC): the end of `ts`'s month. */
+export function nextMonthStart(ts: number): number {
+  const d = new Date(monthStart(ts));
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+}
+
+const calendarMonth = async (ts: number) => ({ start: monthStart(ts), end: nextMonthStart(ts) });
+
 /** Credits used this calendar month (UTC). */
 export async function creditsUsedThisMonth(env: Env, userId: string): Promise<number> {
   const ts = now();
@@ -36,13 +45,15 @@ export async function creditsUsedThisMonth(env: Env, userId: string): Promise<nu
   return row?.used ?? 0;
 }
 
-export async function extraCredits(env: Env, userId: string): Promise<number> {
-  const row = await env.DB.prepare(
-    'SELECT COALESCE(SUM(credits),0) AS c FROM credit_grants WHERE user_id = ? AND (expires_at IS NULL OR expires_at > ?)',
-  )
-    .bind(userId, now())
-    .first<{ c: number }>();
-  return row?.c ?? 0;
+/**
+ * Credits active grants add to this calendar month's allowance: a recurring grant its full credits,
+ * a one-time grant what is left of its pool after earlier months (see `grant-pool-ledger.ts`).
+ * `included` is the plan's monthly credits, which come before grants; it is looked up when omitted.
+ */
+export async function extraCredits(env: Env, userId: string, included?: number): Promise<number> {
+  const ts = now();
+  const base = included ?? getPlan((await env.DB.prepare('SELECT plan FROM users WHERE id = ?').bind(userId).first<{ plan: string }>())?.plan ?? 'free').credits;
+  return grantAllowance(env, userId, ts, await calendarMonth(ts), base, calendarMonth);
 }
 
 export interface QuotaState {
@@ -56,7 +67,7 @@ export interface QuotaState {
 
 export async function quotaState(env: Env, userId: string, planId: string): Promise<QuotaState> {
   const plan = getPlan(planId);
-  const [used, extra] = await Promise.all([creditsUsedThisMonth(env, userId), extraCredits(env, userId)]);
+  const [used, extra] = await Promise.all([creditsUsedThisMonth(env, userId), extraCredits(env, userId, plan.credits)]);
   const total = plan.credits + extra;
   return { plan: plan.id, included: plan.credits, extra, used, remaining: Math.max(0, total - used), overage: plan.overagePer1k !== null };
 }

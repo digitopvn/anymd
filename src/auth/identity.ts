@@ -50,7 +50,12 @@ export interface UserRow {
   created_at: number;
   updated_at: number;
   last_login_at: number | null;
+  /** `active` or `suspended`; suspended accounts cannot sign in or use keys and OAuth grants. */
+  status: UserStatus;
+  status_reason: string;
 }
+
+export type UserStatus = 'active' | 'suspended';
 
 export async function getUser(env: Env, id: string): Promise<UserRow | null> {
   return env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<UserRow>();
@@ -86,6 +91,8 @@ export async function createUser(env: Env, input: { email: string; name: string;
     created_at: ts,
     updated_at: ts,
     last_login_at: ts,
+    status: 'active',
+    status_reason: '',
   };
   await env.DB.prepare(
     'INSERT INTO users (id,email,name,password_hash,role,avatar_url,plan,created_at,updated_at,last_login_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
@@ -118,7 +125,7 @@ export async function destroySession(env: Env, token: string): Promise<void> {
 
 export async function userFromSession(env: Env, token: string): Promise<UserRow | null> {
   const row = await env.DB.prepare(
-    'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ?',
+    "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ? AND u.status != 'suspended'",
   )
     .bind(await sha256(token), now())
     .first<UserRow>();
@@ -147,8 +154,10 @@ export async function createApiKey(
   user: UserRow,
   input: { name: string; scopes: string[]; expiresInDays?: number | null },
 ): Promise<{ key: string; row: ApiKeyRow }> {
-  const secret = API_KEY_PREFIX + randomToken(24);
   const scopes = capScopes(user.role, input.scopes);
+  // An empty list would otherwise be stored as a key that can do nothing; refuse it so callers notice.
+  if (!scopes.length) throw Object.assign(new Error('None of the requested scopes are available to your role.'), { status: 422, code: 'no_scopes' });
+  const secret = API_KEY_PREFIX + randomToken(24);
   const row: ApiKeyRow = {
     id: newId('key_'),
     user_id: user.id,
@@ -173,11 +182,11 @@ export async function createApiKey(
 export async function principalFromApiKey(env: Env, key: string, ctx?: WaitUntil): Promise<Principal | null> {
   if (!key.startsWith(API_KEY_PREFIX)) return null;
   const row = await env.DB.prepare(
-    'SELECT k.id, k.scopes, k.expires_at, k.revoked_at, u.id AS user_id, u.role AS user_role FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.key_hash = ?',
+    'SELECT k.id, k.scopes, k.expires_at, k.revoked_at, u.id AS user_id, u.role AS user_role, u.status AS user_status FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.key_hash = ?',
   )
     .bind(await sha256(key))
-    .first<{ id: string; scopes: string; expires_at: number | null; revoked_at: number | null; user_id: string; user_role: string }>();
-  if (!row || row.revoked_at || (row.expires_at && row.expires_at < now())) return null;
+    .first<{ id: string; scopes: string; expires_at: number | null; revoked_at: number | null; user_id: string; user_role: string; user_status: string }>();
+  if (!row || row.revoked_at || (row.expires_at && row.expires_at < now()) || row.user_status === 'suspended') return null;
   const role = isRole(row.user_role) ? row.user_role : 'user';
   const touch = env.DB.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').bind(now(), row.id).run();
   if (ctx) ctx.waitUntil(touch);

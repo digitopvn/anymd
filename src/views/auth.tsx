@@ -1,6 +1,6 @@
 /** Sign-in, sign-up, password reset and the OAuth consent screen. */
 import type { Child } from 'hono/jsx';
-import { ROLE_TEMPLATES } from '../auth/roles';
+import { ELEVATED_SCOPES, ROLE_TEMPLATES, SCOPE_LABELS } from '../auth/roles';
 import { SSO_LABEL, type SsoProvider } from '../auth/sso';
 import type { Scope } from '../env';
 import { Icon, Logo } from './components/icons';
@@ -245,24 +245,27 @@ export function ResetPage({ token, error }: { token: string; error?: string }) {
   );
 }
 
-const SCOPE_LABELS: Record<string, string> = {
-  convert: 'Convert URLs to Markdown (uses your credits)',
-  'library:read': 'Read and search your library',
-  'library:write': 'Save and delete library documents',
-  'usage:read': 'Read usage and traces',
-  'keys:manage': 'Manage API keys and saved reading defaults',
-  'content:read': 'Read blog posts',
-  'content:write': 'Write blog posts',
-  'content:publish': 'Publish blog posts',
-  'pages:read': 'Read landing pages',
-  'pages:write': 'Edit landing pages',
-  'pages:publish': 'Publish landing pages',
-  'settings:write': 'Change site settings',
-  'users:read': 'Read users',
-  'users:write': 'Change user roles',
-};
-
-export function ConsentPage({ clientName, clientUri, scopes, state, userEmail, role }: { clientName: string; clientUri?: string; scopes: Scope[]; state: string; userEmail: string; role: string }) {
+export function ConsentPage({
+  clientName,
+  clientUri,
+  scopes,
+  unavailable = [],
+  requestedNothing = false,
+  state,
+  userEmail,
+  role,
+}: {
+  clientName: string;
+  clientUri?: string;
+  scopes: Scope[];
+  unavailable?: string[];
+  requestedNothing?: boolean;
+  state: string;
+  userEmail: string;
+  role: string;
+}) {
+  const elevated = scopes.filter((s) => ELEVATED_SCOPES.has(s));
+  const basic = scopes.filter((s) => !ELEVATED_SCOPES.has(s));
   return (
     <AuthShell title={`Connect ${clientName}`} lead="An MCP client wants to use anymd on your behalf." aside={false}>
       <div class="card p-5">
@@ -272,12 +275,27 @@ export function ConsentPage({ clientName, clientUri, scopes, state, userEmail, r
         {clientUri ? <p class="mt-1 truncate text-xs text-muted">{clientUri}</p> : null}
         <p class="mt-4 text-sm font-semibold">It will be able to:</p>
         <ul class="mt-2 space-y-2 text-sm">
-          {scopes.map((s) => (
+          {basic.map((s) => (
             <li class="flex gap-2">
               <Icon name="check" size={16} class="mt-0.5 shrink-0 text-accent-ink" stroke={2.4} /> {SCOPE_LABELS[s] ?? s}
             </li>
           ))}
         </ul>
+        {elevated.length ? (
+          <div class="mt-4 rounded-xl border border-warn-line bg-warn-soft p-3" data-elevated-scopes>
+            <p class="text-sm font-semibold text-warn">Elevated access: other users' data or site-wide settings</p>
+            <ul class="mt-2 space-y-2 text-sm text-warn">
+              {elevated.map((s) => (
+                <li class="flex gap-2">
+                  <Icon name="shield" size={16} class="mt-0.5 shrink-0" stroke={2.4} /> {SCOPE_LABELS[s] ?? s} <code class="text-xs opacity-70">{s}</code>
+                </li>
+              ))}
+            </ul>
+            <p class="mt-2 text-xs text-warn">Only allow this for an agent you trust to administer anymd. Every change it makes is recorded in the audit log.</p>
+          </div>
+        ) : null}
+        {requestedNothing ? <p class="mt-3 text-xs text-muted">The client did not ask for specific access, so it gets the basic set. It can ask for more later, and you will be asked again.</p> : null}
+        {unavailable.length ? <p class="mt-3 text-xs text-muted">Not granted (your role does not include it): {unavailable.join(', ')}</p> : null}
       </div>
       <form method="post" action="/oauth/authorize" class="mt-6 flex gap-3">
         <input type="hidden" name="state" value={state} />

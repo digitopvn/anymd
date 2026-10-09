@@ -21,6 +21,10 @@ export interface Env {
   RL_AUTH: RateLimit;
   /** Per-site budget for pages anymd fetches itself, shared by all callers. */
   RL_DOMAIN: RateLimit;
+  /** Every MCP request, per user + credential. Optional: falls back to RL_AUTH when unbound. */
+  RL_MCP?: RateLimit;
+  /** Stricter bucket for MCP tools that change state. Optional: falls back to RL_MCP / RL_AUTH. */
+  RL_MCP_MUTATION?: RateLimit;
   OAUTH_PROVIDER: OAuthHelpers;
 
   // Secrets (all optional; features degrade gracefully when absent)
@@ -61,7 +65,12 @@ export interface Principal {
   role: RoleName;
   scopes: Scope[];
   apiKeyId?: string;
+  /** OAuth client the grant was issued to (MCP over OAuth). */
   clientId?: string;
+  /** Request correlation id, recorded on audit rows. */
+  requestId?: string;
+  /** Adapter and operation that is acting, e.g. `mcp:update_user_role` or `api:PATCH /admin/users/:id`. */
+  via?: string;
 }
 
 export type RoleName = 'owner' | 'admin' | 'editor' | 'author' | 'viewer' | 'user';
@@ -78,9 +87,20 @@ export type Scope =
   | 'pages:read'
   | 'pages:write'
   | 'pages:publish'
+  | 'settings:read'
   | 'settings:write'
   | 'users:read'
-  | 'users:write';
+  | 'users:roles:write'
+  | 'users:sessions:write'
+  | 'users:credentials:write'
+  | 'credits:read'
+  | 'credits:write'
+  | 'billing:read'
+  | 'billing:write'
+  | 'audit:read'
+  | 'system:read'
+  | 'optouts:read'
+  | 'optouts:write';
 
 export type AppBindings = {
   Bindings: Env;

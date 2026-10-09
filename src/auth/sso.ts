@@ -27,13 +27,17 @@ export interface SsoState {
 }
 
 /** Error codes shown on /login; the page maps them to fixed copy so nothing from the URL is echoed. */
-export type SsoErrorCode = 'unavailable' | 'denied' | 'expired' | 'no_email' | 'failed';
+export type SsoErrorCode = 'unavailable' | 'denied' | 'expired' | 'no_email' | 'failed' | 'suspended';
+/** Shown when a suspended account tries to sign in. */
+export const SUSPENDED_MESSAGE = 'This account is suspended. Contact support if you think this is a mistake.';
+
 export const SSO_ERRORS: Record<SsoErrorCode, string> = {
   unavailable: 'That sign-in option is not available right now. Use email and password instead.',
   denied: 'Sign-in was cancelled.',
   expired: 'That sign-in attempt expired. Please try again.',
   no_email: 'Your account has no verified email address. Verify one with the provider, or sign up with email.',
   failed: 'We could not complete sign-in with that provider. Please try again.',
+  suspended: SUSPENDED_MESSAGE,
 };
 
 export class SsoError extends Error {

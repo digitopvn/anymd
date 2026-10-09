@@ -9,6 +9,8 @@ import { ReadingOptionsFields } from '../src/views/components/reading-options-fi
 import { ReadingPreferencesSection } from '../src/views/reading-preferences-section';
 import { AccountPage, OverviewPage, TraceDetailPage } from '../src/views/dashboard';
 import type { UserRow } from '../src/auth/identity';
+import { capScopes, KEY_PRESETS, OAUTH_DEFAULT_SCOPES, scopesForRole } from '../src/auth/roles';
+import { canWriteReadingPreferences, ReadingPreferencesForbiddenError, resetReadingPreferences, saveReadingPreferences } from '../src/convert/reading-preferences';
 import { conversionDatabase, d1, type SqliteDatabase } from './helpers/sqlite-d1';
 
 const user: Principal = { kind: 'api_key', userId: 'u1', role: 'user', scopes: ['convert', 'keys:manage'], apiKeyId: 'key_full' };
@@ -83,6 +85,51 @@ describe('REST reading preferences', () => {
     expect(db!.prepare('SELECT COUNT(*) AS n FROM audit_log').get()).toEqual({ n: 0 });
   });
 
+  it('lets a session of any role, viewer included, save and reset its own defaults', async () => {
+    const viewer: Principal = { kind: 'session', userId: 'u1', role: 'viewer', scopes: scopesForRole('viewer') };
+    expect(viewer.scopes.includes('keys:manage')).toBe(false);
+    const call = client(viewer);
+    const saved = await call('PUT', { expandThread: true });
+    expect(saved.status).toBe(200);
+    expect(((await saved.json()) as { saved: boolean }).saved).toBe(true);
+    expect((await call('DELETE')).status).toBe(200);
+    const rows = db!.prepare('SELECT actor, action FROM audit_log ORDER BY created_at, action DESC').all();
+    expect(rows).toEqual([{ actor: 'session:u1', action: 'reading_preferences.update' }, { actor: 'session:u1', action: 'reading_preferences.reset' }]);
+  });
+
+  it('refuses keys and OAuth grants without keys:manage, whatever role owns them', async () => {
+    const preset = (id: string) => KEY_PRESETS.find((p) => p.id === id)!.scopes;
+    const denied: Principal[] = [
+      { kind: 'api_key', userId: 'u1', role: 'viewer', scopes: capScopes('viewer', scopesForRole('owner')), apiKeyId: 'key_viewer_full' },
+      { kind: 'api_key', userId: 'u1', role: 'owner', scopes: capScopes('owner', preset('convert-only')), apiKeyId: 'key_convert' },
+      { kind: 'api_key', userId: 'u1', role: 'admin', scopes: capScopes('admin', preset('library')), apiKeyId: 'key_library' },
+      { kind: 'oauth', userId: 'u1', role: 'owner', scopes: [...OAUTH_DEFAULT_SCOPES], clientId: 'client_default' },
+    ];
+    for (const principal of denied) {
+      expect(canWriteReadingPreferences(principal), principal.apiKeyId ?? principal.clientId).toBe(false);
+      const call = client(principal);
+      for (const res of [await call('PUT', { expandThread: true }), await call('DELETE')]) {
+        expect(res.status).toBe(403);
+        expect(((await res.json()) as { error: { code: string; message: string } }).error).toMatchObject({ code: 'forbidden', message: 'Missing scope: keys:manage' });
+      }
+      expect(db!.prepare('SELECT COUNT(*) AS n FROM reading_preferences').get()).toEqual({ n: 0 });
+      expect(db!.prepare('SELECT COUNT(*) AS n FROM audit_log').get()).toEqual({ n: 0 });
+      db!.close();
+      db = null;
+    }
+  });
+
+  it('enforces the same rule in the service the dashboard uses', async () => {
+    db = conversionDatabase();
+    const env = { DB: d1(db) } as unknown as Env;
+    const stored = { preferences: { ...DEFAULT_READING_PREFERENCES }, saved: false, updatedAt: null };
+    const oauth: Principal = { kind: 'oauth', userId: 'u1', role: 'user', scopes: [...OAUTH_DEFAULT_SCOPES], clientId: 'client_default' };
+    await expect(saveReadingPreferences(env, oauth, stored, { ...DEFAULT_READING_PREFERENCES, expandThread: true })).rejects.toBeInstanceOf(ReadingPreferencesForbiddenError);
+    await expect(resetReadingPreferences(env, convertOnly)).rejects.toBeInstanceOf(ReadingPreferencesForbiddenError);
+    expect(canWriteReadingPreferences({ ...oauth, scopes: ['convert', 'keys:manage'] })).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM audit_log').get()).toEqual({ n: 0 });
+  });
+
   it('audits every change with the actor, auth kind, key id and a field diff', async () => {
     const call = client(user);
     await call('PUT', { expandThread: true, maxThreadPosts: 30 });
@@ -101,7 +148,8 @@ describe('REST reading preferences', () => {
     db.prepare('INSERT INTO users (id) VALUES (?)').run('u1');
     db.exec('DROP TABLE documents; CREATE TABLE documents (id TEXT PRIMARY KEY, user_id TEXT, domain TEXT, source_kind TEXT, word_count INTEGER)');
     const env = { DB: d1(db) } as unknown as Env;
-    const session: Principal = { kind: 'session', userId: 'u1', role: 'user', scopes: ['convert', 'keys:manage'] };
+    // A viewer session holds no keys:manage, yet manages its own account's defaults from the dashboard.
+    const session: Principal = { kind: 'session', userId: 'u1', role: 'viewer', scopes: scopesForRole('viewer') };
     const app = new Hono<AppBindings>();
     app.use('*', async (c, next) => {
       c.set('principal', session);
@@ -124,6 +172,11 @@ describe('REST reading preferences', () => {
     expect(audit.length).toBe(1);
     expect(audit[0].actor).toBe('session:u1');
     expect(JSON.parse(audit[0].meta)).toMatchObject({ auth: { kind: 'session' }, changes: { includeComments: [false, true], maxComments: [100, 40] } });
+
+    const reset = await post({ action: 'reset' });
+    expect(reset.status).toBe(303);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM reading_preferences').get()).toEqual({ n: 0 });
+    expect((db.prepare('SELECT action FROM audit_log ORDER BY created_at, action DESC').all() as { action: string }[]).map((r) => r.action)).toEqual(['reading_preferences.update', 'reading_preferences.reset']);
   });
 
   it('is described in the OpenAPI document', () => {

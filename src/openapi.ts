@@ -1,31 +1,8 @@
 /** OpenAPI 3.1 description of /api/v1, rendered interactively at /docs/api/reference. */
 import { KEY_PRESETS } from './auth/roles';
+import { ADMIN_OPS, ADMIN_SCHEMAS } from './openapi-admin';
+import { arr, bool, idParam, int, nullable, obj, ref, str, type Op, type Schema } from './openapi-helpers';
 import { DEFAULT_READING_PREFERENCES as READ_DEFAULTS, READING_LIMITS as LIMITS } from './lib/reading-options';
-
-type Schema = Record<string, unknown>;
-
-const str = (description?: string, extra: Schema = {}): Schema => ({ type: 'string', ...(description ? { description } : {}), ...extra });
-const int = (description?: string, extra: Schema = {}): Schema => ({ type: 'integer', ...(description ? { description } : {}), ...extra });
-const bool = (description?: string): Schema => ({ type: 'boolean', ...(description ? { description } : {}) });
-const arr = (items: Schema, description?: string): Schema => ({ type: 'array', items, ...(description ? { description } : {}) });
-const obj = (properties: Record<string, Schema>, required: string[] = [], description?: string): Schema => ({ type: 'object', properties, ...(required.length ? { required } : {}), ...(description ? { description } : {}) });
-const ref = (name: string): Schema => ({ $ref: `#/components/schemas/${name}` });
-const nullable = (s: Schema): Schema => ({ anyOf: [s, { type: 'null' }] });
-
-interface Op {
-  summary: string;
-  description?: string;
-  tag: string;
-  scope?: string | null;
-  params?: { name: string; in: 'query' | 'path' | 'header'; schema: Schema; required?: boolean; description?: string }[];
-  body?: Schema;
-  bodyType?: string;
-  ok: Schema | { content: string; schema: Schema };
-  status?: number;
-  errors?: number[];
-}
-
-const idParam = (what: string) => ({ name: 'id', in: 'path' as const, required: true, schema: str(), description: `${what} id` });
 
 const ERROR_TEXT: Record<number, string> = {
   400: 'Bad request',
@@ -33,7 +10,7 @@ const ERROR_TEXT: Record<number, string> = {
   402: 'Monthly credits exhausted',
   403: 'Missing scope or forbidden',
   404: 'Not found',
-  409: 'Revision conflict (pages) or duplicate',
+  409: 'Conflict: stale revision or version, or a resource owned by billing',
   413: 'File too large',
   415: 'Unsupported file type',
   422: 'Validation failed',
@@ -69,7 +46,7 @@ const OPS: Record<string, Record<string, Op>> = {
     },
     put: {
       summary: 'Update reading defaults',
-      description: 'Partial update: omitted fields keep their saved value; unknown fields and out-of-range values are rejected with `422 invalid_preferences` and per-field `details`. Saved defaults never bypass plan credits or a request\'s own `maxCredits`. Needs `keys:manage` because the defaults apply to every credential of the account; each change is audited.',
+      description: 'Partial update: omitted fields keep their saved value; unknown fields and out-of-range values are rejected with `422 invalid_preferences` and per-field `details`. Saved defaults never bypass plan credits or a request\'s own `maxCredits`. Any signed-in session may change its own defaults; an API key or OAuth grant needs `keys:manage`, because the defaults apply to every credential of the account. Each change is audited.',
       tag: 'Account',
       scope: 'keys:manage',
       body: ref('ReadingPreferencesPatch'),
@@ -78,7 +55,7 @@ const OPS: Record<string, Record<string, Op>> = {
     },
     delete: {
       summary: 'Reset reading defaults',
-      description: 'Deletes the saved defaults so the safe defaults (enrichment off) apply again. Needs `keys:manage`; audited.',
+      description: 'Deletes the saved defaults so the safe defaults (enrichment off) apply again. Any signed-in session may; an API key or OAuth grant needs `keys:manage`. Audited.',
       tag: 'Account',
       scope: 'keys:manage',
       ...READING_PREFERENCES_BODY,
@@ -122,7 +99,7 @@ const OPS: Record<string, Record<string, Op>> = {
       scope: 'convert',
       bodyType: 'multipart/form-data',
       body: obj({ file: str('The file', { format: 'binary' }), save: str('"0" to skip saving', { enum: ['0', '1'] }) }, ['file']),
-      ok: obj({ name: str(), bytes: int(), kind: str(), title: str(), word_count: int(), markdown: str(), document_id: nullable(str()), credits: int(), trace_id: str(), duration_ms: int() }),
+      ok: obj({ name: str(), bytes: int(), kind: str(), title: str(), word_count: int(), markdown: str(), document_id: nullable(str()), saved: bool(), not_saved_reason: nullable(str('Why the result is not in the library: not_requested, anonymous, missing_scope (credential lacks library:write) or library_limit', { enum: ['not_requested', 'anonymous', 'missing_scope', 'library_limit'] })), credits: int(), trace_id: str(), duration_ms: int() }),
       errors: [400, 402, 413, 415, 422],
     },
   },
@@ -201,7 +178,18 @@ const OPS: Record<string, Record<string, Op>> = {
       ok: obj({ plan: str(), quota: obj({ included: int(), extra: int(), used: int(), remaining: int() }), totals: obj({ requests: int(), credits: int(), errors: int(), cached: int() }), daily: arr(obj({ day: str(), credits: int(), n: int() })), by_channel: arr(obj({ channel: str(), n: int(), credits: int() })), events: arr(ref('UsageEvent')) }),
     },
   },
-  '/traces': { get: { summary: 'Recent traces', tag: 'Usage', scope: 'usage:read', params: [{ name: 'limit', in: 'query', schema: int(undefined, { maximum: 200, default: 50 }) }], ok: obj({ items: arr(ref('Trace')) }) } },
+  '/traces': {
+    get: {
+      summary: 'Recent traces',
+      tag: 'Usage',
+      scope: 'usage:read',
+      params: [
+        { name: 'limit', in: 'query', schema: int(undefined, { maximum: 200, default: 50 }) },
+        { name: 'cursor', in: 'query', schema: str(), description: 'next_cursor from the previous page' },
+      ],
+      ok: obj({ items: arr(ref('Trace')), next_cursor: nullable(str()) }),
+    },
+  },
   '/traces/{id}': { get: { summary: 'Trace with spans', tag: 'Usage', scope: 'usage:read', params: [idParam('Trace')], ok: ref('Trace'), errors: [404] } },
   '/keys': {
     get: { summary: 'List API keys', tag: 'Keys', scope: 'keys:manage', ok: obj({ items: arr(ref('ApiKey')), presets: arr(obj({ id: str(), label: str(), scopes: arr(str()) })) }) },
@@ -254,13 +242,8 @@ const OPS: Record<string, Record<string, Op>> = {
     delete: { summary: 'Delete a post', tag: 'Blog', scope: 'content:write', params: [idParam('Post')], ok: ref('Ok'), errors: [404] },
   },
   '/admin/posts/{id}/publish': { post: { summary: 'Publish or unpublish a post', tag: 'Blog', scope: 'content:publish', params: [idParam('Post')], body: obj({ publish: bool() }), ok: obj({ post: ref('Post'), url: str() }), errors: [404] } },
-  '/admin/users': { get: { summary: 'List users', tag: 'Admin', scope: 'users:read', ok: obj({ items: arr(obj({ id: str(), email: str(), name: str(), role: str(), plan: str(), created_at: int(), last_login_at: nullable(int()) })) }) } },
-  '/admin/users/{id}': { patch: { summary: 'Change role or plan', description: 'Only the owner can grant or remove roles at or above their own. Nobody can change themselves.', tag: 'Admin', scope: 'users:write', params: [idParam('User')], body: obj({ role: str(undefined, { enum: ['owner', 'admin', 'editor', 'author', 'viewer', 'user'] }), plan: str(undefined, { enum: ['free', 'pro', 'scale', 'enterprise'] }) }), ok: ref('Ok'), errors: [403, 404, 422] } },
-  '/admin/roles': { get: { summary: 'Role templates, key presets and plans', tag: 'Admin', scope: '', ok: { type: 'object' } } },
-  '/admin/settings': {
-    get: { summary: 'Site settings', tag: 'Admin', scope: 'settings:write', ok: obj({ settings: { type: 'object', additionalProperties: str() } }) },
-    put: { summary: 'Update site settings', description: 'Empty values delete a key. Known keys: announcement, announcement_href, support_email.', tag: 'Admin', scope: 'settings:write', body: { type: 'object', additionalProperties: str() }, ok: obj({ settings: { type: 'object', additionalProperties: str() } }) },
-  },
+  // Admin control plane: users, roles, settings, opt-outs, credits, billing, audit and system.
+  ...ADMIN_OPS,
 };
 
 const SCHEMAS: Record<string, Schema> = {
@@ -283,6 +266,8 @@ const SCHEMAS: Record<string, Schema> = {
     markdown: str('Markdown including frontmatter'),
     content: str('Markdown body without frontmatter'),
     document_id: nullable(str()),
+    saved: bool('Whether the conversion was saved to the library'),
+    not_saved_reason: nullable(str('Why the result is not in the library: not_requested, anonymous, missing_scope (credential lacks library:write) or library_limit', { enum: ['not_requested', 'anonymous', 'missing_scope', 'library_limit'] })),
     credits: int(),
     credit_breakdown: obj({ base: int(), thread: int(), comments: int(), images: int() }),
     reading_options: obj({
@@ -331,6 +316,7 @@ const SCHEMAS: Record<string, Schema> = {
     ],
   },
   Post: obj({ id: str(), slug: str(), title: str(), excerpt: str(), markdown: str(), cover_url: str(), tags: str(), category: str(), author_name: str(), status: str(undefined, { enum: ['draft', 'published'] }), seo_title: str(), seo_description: str(), published_at: nullable(int()), created_at: int(), updated_at: int() }),
+  ...ADMIN_SCHEMAS,
   PostInput: obj({ slug: str(), title: str(), markdown: str(), excerpt: str(), tags: arr(str()), category: str(undefined, { enum: ['article', 'announcement', 'guide'] }), cover_url: str(), seo_title: str(), seo_description: str() }),
 };
 
@@ -379,7 +365,7 @@ export function buildOpenApi(origin: string) {
       { name: 'Account', description: 'The authenticated account' },
       { name: 'Pages', description: 'Page builder (editor role and above)' },
       { name: 'Blog', description: 'Blog posts (author role and above)' },
-      { name: 'Admin', description: 'Users, roles and settings' },
+      { name: 'Admin', description: 'System administration: users, roles, credentials, settings, opt-outs, credits, billing (read-only), audit and system health. Owner/admin scopes only.' },
     ],
     paths,
     components: {

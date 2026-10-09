@@ -13,6 +13,7 @@ import {
   type RequestReadingOptions,
 } from '../src/convert/reading-preferences';
 import { cacheKey, reservationCredits, runConversion } from '../src/convert/service';
+import { convertPayload } from '../src/services';
 import type { ConvertContext, ConvertResult } from '../src/convert/types';
 import { boundedThread, enrichX, type Tweet } from '../src/convert/x-thread';
 import { creditEstimateText, DEFAULT_READING_PREFERENCES, maxEnrichmentCredits, type ReadingPreferences } from '../src/lib/reading-options';
@@ -260,6 +261,22 @@ describe('runConversion reading preferences', () => {
       const r = await convert(env, { expandThread: true });
       expect(r.creditBreakdown).toEqual({ base: 1, thread: 2, comments: 0, images: 0 });
       expect(r.result.enrichment?.thread).toMatchObject({ complete: true, count: 3 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('reports why a conversion was not saved, naming a missing library:write scope explicitly', async () => {
+    const { db, env } = setup();
+    stubX();
+    try {
+      const unsaved = await convert(env, { save: undefined });
+      expect(unsaved.documentId).toBeNull();
+      expect(unsaved.notSavedReason).toBe('missing_scope');
+      expect(convertPayload(unsaved)).toMatchObject({ document_id: null, saved: false, not_saved_reason: 'missing_scope' });
+      expect((await convert(env)).notSavedReason).toBe('not_requested');
+      const anonymous = { kind: 'anonymous', userId: null, role: 'user', scopes: ['convert'] } as unknown as Principal;
+      expect((await convert(env, { save: undefined, principal: anonymous })).notSavedReason).toBe('anonymous');
     } finally {
       db.close();
     }

@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import type { Env, Principal } from '../env';
 import { newId, now, randomToken, sha256, slugify } from '../lib/util';
+import { recordAudit } from '../services/admin/audit';
 import { getBlock, SIZES, type BlockSize } from './blocks';
 
 export interface BlockNode {
@@ -333,10 +334,9 @@ export async function getPage(env: Env, idOrSlug: string): Promise<PageRow | nul
   return env.DB.prepare('SELECT * FROM pages WHERE id = ? OR slug = ?').bind(idOrSlug, idOrSlug).first<PageRow>();
 }
 
+/** CMS changes go to the shared audit log with the acting credential and adapter. */
 async function audit(env: Env, actor: Principal, action: string, target: string, meta: Record<string, unknown> = {}) {
-  await env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)')
-    .bind(newId('aud_'), `${actor.kind}:${actor.userId}${actor.apiKeyId ? `:${actor.apiKeyId}` : ''}`, action, target, JSON.stringify(meta), now())
-    .run();
+  await recordAudit(env, actor, { action, targetType: 'page', target, meta });
 }
 
 export async function createPage(
@@ -462,9 +462,11 @@ export async function listRevisions(env: Env, pageId: string) {
   return results;
 }
 
-export async function rotatePreviewToken(env: Env, pageId: string): Promise<string> {
+/** New preview link; the previous one stops working. The token itself is never audited. */
+export async function rotatePreviewToken(env: Env, actor: Principal, pageId: string): Promise<string> {
   const token = randomToken(18);
   await env.DB.prepare('UPDATE pages SET preview_token = ? WHERE id = ?').bind(token, pageId).run();
+  await audit(env, actor, 'page.preview_rotate', pageId);
   return token;
 }
 

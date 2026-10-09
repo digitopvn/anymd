@@ -34,6 +34,7 @@ claude mcp add --transport http anymd https://anymd.cc/mcp
 - **Scoped access.** API keys with presets, capped by role templates.
 - **Agent-readable site.** Every page has a `.md` twin, plus `llms.txt`.
 - **Admin page builder.** Typed blocks, revisioned ops, previews and publishing over REST, MCP and CLI.
+- **Admin control plane over MCP.** Owners and admins manage users, credentials, credits, settings, opt-outs, billing health, audit history and system usage through scoped, audited, idempotent tools, with least-privilege presets for admin agents.
 - **Runs on Cloudflare.** One Worker with D1, KV, R2, Vectorize and Workers AI; self-hostable.
 
 ## Quick usage

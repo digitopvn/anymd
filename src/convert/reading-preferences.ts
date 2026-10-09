@@ -3,9 +3,9 @@
  * explicit request option > signed-in user's saved preference > safe system default (enrichment off).
  */
 import { z } from 'zod';
-import type { Env, Principal } from '../env';
-import { newId } from '../lib/util';
+import type { Env, Principal, Scope } from '../env';
 import { DEFAULT_READING_PREFERENCES, READING_LIMITS, type ReadingLimitKey, type ReadingPreferences } from '../lib/reading-options';
+import { auditStatement } from '../services/admin/audit';
 import { ConvertError } from './types';
 
 const boundedInt = (key: ReadingLimitKey) => {
@@ -104,15 +104,37 @@ export function preferencesDiff(before: ReadingPreferences, after: ReadingPrefer
 
 /**
  * Saved defaults decide what other credentials of the account may spend, so every change is
- * audited: who (auth kind plus key/client id, never a secret) and which fields changed.
+ * audited through the shared audit log: who (auth kind plus key/client id, never a secret), through
+ * which adapter and request, and which fields changed. The row commits with the change.
  */
-async function auditPreferenceChange(env: Env, actor: Principal, action: string, meta: Record<string, unknown>): Promise<void> {
+function preferenceAudit(env: Env, actor: Principal, action: string, meta: Record<string, unknown>, ts: number, guard?: { sql: string; binds: unknown[] }) {
   const auth: Record<string, string> = { kind: actor.kind };
   if (actor.apiKeyId) auth.key_id = actor.apiKeyId;
   if (actor.clientId) auth.client_id = actor.clientId;
-  await env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)')
-    .bind(newId('aud_'), `${actor.kind}:${actor.userId}`, action, actor.userId ?? '', JSON.stringify({ auth, ...meta }), Date.now())
-    .run();
+  return auditStatement(env, actor, { action, targetType: 'reading_preferences', target: actor.userId ?? '', meta: { auth, ...meta } }, ts, guard);
+}
+
+/** The scope an API key or OAuth grant needs to change saved reading defaults. */
+export const PREFERENCES_WRITE_SCOPE: Scope = 'keys:manage';
+
+/**
+ * Who may change an account's saved reading defaults. A signed-in session of any role is the user
+ * acting directly on their own account, so it always may. An API key or OAuth grant needs
+ * `keys:manage`: saved defaults decide what every other credential of the account spends, so a
+ * "Convert only" or library key, or a default OAuth grant, must not raise them.
+ */
+export function canWriteReadingPreferences(actor: Principal): boolean {
+  return Boolean(actor.userId) && (actor.kind === 'session' || actor.scopes.includes(PREFERENCES_WRITE_SCOPE));
+}
+
+/** Raised when a credential without `keys:manage` tries to change saved defaults. */
+export class ReadingPreferencesForbiddenError extends Error {
+  readonly status = 403;
+  readonly code = 'forbidden';
+  readonly required = [PREFERENCES_WRITE_SCOPE];
+  constructor() {
+    super(`Missing scope: ${PREFERENCES_WRITE_SCOPE}`);
+  }
 }
 
 function accountOf(actor: Principal): string {
@@ -120,23 +142,36 @@ function accountOf(actor: Principal): string {
   return actor.userId;
 }
 
+/** The writer's account id, after the write guard; every save and reset goes through it. */
+function writableAccountOf(actor: Principal): string {
+  const userId = accountOf(actor);
+  if (!canWriteReadingPreferences(actor)) throw new ReadingPreferencesForbiddenError();
+  return userId;
+}
+
 /** Saves the actor's own defaults on top of `previous` (what the caller read) and audits the change. */
 export async function saveReadingPreferences(env: Env, actor: Principal, previous: StoredReadingPreferences, preferences: ReadingPreferences): Promise<StoredReadingPreferences> {
-  const userId = accountOf(actor);
+  const userId = writableAccountOf(actor);
   const valid = ReadingPreferencesSchema.parse(preferences);
   const ts = Date.now();
-  await env.DB.prepare('INSERT INTO reading_preferences (user_id, preferences, updated_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET preferences = excluded.preferences, updated_at = excluded.updated_at')
-    .bind(userId, JSON.stringify(valid), ts).run();
-  await auditPreferenceChange(env, actor, 'reading_preferences.update', { was_saved: previous.saved, changes: preferencesDiff(previous.preferences, valid) });
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO reading_preferences (user_id, preferences, updated_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET preferences = excluded.preferences, updated_at = excluded.updated_at').bind(userId, JSON.stringify(valid), ts),
+    preferenceAudit(env, actor, 'reading_preferences.update', { was_saved: previous.saved, changes: preferencesDiff(previous.preferences, valid) }, ts),
+  ]);
   return { preferences: valid, saved: true, updatedAt: ts };
 }
 
 /** Deletes the actor's saved defaults (back to the safe defaults); audited when something was saved. */
 export async function resetReadingPreferences(env: Env, actor: Principal): Promise<StoredReadingPreferences> {
-  const userId = accountOf(actor);
-  const removed = await env.DB.prepare('DELETE FROM reading_preferences WHERE user_id = ? RETURNING preferences').bind(userId).first<{ preferences: string }>();
-  if (removed) {
-    await auditPreferenceChange(env, actor, 'reading_preferences.reset', { changes: preferencesDiff(normalizeStoredPreferences(removed.preferences), DEFAULT_READING_PREFERENCES) });
+  const userId = writableAccountOf(actor);
+  const saved = await env.DB.prepare('SELECT preferences FROM reading_preferences WHERE user_id = ?').bind(userId).first<{ preferences: string }>();
+  if (saved) {
+    // The audit row is guarded by the row it describes, so a concurrent reset cannot audit twice.
+    const audit = preferenceAudit(env, actor, 'reading_preferences.reset', { changes: preferencesDiff(normalizeStoredPreferences(saved.preferences), DEFAULT_READING_PREFERENCES) }, Date.now(), {
+      sql: 'EXISTS (SELECT 1 FROM reading_preferences WHERE user_id = ?)',
+      binds: [userId],
+    });
+    await env.DB.batch([audit, env.DB.prepare('DELETE FROM reading_preferences WHERE user_id = ?').bind(userId)]);
   }
   return { preferences: { ...DEFAULT_READING_PREFERENCES }, saved: false, updatedAt: null };
 }
