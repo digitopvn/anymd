@@ -11,6 +11,8 @@ import type { DocumentRow, DocumentSummary } from '../library/store';
 import type { SearchMode, SearchResponse } from '../library/search';
 import { Icon, Logo } from './components/icons';
 import { Converter } from './components/marketing';
+import type { StoredReadingPreferences } from '../convert/reading-preferences';
+import { ReadingPreferencesSection } from './reading-preferences-section';
 
 const NAV: { href: string; label: string; icon: string; min?: RoleName }[] = [
   { href: '/dashboard', label: 'Overview', icon: 'home' },
@@ -160,7 +162,7 @@ export function kindIcon(kind: string): string {
   return ({ x: 'x', youtube: 'play', github: 'git', hackernews: 'hn', reddit: 'chat', pdf: 'file', image: 'image', document: 'table' } as Record<string, string>)[kind] ?? 'globe';
 }
 
-export function OverviewPage(props: { user: UserRow; quota: QuotaState; docs: number; words: number; recent: DocumentSummary[]; month: { conversions: number; errors: number }; keyCount: number; origin: string }) {
+export function OverviewPage(props: { user: UserRow; quota: QuotaState; docs: number; words: number; recent: DocumentSummary[]; month: { conversions: number; errors: number }; keyCount: number; origin: string; reading: StoredReadingPreferences }) {
   const plan = getPlan(props.user.plan);
   return (
     <>
@@ -174,7 +176,7 @@ export function OverviewPage(props: { user: UserRow; quota: QuotaState; docs: nu
         <div class="card p-5">
           <p class="font-bold">Convert a URL</p>
           <p class="mb-4 mt-1 text-sm text-muted">Saved to your library automatically and indexed for search.</p>
-          <Converter compact />
+          <Converter compact reading={{ preferences: props.reading.preferences, saved: props.reading.saved }} />
         </div>
         <div class="card p-5">
           <div class="flex items-center justify-between">
@@ -620,6 +622,46 @@ export function TracesPage({ traces }: { traces: TraceRow[] }) {
   );
 }
 
+interface TraceCreditMeta {
+  credits?: number;
+  credit_breakdown?: Record<string, number> | null;
+  reading_options?: Record<string, unknown> & { sources?: Record<string, string> };
+}
+
+const ENRICHMENT_LABELS: Record<string, string> = { base: 'Base conversion', thread: 'X thread posts', comments: 'Comments & replies', images: 'Image analysis' };
+const SOURCE_LABELS: Record<string, string> = { request: 'this request', preference: 'saved default', default: 'safe default' };
+
+/** Which enrichment produced the charge and why each option was on (request, saved default or safe default). */
+function TraceCredits({ meta }: { meta: TraceCreditMeta }) {
+  const options = meta.reading_options;
+  if (!meta.credit_breakdown && !options) return null;
+  const sources = options?.sources ?? {};
+  return (
+    <div class="card mt-4 p-5 text-sm">
+      <p class="font-bold">Credits</p>
+      {meta.credit_breakdown ? (
+        <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
+          {Object.entries(meta.credit_breakdown).map(([part, value]) => (
+            <div>
+              <dt class="text-muted">{ENRICHMENT_LABELS[part] ?? part}</dt>
+              <dd class="font-semibold">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {options ? (
+        <ul class="mt-3 space-y-1 text-muted">
+          {(['expandThread', 'includeComments', 'analyzeImages', 'removeImages', 'maxCredits'] as const).map((key) => (
+            <li>
+              <code class="font-mono text-xs">{key}</code> = {String(options[key])} <span class="text-xs">({SOURCE_LABELS[sources[key]] ?? sources[key] ?? 'unknown'})</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export function TraceDetailPage({ trace }: { trace: TraceRow }) {
   const spans = safeJson<Span[]>(trace.spans, []);
   const total = Math.max(1, trace.duration_ms, ...spans.map((s) => s.start + s.duration));
@@ -631,6 +673,7 @@ export function TraceDetailPage({ trace }: { trace: TraceRow }) {
           {trace.kind} · {trace.status} · {trace.duration_ms} ms · {new Date(trace.created_at).toISOString()} · <code class="font-mono">{trace.id}</code>
         </p>
       </div>
+      <TraceCredits meta={safeJson<TraceCreditMeta>(trace.meta, {})} />
       <div class="card mt-4 p-5">
         <p class="font-bold">Spans</p>
         <ol class="mt-4 space-y-2">
@@ -860,7 +903,7 @@ export function BillingPage({ user, quota, enabled, provider = 'Creem', notice, 
   );
 }
 
-export function AccountPage({ user, docs, error }: { user: UserRow; docs: number; error?: string }) {
+export function AccountPage({ user, docs, error, reading }: { user: UserRow; docs: number; error?: string; reading: { stored: StoredReadingPreferences; notice?: string; error?: string } }) {
   const isOwner = user.role === 'owner';
   return (
     <>
@@ -907,6 +950,7 @@ export function AccountPage({ user, docs, error }: { user: UserRow; docs: number
           </div>
         </div>
       </div>
+      <ReadingPreferencesSection stored={reading.stored} notice={reading.notice} error={reading.error} />
       <div class="card mt-4 border-danger-line p-5">
         <p class="font-bold text-danger">Delete account</p>
         <p class="mt-1 max-w-2xl text-sm text-muted">

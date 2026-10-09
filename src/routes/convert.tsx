@@ -16,7 +16,14 @@ import { clientIp, markdownResponse, originOf, renderMessage, renderPage } from 
 
 export const convertRoutes = new Hono<AppBindings>();
 
-const OPTION_PARAMS = ['format', 'lang', 'selector', 'images', 'frontmatter', 'fresh', 'save', 'includeComments', 'analyzeImages', 'maxComments', 'maxImages', 'maxCredits'];
+const OPTION_PARAMS = ['format', 'lang', 'selector', 'images', 'frontmatter', 'fresh', 'save', 'expandThread', 'maxThreadPosts', 'includeComments', 'analyzeImages', 'maxComments', 'maxImages', 'maxCredits'];
+
+/** `1`/`0` flags; absent stays undefined so saved preferences apply, anything else fails validation. */
+function flagParam(value: string | undefined): boolean | null | undefined {
+  if (value === undefined) return undefined;
+  return value === '1' ? true : value === '0' ? false : null;
+}
+const intParam = (value: string | undefined): number | undefined => (value === undefined ? undefined : Number(value));
 
 convertRoutes.get('/convert', (c) => {
   const url = (c.req.query('url') ?? '').trim();
@@ -51,11 +58,13 @@ convertRoutes.get('*', async (c) => {
   const opt = (k: string) => params.get(k) ?? undefined;
   const options = { format: opt('format'), lang: opt('lang'), selector: opt('selector'), images: opt('images'), frontmatter: opt('frontmatter'), fresh: opt('fresh'), save: opt('save') };
   const extras = {
-    includeComments: opt('includeComments') === undefined ? undefined : opt('includeComments') === '1' ? true : opt('includeComments') === '0' ? false : null,
-    analyzeImages: opt('analyzeImages') === undefined ? undefined : opt('analyzeImages') === '1' ? true : opt('analyzeImages') === '0' ? false : null,
-    maxComments: opt('maxComments') === undefined ? undefined : Number(opt('maxComments')),
-    maxImages: opt('maxImages') === undefined ? undefined : Number(opt('maxImages')),
-    maxCredits: opt('maxCredits') === undefined ? undefined : Number(opt('maxCredits')),
+    expandThread: flagParam(opt('expandThread')),
+    maxThreadPosts: intParam(opt('maxThreadPosts')),
+    includeComments: flagParam(opt('includeComments')),
+    analyzeImages: flagParam(opt('analyzeImages')),
+    maxComments: intParam(opt('maxComments')),
+    maxImages: intParam(opt('maxImages')),
+    maxCredits: intParam(opt('maxCredits')),
   };
   for (const k of OPTION_PARAMS) params.delete(k);
   const query = params.toString();
@@ -72,7 +81,8 @@ convertRoutes.get('*', async (c) => {
       principal: c.get('principal'),
       language: options.lang,
       selector: options.selector,
-      removeImages: options.images === '0',
+      // images=0 strips images, images=1 keeps them; omitted follows the saved keepImages preference.
+      removeImages: options.images === undefined ? undefined : options.images === '0',
       frontmatter: options.frontmatter !== '0',
       save: options.save !== '0',
       fresh: options.fresh === '1',

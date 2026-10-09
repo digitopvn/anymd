@@ -276,6 +276,87 @@ describe('run: convert', () => {
     }
   });
 
+  test('sends no reading options unless given, so saved defaults decide', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'POST /api/v1/convert': () => jsonResponse({ markdown: '# Base' }) },
+    });
+    assert.equal(await h.exec(['convert', 'x.com/a/status/1']), 0);
+    assert.deepEqual(JSON.parse(h.calls[0].body), { url: 'https://x.com/a/status/1', format: 'markdown' });
+  });
+
+  test('forwards explicit thread expansion, one-time opt-outs and image retention', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'POST /api/v1/convert': () => jsonResponse({ markdown: '# Thread' }) },
+    });
+    assert.equal(await h.exec([
+      'convert', 'x.com/a/status/1', '--expand-thread', '--max-thread-posts', '30',
+      '--no-include-comments', '--no-analyze-images', '--no-images',
+    ]), 0);
+    assert.deepEqual(JSON.parse(h.calls[0].body), {
+      url: 'https://x.com/a/status/1',
+      format: 'markdown',
+      expandThread: true,
+      maxThreadPosts: 30,
+      includeComments: false,
+      analyzeImages: false,
+      removeImages: true,
+    });
+  });
+
+  test('maps reading options onto the anonymous URL API query', async () => {
+    const h = harness({ routes: { 'GET /https://a.com': (_call, u) => textResponse(`# ${u.search}`) } });
+    assert.equal(await h.exec(['convert', 'a.com', '--no-expand-thread', '--keep-images']), 0);
+    const query = new URL(h.calls[0].url).searchParams;
+    assert.equal(query.get('expandThread'), '0');
+    assert.equal(query.get('images'), '1');
+  });
+
+  test('rejects conflicting or out-of-range thread options before any request', async () => {
+    for (const argv of [
+      ['--expand-thread', '--no-expand-thread'],
+      ['--keep-images', '--no-images'],
+      ['--max-thread-posts', '0'],
+      ['--max-thread-posts', '101'],
+    ]) {
+      const h = harness({ env: { ANYMD_API_KEY: KEY } });
+      assert.equal(await h.exec(['convert', 'x.com/a/status/1', ...argv]), 1, argv.join(' '));
+      assert.match(h.stderr, /^usage:/);
+      assert.equal(h.calls.length, 0);
+    }
+    const anonymous = harness();
+    assert.equal(await anonymous.exec(['convert', 'x.com/a/status/1', '--expand-thread']), 1);
+    assert.match(anonymous.stderr, /^not_authenticated:/);
+  });
+
+  test('prefs shows, updates and resets saved reading defaults', async () => {
+    const state = { preferences: { expandThread: false, maxThreadPosts: 20, includeComments: false, maxComments: 100, keepImages: true, analyzeImages: false, maxImages: 10, maxCredits: 100 }, saved: false };
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: {
+        'GET /api/v1/account/reading-preferences': () => jsonResponse(state),
+        'PUT /api/v1/account/reading-preferences': (call) => jsonResponse({ preferences: { ...state.preferences, ...JSON.parse(call.body) }, saved: true }),
+        'DELETE /api/v1/account/reading-preferences': () => jsonResponse(state),
+      },
+    });
+    assert.equal(await h.exec(['prefs']), 0);
+    assert.match(h.stdout, /safe defaults: deep reading off/);
+    assert.equal(await h.exec(['prefs', 'set', 'expandThread=on', 'maxThreadPosts=30', '--json']), 0);
+    assert.deepEqual(JSON.parse(h.calls[1].body), { expandThread: true, maxThreadPosts: 30 });
+    assert.equal(await h.exec(['prefs', 'reset']), 0);
+    assert.equal(h.calls[2].method, 'DELETE');
+  });
+
+  test('prefs set validates fields locally', async () => {
+    for (const arg of ['expandThread=maybe', 'maxThreadPosts=0', 'maxImages=21', 'unknown=1', 'noequals']) {
+      const h = harness({ env: { ANYMD_API_KEY: KEY } });
+      assert.equal(await h.exec(['prefs', 'set', arg]), 1, arg);
+      assert.match(h.stderr, /^usage:/);
+      assert.equal(h.calls.length, 0);
+    }
+  });
+
   test('-o writes the result to a file and reports on stderr', async () => {
     const out = path.join(tmp, 'out.md');
     const h = harness({

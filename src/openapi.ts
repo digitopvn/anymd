@@ -1,5 +1,6 @@
 /** OpenAPI 3.1 description of /api/v1, rendered interactively at /docs/api/reference. */
 import { KEY_PRESETS } from './auth/roles';
+import { DEFAULT_READING_PREFERENCES as READ_DEFAULTS, READING_LIMITS as LIMITS } from './lib/reading-options';
 
 type Schema = Record<string, unknown>;
 
@@ -40,8 +41,49 @@ const ERROR_TEXT: Record<number, string> = {
   502: 'The source site failed or blocked the fetch',
 };
 
+const bounded = (key: keyof typeof LIMITS, description: string): Schema => int(description, { minimum: LIMITS[key].min, maximum: LIMITS[key].max, default: LIMITS[key].default });
+const PRECEDENCE = 'Omitted options use the account\'s saved reading preference, otherwise the safe default (off).';
+const READING_PREFERENCE_PROPS: Record<string, Schema> = {
+  expandThread: bool('Expand X threads (extra credits)'),
+  maxThreadPosts: bounded('maxThreadPosts', 'Maximum thread posts'),
+  includeComments: bool('Include comments and replies (extra credits)'),
+  maxComments: bounded('maxComments', 'Maximum comments'),
+  keepImages: bool('Keep image/media URLs; no extra credits. Maps to images=1 / removeImages=false'),
+  analyzeImages: bool('Read text and details in images (extra credits); requires keepImages'),
+  maxImages: bounded('maxImages', 'Maximum analyzed images'),
+  maxCredits: bounded('maxCredits', 'Credit cap per conversion'),
+};
+const READING_PREFERENCES_BODY = {
+  ok: ref('ReadingPreferencesState'),
+};
+
 const OPS: Record<string, Record<string, Op>> = {
   '/me': { get: { summary: 'Current account', tag: 'Account', scope: '', ok: ref('Me') } },
+  '/account/reading-preferences': {
+    get: {
+      summary: 'Get reading (deep reading) defaults',
+      description: 'The signed-in user\'s saved reading defaults. `saved: false` means the safe defaults apply: every credit-consuming enrichment is off.',
+      tag: 'Account',
+      scope: 'convert',
+      ...READING_PREFERENCES_BODY,
+    },
+    put: {
+      summary: 'Update reading defaults',
+      description: 'Partial update: omitted fields keep their saved value; unknown fields and out-of-range values are rejected with `422 invalid_preferences` and per-field `details`. Saved defaults never bypass plan credits or a request\'s own `maxCredits`.',
+      tag: 'Account',
+      scope: 'convert',
+      body: ref('ReadingPreferencesPatch'),
+      ...READING_PREFERENCES_BODY,
+      errors: [400, 422],
+    },
+    delete: {
+      summary: 'Reset reading defaults',
+      description: 'Deletes the saved defaults so the safe defaults (enrichment off) apply again.',
+      tag: 'Account',
+      scope: 'convert',
+      ...READING_PREFERENCES_BODY,
+    },
+  },
   '/convert': {
     post: {
       summary: 'Read a URL as Markdown',
@@ -53,15 +95,17 @@ const OPS: Record<string, Record<string, Op>> = {
           url: str('URL to convert', { examples: ['https://example.com/blog/post'] }),
           language: str('Preferred language (BCP 47) for multilingual pages'),
           selector: str('CSS selector to force the content root'),
-          removeImages: bool('Strip images'),
+          removeImages: bool('Strip image/media references; omitted follows the saved keepImages preference (default keep)'),
           frontmatter: bool('Prepend YAML frontmatter (default true)'),
           save: bool('Save to the library (default true when signed in)'),
           fresh: bool('Bypass the cache'),
-          includeComments: bool('Read comments and replies; extra credits, requires account'),
-          analyzeImages: bool('OCR and describe article images; extra credits, requires account'),
-          maxComments: int('Maximum comments including replies', { minimum: 1, maximum: 1000, default: 100 }),
-          maxImages: int('Maximum analyzed article images', { minimum: 1, maximum: 20, default: 10 }),
-          maxCredits: int('Maximum credits for this request; returns explicit partial results at the limit', { minimum: 1, maximum: 1000, default: 100 }),
+          expandThread: bool(`Expand the rooted same-author X thread; extra credits, requires account. ${PRECEDENCE}`),
+          maxThreadPosts: bounded('maxThreadPosts', 'Maximum thread posts including the requested post'),
+          includeComments: bool(`Read comments and replies; extra credits, requires account. ${PRECEDENCE}`),
+          analyzeImages: bool(`OCR and describe article images; extra credits, requires account. ${PRECEDENCE}`),
+          maxComments: bounded('maxComments', 'Maximum comments including replies'),
+          maxImages: bounded('maxImages', 'Maximum analyzed article images'),
+          maxCredits: bounded('maxCredits', 'Maximum credits for this request; returns explicit partial results at the limit'),
           format: str('Response format', { enum: ['json', 'markdown'], default: 'json' }),
         },
         ['url'],
@@ -241,6 +285,10 @@ const SCHEMAS: Record<string, Schema> = {
     document_id: nullable(str()),
     credits: int(),
     credit_breakdown: obj({ base: int(), thread: int(), comments: int(), images: int() }),
+    reading_options: obj({
+      expandThread: bool(), maxThreadPosts: int(), includeComments: bool(), maxComments: int(), analyzeImages: bool(), maxImages: int(), maxCredits: int(), removeImages: bool(),
+      sources: { type: 'object', additionalProperties: str(undefined, { enum: ['request', 'preference', 'default'] }), description: 'Where each effective value came from' },
+    }, [], 'Effective options after request > saved preference > safe default'),
     enrichment: obj({
       thread: ref('Coverage'),
       comments: { allOf: [ref('Coverage'), obj({ markdown: str() })] },
@@ -252,6 +300,15 @@ const SCHEMAS: Record<string, Schema> = {
     stats: obj({ likes: nullable(int()), retweets: nullable(int()), replies: nullable(int()), views: nullable(int()) }, [], 'X posts only'),
   }),
   DocumentSummary: obj({ id: str(), url: str(), title: str(), author: str(), description: str(), domain: str(), site: str(), image: str(), published: str(), language: str(), source_kind: str(), tags: str('Space-separated'), word_count: int(), embedded_chunks: int(), created_at: int(), updated_at: int() }),
+  ReadingPreferences: obj(READING_PREFERENCE_PROPS, Object.keys(READ_DEFAULTS)),
+  ReadingPreferencesPatch: { ...obj(READING_PREFERENCE_PROPS, [], 'Any subset of ReadingPreferences; omitted fields keep their saved value'), additionalProperties: false },
+  ReadingPreferencesState: obj({
+    preferences: ref('ReadingPreferences'),
+    saved: bool('False when the safe defaults apply'),
+    updated_at: nullable(int()),
+    defaults: ref('ReadingPreferences'),
+    limits: { type: 'object', description: 'Inclusive {min,max,default} for each bounded field' },
+  }),
   Coverage: obj({ complete: bool(), count: int(), reason: str(), fetchedAt: str('ISO 8601 retrieval timestamp') }),
   Document: { allOf: [ref('DocumentSummary'), obj({ markdown: str(), tags: arr(str()) })] },
   SearchHit: obj({ id: str(), title: str(), url: str(), domain: str(), source_kind: str(), snippet: str(), score: { type: 'number' }, matched: arr(str(), 'Retrievers that found it: bm25, fulltext, semantic'), created_at: int(), word_count: int() }),

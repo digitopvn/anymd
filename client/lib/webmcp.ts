@@ -2,7 +2,7 @@
  * WebMCP: expose site tools to in-browser agents through `navigator.modelContext`.
  * Contract: src/content/docs/webmcp.md. Tools run with the page's own session.
  */
-import { convertUrl, request, requestText } from './api';
+import { CONVERSION_OPTION_KEYS, convertUrl, request, requestText } from './api';
 
 interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -60,6 +60,9 @@ const readUrlSchema = {
   properties: {
     url: { type: 'string', description: 'The public URL to read, with or without https://' },
     save: { type: 'boolean', description: 'Save to the library when signed in (default true)' },
+    expandThread: { type: 'boolean', description: 'Expand the same-author X thread (extra credits). Omit to use the saved reading preference' },
+    maxThreadPosts: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+    removeImages: { type: 'boolean', description: 'Strip image/media references (no credit effect)' },
     includeComments: { type: 'boolean', description: 'Read raw comments and replies (extra credits)' },
     analyzeImages: { type: 'boolean', description: 'OCR and describe article images (extra credits)' },
     maxComments: { type: 'integer', minimum: 1, maximum: 1000, default: 100 },
@@ -72,7 +75,7 @@ const readUrlSchema = {
 async function readUrl(input: Input): Promise<string> {
   const save = typeof input.save === 'boolean' ? input.save : undefined;
   const options: Record<string, unknown> = {};
-  for (const key of ['includeComments', 'analyzeImages', 'maxComments', 'maxImages', 'maxCredits']) if (input[key] !== undefined) options[key] = input[key];
+  for (const key of CONVERSION_OPTION_KEYS) if (input[key] !== undefined) options[key] = input[key];
   const { data } = await convertUrl(requiredString(input, 'url', 4000), save, options);
   return data.markdown;
 }

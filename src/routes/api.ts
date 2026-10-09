@@ -1,5 +1,5 @@
 /** REST API v1 — see plans/260926-1256-anymd-platform/contracts.md and /api/v1/openapi.json. */
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
 import { z } from 'zod';
 import { createApiKey, getUser, type ApiKeyRow } from '../auth/identity';
@@ -29,6 +29,8 @@ import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setP
 import { convertBlobToMarkdown, documentCreditCost, mimeFor } from '../convert/document';
 import { runConversion } from '../convert/service';
 import { enrichmentOptions } from '../convert/enrichment-types';
+import { applyPreferencesPatch, getReadingPreferences, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences, type StoredReadingPreferences } from '../convert/reading-preferences';
+import { DEFAULT_READING_PREFERENCES, READING_LIMITS } from '../lib/reading-options';
 import { ConvertError, countWords, type ConvertResult } from '../convert/types';
 import type { AppBindings, Principal } from '../env';
 import { embedDocument, getDocument, listDocuments, saveDocument, deleteDocument, updateTags } from '../library/store';
@@ -106,6 +108,45 @@ api.get('/me', requireScope(), async (c) => {
   return c.json({ id: user.id, email: user.email, name: user.name, role: user.role, plan: user.plan, scopes: p.scopes, auth: p.kind, created_at: user.created_at });
 });
 
+// ─── Reading preferences ───────────────────────────────────────────────────
+
+/** Anonymous callers hold `convert` for the URL API, so account-scoped routes check the user explicitly. */
+const requireAccount: MiddlewareHandler<AppBindings> = async (c, next) => {
+  if (!c.get('principal').userId) return apiError(c, 401, 'unauthorized', 'Reading preferences belong to an account. Sign in or send an API key: Authorization: Bearer amd_…');
+  await next();
+};
+
+function preferencesBody(stored: StoredReadingPreferences) {
+  return { preferences: stored.preferences, saved: stored.saved, updated_at: stored.updatedAt, defaults: DEFAULT_READING_PREFERENCES, limits: READING_LIMITS };
+}
+
+api.get('/account/reading-preferences', requireAccount, requireScope('convert'), async (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(preferencesBody(await getReadingPreferences(c.env, me(c).userId)));
+});
+
+/** Partial update: omitted fields keep their saved value. Out-of-range values are rejected, not clamped. */
+api.put('/account/reading-preferences', requireAccount, requireScope('convert'), async (c) => {
+  const raw = await c.req.json().catch(() => {
+    throw Object.assign(new Error('Body must be JSON'), { status: 400, code: 'invalid_json' });
+  });
+  const userId = me(c).userId;
+  const current = await getReadingPreferences(c.env, userId);
+  try {
+    const next = applyPreferencesPatch(current.preferences, raw);
+    c.header('Cache-Control', 'no-store');
+    return c.json(preferencesBody(await saveReadingPreferences(c.env, userId, next)));
+  } catch (err) {
+    if (err instanceof ReadingPreferencesError) return apiError(c, err.status, err.code, err.message, { details: err.details });
+    throw err;
+  }
+});
+
+api.delete('/account/reading-preferences', requireAccount, requireScope('convert'), async (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(preferencesBody(await resetReadingPreferences(c.env, me(c).userId)));
+});
+
 // ─── Convert ────────────────────────────────────────────────────────────────
 
 const ConvertBody = z.object({
@@ -123,6 +164,7 @@ const ConvertBody = z.object({
 api.post('/convert', requireScope('convert'), async (c) => {
   const b = await body(c, ConvertBody);
   const r = await runConversion(c.env, c.executionCtx, {
+    expandThread: b.expandThread, maxThreadPosts: b.maxThreadPosts,
     includeComments: b.includeComments, analyzeImages: b.analyzeImages,
     maxComments: b.maxComments, maxImages: b.maxImages, maxCredits: b.maxCredits,
     url: b.url,

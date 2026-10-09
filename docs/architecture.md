@@ -25,7 +25,7 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 
 | Path | Owns |
 |---|---|
-| `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, bounded enrichment (`enrichment-types.ts`, `image-enrichment.ts`, `x-thread.ts`, and social adapters), file conversion (`document.ts`) |
+| `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, bounded enrichment (`enrichment-types.ts`, `image-enrichment.ts`, `x-thread.ts`, and social adapters), reading preferences and option precedence (`reading-preferences.ts`; bounds and defaults shared with the browser in `src/lib/reading-options.ts`), file conversion (`document.ts`) |
 | `src/library/` | Library persistence and embeddings (`store.ts`), search modes, fan-out and RRF (`search.ts`), Jev tie-break (`jev.ts`) |
 | `src/auth/` | Principal resolution, scope guards, same-origin writes (`middleware.ts`), users/sessions/API keys (`identity.ts`), role templates and key presets (`roles.ts`) |
 | `src/billing/` | Plans, credit table, offers (`plans.ts`); `provider.ts` routes checkout and portal to the provider named by `BILLING_PROVIDER`: Creem (`creem.ts`: checkout, portal, webhooks) or Polar (`polar.ts`: also usage ingest for metered overage) |
@@ -49,12 +49,13 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 `runConversion` (`src/convert/service.ts`) is the only conversion path. In order:
 
 1. `normalizeTargetUrl`: coerce to absolute http(s), reject private, internal, self-referential and credentialed targets.
-2. Cache lookup keyed on URL + language + selector + image flag (not on the caller), unless `fresh`.
-3. On a miss: quota check (signed-in) or anonymous daily counter, then `pickAdapter` → adapter. Adapters are tried in registry order; the web adapter is the fallback and itself hands binary responses to `document.ts`.
-4. Credits come from the adapter's resulting `sourceKind`. The quota pre-check uses the cheapest cost because the kind is unknown until the adapter runs.
-5. Save to the library when signed in, `save !== false` and the principal has `library:write`. Embedding, usage recording and (when Polar is the provider) Polar usage ingest run in `waitUntil` so they never add latency or fail the request.
+2. Resolve reading options with `resolveReadingOptions`: explicit request option > the signed-in user's saved `reading_preferences` row > safe default (every credit-consuming enrichment off). The effective values and their sources go into the response (`reading_options`) and the trace meta.
+3. Cache lookup keyed on URL + language + selector + the effective reading options (not on the caller's identity), unless `fresh`.
+4. On a miss: quota check (signed-in) or anonymous daily counter, then `pickAdapter` → adapter. Adapters are tried in registry order; the web adapter is the fallback and itself hands binary responses to `document.ts`.
+5. Credits come from the adapter's resulting `sourceKind`. The quota pre-check uses the cheapest cost because the kind is unknown until the adapter runs.
+6. Save to the library when signed in, `save !== false` and the principal has `library:write`. Embedding, usage recording and (when Polar is the provider) Polar usage ingest run in `waitUntil` so they never add latency or fail the request.
 
-Signed-in X conversions may expand the rooted same-author thread automatically. Comments and article-image analysis are explicit opt-ins, and Facebook, Instagram, Threads and LinkedIn adapters require an account. Enrichment coverage is returned with the conversion so provider failures, limits and timeouts remain visible instead of looking complete; the executable bounds and unit prices live in `src/convert/enrichment-types.ts` and `src/billing/plans.ts`.
+X thread expansion (bounded by `maxThreadPosts`), comments and article-image analysis are explicit opt-ins (per request or saved preference); authentication alone never enables them. Base-only conversions reserve only the base price, and Facebook, Instagram, Threads and LinkedIn adapters require an account. Enrichment coverage is returned with the conversion so provider failures, limits and timeouts remain visible instead of looking complete; the executable bounds and unit prices live in `src/convert/enrichment-types.ts` and `src/billing/plans.ts`.
 
 Why a caller-independent cache: identical URLs are converted once per hour for everyone, and cached hits are free, which is the pricing promise.
 
@@ -74,7 +75,7 @@ The schema is owned by `migrations/`. Tables group as:
 
 | Area | Tables | Notes |
 |---|---|---|
-| Identity | `users`, `sessions`, `api_keys` | Sessions and keys store SHA-256 hashes, never raw tokens. Key `scopes` is a JSON array. |
+| Identity | `users`, `sessions`, `api_keys`, `reading_preferences` | Sessions and keys store SHA-256 hashes, never raw tokens. Key `scopes` is a JSON array. `reading_preferences` holds one zod-validated JSON object per user; no row means the safe defaults. |
 | Library | `documents`, `documents_fts` | Unique per `(user_id, url_hash)`. FTS5 is an external-content table kept in sync by triggers. `embedded_chunks` tracks vectors `<doc_id>#<n>` in Vectorize. |
 | Metering | `usage_events`, `traces` | Monthly credit use is summed from `usage_events` since the UTC month start. |
 | Billing | `subscriptions`, `credit_grants`, `webhook_events` | `webhook_events` makes Creem and Polar webhook handling idempotent. `users.creem_customer_id` opens the Creem portal. |

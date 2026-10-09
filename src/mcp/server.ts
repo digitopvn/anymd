@@ -48,8 +48,9 @@ const READ_URL_INPUT = z.object({
   url: z.string().describe('The public URL to read, e.g. https://example.com/post'),
   save: z.boolean().optional().describe('Save to the library (default true)'),
   fresh: z.boolean().optional().describe('Bypass the 1-hour cache'),
+  removeImages: z.boolean().optional().describe('Strip image/media references (no credit effect)'),
 });
-const READ_URL_TEXT = 'Saves to the library by default (save=false to skip). X expands same-author threads automatically. Comments and image OCR are opt-in and cost extra credits. maxCredits defaults to 100; partial results explain missing content. Cached reads are free.';
+const READ_URL_TEXT = 'Saves to the library by default (save=false to skip). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free.';
 const readUrl = async (a: z.infer<typeof READ_URL_INPUT>, t: ToolContext) => {
   const r = await runConversion(t.env, t.ctx, { ...a, channel: 'mcp', principal: t.principal });
   const { content: _content, ...rest } = convertPayload(r);
