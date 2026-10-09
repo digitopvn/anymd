@@ -11,10 +11,11 @@ import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import { Hono } from 'hono';
 import { API_KEY_PREFIX, getUser } from './auth/identity';
 import { resolvePrincipal } from './auth/middleware';
-import { ALL_SCOPES, capScopes, isRole } from './auth/roles';
+import { ALL_SCOPES, isRole, OAUTH_DEFAULT_SCOPES, oauthPrincipalScopes } from './auth/roles';
 import { type CreemEvent, creemEnabled, handleCreemEvent, verifyCreemWebhook } from './billing/creem';
 import { handlePolarEvent, polarEnabled, verifyPolarWebhook } from './billing/polar';
-import type { AppBindings, Env, Principal, Scope } from './env';
+import type { AppBindings, Env, Principal } from './env';
+import { resourceMetadataUrl } from './mcp/protocol';
 import { handleMcp } from './mcp/server';
 import { adminRoutes } from './routes/admin';
 import { api, handleApiError } from './routes/api';
@@ -23,6 +24,7 @@ import { convertRoutes } from './routes/convert';
 import { dashboardRoutes } from './routes/dashboard';
 import { publicRoutes } from './routes/public';
 import { renderMessage } from './routes/shared';
+import { recordAudit } from './services/admin/audit';
 
 export const app = new Hono<AppBindings>();
 
@@ -60,11 +62,13 @@ app.post('/api/webhooks/creem', async (c) => {
   if (!event?.id || !event.eventType) return c.json({ error: { code: 'invalid_event', message: 'Missing id or eventType' } }, 400);
   try {
     const outcome = await handleCreemEvent(c.env, event);
+    c.executionCtx.waitUntil(recordWebhookOutcome(c.env, event.id, outcome));
     return c.json({ ok: true, outcome });
   } catch (e) {
     console.error('creem webhook', event.eventType, e);
     // Forget the event id so Creem's retry (triggered by the 500) is processed instead of skipped.
     await c.env.DB.prepare('DELETE FROM webhook_events WHERE id = ?').bind(event.id).run().catch(() => undefined);
+    c.executionCtx.waitUntil(recordWebhookFailure(c.env, 'creem', event.id, event.eventType, e));
     return c.json({ error: { code: 'internal', message: 'Webhook handling failed' } }, 500);
   }
 });
@@ -80,16 +84,33 @@ app.post('/api/webhooks/polar', async (c) => {
   } catch {
     return c.json({ error: { code: 'invalid_json', message: 'Body must be JSON' } }, 400);
   }
+  const webhookId = c.req.header('webhook-id')!;
   try {
-    const outcome = await handlePolarEvent(c.env, c.req.header('webhook-id')!, event);
+    const outcome = await handlePolarEvent(c.env, webhookId, event);
+    c.executionCtx.waitUntil(recordWebhookOutcome(c.env, webhookId, outcome));
     return c.json({ ok: true, outcome });
   } catch (e) {
     console.error('polar webhook', event.type, e);
     // Forget the event id so Polar's retry (triggered by the 500) is processed instead of skipped.
-    await c.env.DB.prepare('DELETE FROM webhook_events WHERE id = ?').bind(c.req.header('webhook-id')!).run().catch(() => undefined);
+    await c.env.DB.prepare('DELETE FROM webhook_events WHERE id = ?').bind(webhookId).run().catch(() => undefined);
+    c.executionCtx.waitUntil(recordWebhookFailure(c.env, 'polar', webhookId, event.type, e));
     return c.json({ error: { code: 'internal', message: 'Webhook handling failed' } }, 500);
   }
 });
+
+/** Outcome of a processed webhook, for billing diagnostics. A duplicate keeps the first outcome. */
+async function recordWebhookOutcome(env: Env, id: string, outcome: string): Promise<void> {
+  if (outcome === 'duplicate') return;
+  await env.DB.prepare('UPDATE webhook_events SET outcome = ? WHERE id = ?').bind(outcome, id).run().catch((err) => console.error('webhook outcome', err));
+}
+
+/** Failed deliveries are deleted for retry, so the failure is kept in the audit log instead. */
+async function recordWebhookFailure(env: Env, provider: 'creem' | 'polar', id: string, type: string, err: unknown): Promise<void> {
+  const error = (err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300);
+  await recordAudit(env, { system: provider, via: `webhook:${provider}` }, { action: 'billing.webhook_failed', targetType: 'webhook', target: id, meta: { provider, event_type: type, error } }).catch((e) =>
+    console.error('webhook failure audit', e),
+  );
+}
 
 app.use('*', resolvePrincipal);
 
@@ -121,20 +142,38 @@ function mcpUnauthorized(env: Env): Response {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Expose-Headers': 'WWW-Authenticate',
-      'WWW-Authenticate': `Bearer realm="anymd", resource_metadata="${env.PUBLIC_URL}/.well-known/oauth-protected-resource/mcp"`,
+      // Clients pick the scopes in the challenge first: point them at the least-privilege baseline;
+      // elevated scopes are requested later through step-up (403 insufficient_scope).
+      'WWW-Authenticate': `Bearer realm="anymd", resource_metadata="${resourceMetadataUrl(env)}", scope="${OAUTH_DEFAULT_SCOPES.join(' ')}"`,
     },
   });
 }
 
+/** Props stored with an OAuth grant at consent. `v` marks grants issued with least-privilege consent. */
+export interface OAuthGrantProps {
+  userId?: string;
+  scopes?: string[];
+  clientId?: string;
+  v?: number;
+}
+
 /** OAuth-authenticated MCP calls. The provider has already validated the token. */
 const mcpApiHandler = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext & { props?: { userId?: string; scopes?: string[] } }): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext & { props?: OAuthGrantProps; auth?: { clientId?: string } }): Promise<Response> {
     const userId = ctx.props?.userId;
     const user = userId ? await getUser(env, userId) : null;
-    if (!user) return mcpUnauthorized(env);
+    if (!user || user.status === 'suspended') return mcpUnauthorized(env);
     const role = isRole(user.role) ? user.role : 'user';
-    // Re-cap on every call so a demotion takes effect on existing tokens immediately.
-    const principal: Principal = { kind: 'oauth', userId: user.id, role, scopes: capScopes(role, (ctx.props?.scopes ?? []) as Scope[]) };
+    // Re-cap on every call so a demotion takes effect on existing tokens immediately; grants from
+    // before least-privilege consent never carry admin scopes.
+    const principal: Principal = {
+      kind: 'oauth',
+      userId: user.id,
+      role,
+      scopes: oauthPrincipalScopes(role, ctx.props?.scopes ?? [], ctx.props?.v),
+      clientId: ctx.auth?.clientId ?? ctx.props?.clientId,
+      requestId: request.headers.get('cf-ray') ?? crypto.randomUUID(),
+    };
     return handleMcp(request, env, ctx, principal);
   },
 };
@@ -154,7 +193,10 @@ function oauthProvider(env: Env): OAuthProvider<Env> {
       scopesSupported: [...ALL_SCOPES],
       accessTokenTTL: 3600,
       refreshTokenTTL: 60 * 60 * 24 * 30,
-      resourceMetadata: { resource: `${env.PUBLIC_URL}/mcp` },
+      // The authorization server must list every scope so consent can approve elevated ones, but the
+      // resource advertises only the baseline: spec-following clients fall back to the resource's
+      // scopes_supported when choosing what to request, and must not ask for the admin plane by default.
+      resourceMetadata: { resource: `${env.PUBLIC_URL}/mcp`, scopes_supported: [...OAUTH_DEFAULT_SCOPES] },
     });
     providerFor = env.PUBLIC_URL;
   }
