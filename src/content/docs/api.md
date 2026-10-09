@@ -180,6 +180,11 @@ Every signed-in conversion is saved to your private library, one document per so
 
 `?limit=20&before=<ts>&domain=&kind=&tag=` returns `{ items, next_cursor }`, newest first. Pass `next_cursor` as `before` to get the next page. Filter by `domain` (e.g. `github.com`), `kind` (e.g. `youtube`) or `tag`.
 
+```bash
+curl "https://anymd.cc/api/v1/library?limit=20&kind=youtube" \
+  -H "Authorization: Bearer $ANYMD_API_KEY"
+```
+
 `tag` matches whole tags: `tag=ai` finds documents tagged `ai`, never `rai` or `ai-safety`. Repeat it (`tag=ai&tag=rag`) or comma-separate it (`tag=ai,rag`) to require every tag, up to 10. Tag values are normalized like stored tags.
 
 ```bash
@@ -192,7 +197,7 @@ curl "https://anymd.cc/api/v1/library?tag=rag&tag=research" \
 Your tags with how many documents carry each, most used first: `{ "items": [{ "tag": "rag", "count": 12 }, …] }`. `?limit=` defaults to 100 (maximum 500).
 
 ```bash
-curl "https://anymd.cc/api/v1/library?limit=20&kind=youtube" \
+curl "https://anymd.cc/api/v1/library/tags?limit=50" \
   -H "Authorization: Bearer $ANYMD_API_KEY"
 ```
 

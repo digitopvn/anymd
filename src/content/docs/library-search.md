@@ -131,4 +131,4 @@ Tags are your own labels on library documents. They are lowercased and keep only
 | CLI | `anymd tag <id> --add a,b --remove c` or `--set a,b` | `anymd tags` | `anymd ls --tag a,b` |
 | Dashboard | Tags field on a document | Tag chips on the Library page | Click a tag chip |
 
-Tag filters match whole tags: `ai` never matches `rai` or `ai-safety`. Several tags mean every one must be present. Search modes don't take a tag filter; in `fulltext` mode use the FTS5 column filter `tags:rag` instead. Editing tags needs `library:write`; listing and filtering need `library:read`.
+Tag filters match whole tags: `ai` never matches `rai` or `ai-safety`. Several tags mean every one must be present. Search modes don't take a tag filter; in `fulltext` mode you can use the FTS5 column filter `tags:rag`. It matches tokens, not whole tags, so `tags:ai` also matches `ai-safety`; prefer the exact tag filter when that matters. Editing tags needs `library:write`; listing and filtering need `library:read`.
