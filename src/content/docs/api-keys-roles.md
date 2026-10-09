@@ -45,7 +45,7 @@ Rule of thumb: give each integration its own key with the smallest preset that w
 | `library:read` | List, read and search your library |
 | `library:write` | Save conversions, tag and delete documents |
 | `usage:read` | Usage, credits and traces |
-| `keys:manage` | Create, list and revoke your API keys |
+| `keys:manage` | Create, list and revoke your API keys; change or reset your saved deep reading defaults |
 | `content:read` · `content:write` · `content:publish` | Blog posts: read drafts, edit, publish |
 | `pages:read` · `pages:write` · `pages:publish` | Landing pages: read, edit, publish |
 | `settings:read` · `settings:write` | Read and change site settings (`settings:write` also reads) |

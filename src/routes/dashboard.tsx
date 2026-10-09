@@ -8,8 +8,11 @@ import type { PlanId } from '../billing/plans';
 import type { AppBindings } from '../env';
 import { deleteAccount, documentsToMarkdown, exportDocuments } from '../lib/account';
 import { renderMarkdown } from '../lib/markdown';
+import { applyPreferencesPatch, getReadingPreferences, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences } from '../convert/reading-preferences';
+import type { ReadingLimitKey } from '../lib/reading-options';
 import { quotaState, monthStart } from '../lib/usage';
-import { getDocument, librarySummary, listDocuments } from '../library/store';
+import type { ReadingFormValues } from '../views/components/reading-options-fields';
+import { getDocument, librarySummary, listDocuments, listTags, normalizeTag } from '../library/store';
 import { searchForPrincipal, parseMode, usageSummary } from '../services';
 import {
   AccountPage,
@@ -48,7 +51,7 @@ function shell(c: AppContext, current: string, title: string, children: Child, o
 
 dashboardRoutes.get('/', async (c) => {
   const user = c.get('user')!;
-  const [quota, lib, recent, month, keyCount] = await Promise.all([
+  const [quota, lib, recent, month, keyCount, reading] = await Promise.all([
     quotaState(c.env, user.id, user.plan),
     librarySummary(c.env, user.id),
     listDocuments(c.env, user.id, { limit: 6 }),
@@ -56,12 +59,13 @@ dashboardRoutes.get('/', async (c) => {
       .bind(user.id, monthStart())
       .first<{ conversions: number; errors: number | null }>(),
     activeKeyCount(c.env, user.id),
+    getReadingPreferences(c.env, user.id),
   ]);
   return shell(
     c,
     '/dashboard',
     `Hi, ${user.name?.split(' ')[0] || 'there'}`,
-    <OverviewPage user={user} quota={quota} docs={lib.docs} words={lib.words} recent={recent} month={{ conversions: month?.conversions ?? 0, errors: month?.errors ?? 0 }} keyCount={keyCount} origin={originOf(c)} />,
+    <OverviewPage user={user} quota={quota} docs={lib.docs} words={lib.words} recent={recent} month={{ conversions: month?.conversions ?? 0, errors: month?.errors ?? 0 }} keyCount={keyCount} origin={originOf(c)} reading={reading} />,
   );
 });
 
@@ -69,13 +73,21 @@ dashboardRoutes.get('/library', async (c) => {
   const user = c.get('user')!;
   const domain = c.req.query('domain') || undefined;
   const kind = c.req.query('kind') || undefined;
+  // Normalize like stored tags so the chip label and highlight match the filter that actually runs.
+  const tag = normalizeTag((c.req.query('tag') ?? '').slice(0, 40)) || undefined;
+  const before = Number(c.req.query('before')) || undefined;
   const limit = 30;
-  const [lib, docs] = await Promise.all([librarySummary(c.env, user.id), listDocuments(c.env, user.id, { limit, domain, kind, before: Number(c.req.query('before')) || undefined })]);
+  const [lib, docs, tags] = await Promise.all([
+    librarySummary(c.env, user.id),
+    listDocuments(c.env, user.id, { limit, domain, kind, tags: tag ? [tag] : undefined, before }),
+    // Tag counts scan the whole library; only the first page shows the chips.
+    before ? Promise.resolve([]) : listTags(c.env, user.id, 12),
+  ]);
   return shell(
     c,
     '/dashboard/library',
     'Library',
-    <LibraryPage docs={docs} domains={lib.domains} kinds={lib.kinds} filter={{ domain, kind }} nextCursor={docs.length === limit ? docs[docs.length - 1].created_at : null} total={lib.docs} />,
+    <LibraryPage docs={docs} domains={lib.domains} kinds={lib.kinds} tags={tags} filter={{ domain, kind, tag }} nextCursor={docs.length === limit ? docs[docs.length - 1].created_at : null} total={lib.docs} />,
   );
 });
 
@@ -214,13 +226,54 @@ dashboardRoutes.post('/billing/portal', async (c) => {
 
 // ─── Account: export & delete ───────────────────────────────────────────────
 
-async function accountPage(c: AppContext, error?: string, status = 200) {
+async function accountPage(c: AppContext, error?: string, status = 200, reading?: { error: string; submitted: ReadingFormValues }) {
   const user = c.get('user')!;
-  const lib = await librarySummary(c.env, user.id);
-  return shell(c, '/dashboard/account', 'Account', <AccountPage user={user} docs={lib.docs} error={error} />, { status });
+  const [lib, stored] = await Promise.all([librarySummary(c.env, user.id), getReadingPreferences(c.env, user.id)]);
+  const saved = c.req.query('reading');
+  const notice = saved === 'saved' ? 'Reading defaults saved. They apply to new conversions that leave an option out.' : saved === 'reset' ? 'Reading defaults reset: deep reading is off.' : undefined;
+  c.header('Cache-Control', 'no-store');
+  return shell(c, '/dashboard/account', 'Account', <AccountPage user={user} docs={lib.docs} error={error} reading={{ stored, notice, error: reading?.error, submitted: reading?.submitted }} />, { status });
 }
 
 dashboardRoutes.get('/account', (c) => accountPage(c));
+
+/**
+ * Saves the account's reading defaults. A plain form: unchecked boxes mean off, and bounded
+ * numbers disabled in the browser (their toggle is off) keep their saved value.
+ */
+dashboardRoutes.post('/account/reading', async (c) => {
+  const user = c.get('user')!;
+  const principal = c.get('principal');
+  const f = await formData(c);
+  if (f.action === 'reset') {
+    await resetReadingPreferences(c.env, principal);
+    return c.redirect('/dashboard/account?reading=reset#reading-defaults', 303);
+  }
+  const toggles = {
+    expandThread: f.expandThread === '1',
+    includeComments: f.includeComments === '1',
+    keepImages: f.keepImages === '1',
+    analyzeImages: f.analyzeImages === '1',
+  };
+  const patch: Record<string, unknown> = { ...toggles };
+  const submittedNumbers: Partial<Record<ReadingLimitKey, string>> = {};
+  for (const key of ['maxThreadPosts', 'maxComments', 'maxImages', 'maxCredits'] as const) {
+    if (f[key] === undefined) continue;
+    submittedNumbers[key] = f[key];
+    patch[key] = f[key].trim() === '' ? f[key] : Number(f[key]);
+  }
+  const current = await getReadingPreferences(c.env, user.id);
+  try {
+    await saveReadingPreferences(c.env, principal, current, applyPreferencesPatch(current.preferences, patch));
+  } catch (err) {
+    if (err instanceof ReadingPreferencesError) {
+      // Re-render exactly what was submitted next to the error; nothing the user typed is lost.
+      return accountPage(c, undefined, 422, { error: `Reading defaults were not saved: ${err.message}.`, submitted: { ...current.preferences, ...toggles, ...submittedNumbers } });
+    }
+    throw err;
+  }
+  return c.redirect('/dashboard/account?reading=saved#reading-defaults', 303);
+});
 
 dashboardRoutes.get('/account/export', async (c) => {
   const user = c.get('user')!;

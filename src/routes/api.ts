@@ -1,5 +1,5 @@
 /** REST API v1 — see plans/260926-1256-anymd-platform/contracts.md and /api/v1/openapi.json. */
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
 import { z } from 'zod';
 import { getUser } from '../auth/identity';
@@ -28,9 +28,12 @@ import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setP
 import { convertBlobToMarkdown, documentCreditCost, mimeFor } from '../convert/document';
 import { runConversion } from '../convert/service';
 import { enrichmentOptions } from '../convert/enrichment-types';
+import { applyPreferencesPatch, getReadingPreferences, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences, type StoredReadingPreferences } from '../convert/reading-preferences';
+import { DEFAULT_READING_PREFERENCES, READING_LIMITS } from '../lib/reading-options';
 import { ConvertError, countWords, type ConvertResult } from '../convert/types';
 import type { AppBindings, Principal } from '../env';
 import { embedDocument, getDocument, listDocuments, saveDocument, deleteDocument, updateTags } from '../library/store';
+import { editTags, listTags, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags, parseTagFilter } from '../library/store';
 import { Tracer } from '../lib/tracer';
 import { canSpend, recordUsage } from '../lib/usage';
 import { newId } from '../lib/util';
@@ -111,6 +114,51 @@ api.get('/me', requireScope(), async (c) => {
   return c.json({ id: user.id, email: user.email, name: user.name, role: user.role, plan: user.plan, scopes: p.scopes, auth: p.kind, created_at: user.created_at });
 });
 
+// ─── Reading preferences ───────────────────────────────────────────────────
+
+/** Anonymous callers hold `convert` for the URL API, so account-scoped routes check the user explicitly. */
+const requireAccount: MiddlewareHandler<AppBindings> = async (c, next) => {
+  if (!c.get('principal').userId) return apiError(c, 401, 'unauthorized', 'Reading preferences belong to an account. Sign in or send an API key: Authorization: Bearer amd_…');
+  await next();
+};
+
+function preferencesBody(stored: StoredReadingPreferences) {
+  return { preferences: stored.preferences, saved: stored.saved, updated_at: stored.updatedAt, defaults: DEFAULT_READING_PREFERENCES, limits: READING_LIMITS };
+}
+
+api.get('/account/reading-preferences', requireAccount, requireScope('convert'), async (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(preferencesBody(await getReadingPreferences(c.env, me(c).userId)));
+});
+
+/**
+ * Saved defaults decide what every other credential of the account may spend, so changing them
+ * needs `keys:manage` (sessions hold it; "Convert only" and library presets do not). Reading
+ * them only needs `convert`.
+ */
+const PREFERENCES_WRITE_SCOPE = 'keys:manage';
+
+/** Partial update: omitted fields keep their saved value. Out-of-range values are rejected, not clamped. */
+api.put('/account/reading-preferences', requireAccount, requireScope(PREFERENCES_WRITE_SCOPE), async (c) => {
+  const raw = await c.req.json().catch(() => {
+    throw Object.assign(new Error('Body must be JSON'), { status: 400, code: 'invalid_json' });
+  });
+  const current = await getReadingPreferences(c.env, me(c).userId);
+  try {
+    const next = applyPreferencesPatch(current.preferences, raw);
+    c.header('Cache-Control', 'no-store');
+    return c.json(preferencesBody(await saveReadingPreferences(c.env, c.get('principal'), current, next)));
+  } catch (err) {
+    if (err instanceof ReadingPreferencesError) return apiError(c, err.status, err.code, err.message, { details: err.details });
+    throw err;
+  }
+});
+
+api.delete('/account/reading-preferences', requireAccount, requireScope(PREFERENCES_WRITE_SCOPE), async (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(preferencesBody(await resetReadingPreferences(c.env, c.get('principal'))));
+});
+
 // ─── Convert ────────────────────────────────────────────────────────────────
 
 const ConvertBody = z.object({
@@ -128,6 +176,7 @@ const ConvertBody = z.object({
 api.post('/convert', requireScope('convert'), async (c) => {
   const b = await body(c, ConvertBody);
   const r = await runConversion(c.env, c.executionCtx, {
+    expandThread: b.expandThread, maxThreadPosts: b.maxThreadPosts,
     includeComments: b.includeComments, analyzeImages: b.analyzeImages,
     maxComments: b.maxComments, maxImages: b.maxImages, maxCredits: b.maxCredits,
     url: b.url,
@@ -190,8 +239,25 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
 
 api.get('/library', requireScope('library:read'), async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 20, 1), 100);
-  const items = await listDocuments(c.env, me(c).userId, { limit, before: Number(c.req.query('before')) || undefined, domain: c.req.query('domain') || undefined, kind: c.req.query('kind') || undefined });
+  // `?tag=a&tag=b` or `?tag=a,b`: documents carrying every tag.
+  const tags = parseTagFilter(c.req.queries('tag'));
+  const items = await listDocuments(c.env, me(c).userId, { limit, before: Number(c.req.query('before')) || undefined, domain: c.req.query('domain') || undefined, kind: c.req.query('kind') || undefined, tags });
   return c.json({ items, next_cursor: items.length === limit ? items[items.length - 1].created_at : null });
+});
+
+// Registered before /library/:id so "tags" is not taken for a document id.
+api.get('/library/tags', requireScope('library:read'), async (c) => {
+  return c.json({ items: await listTags(c.env, me(c).userId, Number(c.req.query('limit')) || 100) });
+});
+
+const TagList = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAGS);
+api.post('/library/:id/tags', requireScope('library:write'), async (c) => {
+  const b = await body(c, z.object({ add: TagList.optional(), remove: TagList.optional(), set: TagList.optional() }).strict());
+  if (b.set && (b.add || b.remove)) return apiError(c, 422, 'invalid_request', 'Use either `set`, or `add` and/or `remove`, not both.');
+  if (!b.set && !b.add && !b.remove) return apiError(c, 422, 'invalid_request', 'Pass `add`, `remove` or `set`.');
+  const tags = await editTags(c.env, me(c).userId, c.req.param('id'), b);
+  if (!tags) return apiError(c, 404, 'not_found', 'Document not found');
+  return c.json({ id: c.req.param('id'), tags });
 });
 
 api.get('/library/:id', requireScope('library:read'), async (c) => {
@@ -201,7 +267,7 @@ api.get('/library/:id', requireScope('library:read'), async (c) => {
     const md = `---\ntitle: ${JSON.stringify(doc.title)}\nsource: ${JSON.stringify(doc.url)}\n---\n\n${doc.markdown}`;
     return c.body(md, 200, { 'Content-Type': 'text/markdown; charset=utf-8' });
   }
-  return c.json({ ...doc, tags: doc.tags.split(' ').filter(Boolean) });
+  return c.json({ ...doc, tags: parseStoredTags(doc.tags) });
 });
 
 api.patch('/library/:id', requireScope('library:write'), async (c) => {

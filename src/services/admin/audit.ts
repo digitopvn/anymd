@@ -39,11 +39,10 @@ function serializeMeta(input: AuditInput): string {
   return text.length <= MAX_META ? text : JSON.stringify({ truncated: true, keys: Object.keys(body as object) });
 }
 
-/** The legacy `actor` column, kept so existing readers still see who acted. */
+/** The legacy `actor` column (`<kind>:<userId>`), kept so existing readers still see who acted; the credential has its own column. */
 function actorLabel(actor: Principal | SystemActor): string {
   if ('system' in actor) return actor.system;
-  const credential = actor.apiKeyId ?? actor.clientId;
-  return `${actor.kind}:${actor.userId}${credential ? `:${credential}` : ''}`;
+  return `${actor.kind}:${actor.userId}`;
 }
 
 const AUDIT_COLUMNS = '(id,actor,action,target,meta,created_at,actor_user_id,auth_kind,credential_id,target_type,via,request_id,idempotency_key)';

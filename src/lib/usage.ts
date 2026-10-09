@@ -18,6 +18,8 @@ export interface UsageInput {
   bytesOut?: number;
   traceId?: string;
   error?: string;
+  /** Extra trace metadata, e.g. the credit breakdown and the effective reading options. */
+  meta?: Record<string, unknown>;
 }
 
 export function monthStart(ts = now()): number {
@@ -101,7 +103,7 @@ export async function recordUsage(env: Env, input: UsageInput, tracer?: Tracer):
         input.status,
         input.durationMs,
         JSON.stringify(tracer.spans),
-        JSON.stringify({ channel: input.channel, credits: input.credits, http_status: input.httpStatus, error: input.error ?? null }),
+        JSON.stringify({ channel: input.channel, credits: input.credits, http_status: input.httpStatus, error: input.error ?? null, ...input.meta }),
         ts,
       ),
     );

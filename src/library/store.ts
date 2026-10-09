@@ -132,7 +132,7 @@ export async function countDocuments(env: Env, userId: string): Promise<number> 
 export async function listDocuments(
   env: Env,
   userId: string,
-  opts: { limit?: number; before?: number; domain?: string; kind?: string } = {},
+  opts: { limit?: number; before?: number; domain?: string; kind?: string; tags?: string[] } = {},
 ): Promise<DocumentSummary[]> {
   const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
   const where = ['user_id = ?'];
@@ -140,6 +140,14 @@ export async function listDocuments(
   if (opts.before) (where.push('created_at < ?'), params.push(opts.before));
   if (opts.domain) (where.push('domain = ?'), params.push(opts.domain));
   if (opts.kind) (where.push('source_kind = ?'), params.push(opts.kind));
+  if (opts.tags?.length) {
+    const wanted = opts.tags.map(normalizeTag);
+    // A filter tag with no valid characters can never match a stored tag.
+    if (wanted.some((t) => !t)) return [];
+    // Whole-tag match (AND): pad the space-separated column so `ai` never matches `rai` or `ai-x`.
+    // instr() compares literally, so no LIKE wildcard escaping is needed for `_`.
+    for (const tag of new Set(wanted)) (where.push("instr(' ' || tags || ' ', ?) > 0"), params.push(` ${tag} `));
+  }
   const { results } = await env.DB.prepare(`SELECT ${SUMMARY_COLUMNS} FROM documents WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ?`)
     .bind(...params, limit)
     .all<DocumentSummary>();
@@ -160,8 +168,108 @@ export async function getDocumentsByIds(env: Env, userId: string, ids: string[])
   return results;
 }
 
+// ─── Tags ─────────────────────────────────────────────────────────────────────
+
+export const MAX_TAGS = 20;
+export const MAX_TAG_LENGTH = 40;
+export const MAX_TAG_FILTERS = 10;
+const TAG_WRITE_ATTEMPTS = 3;
+
+/** A tag edit the caller can fix (status/code follow the API error convention). */
+export class TagError extends Error {
+  constructor(public code: string, message: string, public status = 422) {
+    super(message);
+  }
+}
+
+/** Lowercase and keep only `[a-z0-9_-]`. Returns '' for input with no valid characters. */
+export function normalizeTag(tag: string): string {
+  return tag.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+}
+
+/** Normalize, drop empties and dedupe, keeping first-seen order. */
+export function normalizeTags(tags: string[]): string[] {
+  return [...new Set(tags.map(normalizeTag).filter(Boolean))];
+}
+
+/**
+ * Parse a tag filter from any channel: items may be comma-separated (`["ai,rag"]` = `["ai","rag"]`),
+ * blanks are dropped, and an empty result means "no filter". Throws a 422 TagError past the limits.
+ */
+export function parseTagFilter(values: readonly string[] | undefined): string[] | undefined {
+  const tags = (values ?? []).flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
+  if (!tags.length) return undefined;
+  if (tags.length > MAX_TAG_FILTERS) throw new TagError('invalid_request', `Filter by at most ${MAX_TAG_FILTERS} tags.`);
+  if (tags.some((t) => t.length > MAX_TAG_LENGTH)) throw new TagError('invalid_request', `Tags can be at most ${MAX_TAG_LENGTH} characters.`);
+  return tags;
+}
+
+/** Split the stored space-separated column into an array. */
+export function parseStoredTags(tags: string): string[] {
+  return tags.split(' ').filter(Boolean);
+}
+
+export type TagEdit = { add?: string[]; remove?: string[]; set?: string[] };
+
+/** Apply an edit to a tag list: `set` replaces; otherwise `add` appends new tags and `remove` drops tags. */
+export function applyTagEdit(current: string[], edit: TagEdit): string[] {
+  if (edit.set) {
+    const next = normalizeTags(edit.set);
+    if (next.length > MAX_TAGS) throw new TagError('too_many_tags', `A document can have at most ${MAX_TAGS} tags; got ${next.length}.`);
+    return next;
+  }
+  const removed = new Set(normalizeTags(edit.remove ?? []));
+  const next = normalizeTags([...current, ...(edit.add ?? [])]).filter((t) => !removed.has(t));
+  if (next.length > MAX_TAGS && next.length > current.length) {
+    throw new TagError('too_many_tags', `A document can have at most ${MAX_TAGS} tags; this edit would leave ${next.length}. Remove some first.`);
+  }
+  return next;
+}
+
+/**
+ * Add, remove or replace one document's tags. Read-modify-write guarded by the previous value
+ * (`WHERE tags = ?`), retried on a concurrent change. Returns the resulting tags, or null when the
+ * document does not exist for this user.
+ */
+export async function editTags(env: Env, userId: string, id: string, edit: TagEdit): Promise<string[] | null> {
+  for (let attempt = 0; attempt < TAG_WRITE_ATTEMPTS; attempt++) {
+    const row = await env.DB.prepare('SELECT tags FROM documents WHERE id = ? AND user_id = ?').bind(id, userId).first<{ tags: string }>();
+    if (!row) return null;
+    const current = parseStoredTags(row.tags);
+    const next = applyTagEdit(current, edit);
+    const value = next.join(' ');
+    if (value === row.tags) return next;
+    const res = await env.DB.prepare('UPDATE documents SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ? AND tags = ?')
+      .bind(value, now(), id, userId, row.tags)
+      .run();
+    if ((res.meta.changes ?? 0) > 0) return next;
+  }
+  throw new TagError('tag_conflict', 'The document tags changed while saving. Retry the request.', 409);
+}
+
+export const addTags = (env: Env, userId: string, id: string, tags: string[]) => editTags(env, userId, id, { add: tags });
+export const removeTags = (env: Env, userId: string, id: string, tags: string[]) => editTags(env, userId, id, { remove: tags });
+
+/** Tags in the user's library with how many documents carry each, most used first. */
+export async function listTags(env: Env, userId: string, limit = 100): Promise<{ tag: string; count: number }[]> {
+  const bounded = Math.min(Math.max(Math.trunc(limit) || 100, 1), 500);
+  // Split the space-separated column with a recursive CTE; tags are unique per document, so COUNT is a document count.
+  const { results } = await env.DB.prepare(
+    `WITH RECURSIVE split(tag, rest) AS (
+       SELECT '', tags || ' ' FROM documents WHERE user_id = ? AND tags != ''
+       UNION ALL
+       SELECT substr(rest, 1, instr(rest, ' ') - 1), substr(rest, instr(rest, ' ') + 1) FROM split WHERE rest != ''
+     )
+     SELECT tag, COUNT(*) AS count FROM split WHERE tag != '' GROUP BY tag ORDER BY count DESC, tag ASC LIMIT ?`,
+  )
+    .bind(userId, bounded)
+    .all<{ tag: string; count: number }>();
+  return results;
+}
+
+/** Replace a document's tags (PATCH /library/:id). Kept lenient for existing clients: extra tags are dropped. */
 export async function updateTags(env: Env, userId: string, id: string, tags: string[]): Promise<boolean> {
-  const clean = [...new Set(tags.map((t) => t.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')).filter(Boolean))].slice(0, 20);
+  const clean = normalizeTags(tags).slice(0, MAX_TAGS);
   const res = await env.DB.prepare('UPDATE documents SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ?')
     .bind(clean.join(' '), now(), id, userId)
     .run();

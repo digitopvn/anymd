@@ -67,7 +67,7 @@ export const SCOPE_LABELS: Record<Scope, string> = {
   'library:read': 'Read and search your library',
   'library:write': 'Save and delete library documents',
   'usage:read': 'Read your usage and traces',
-  'keys:manage': 'Manage your API keys and connected apps',
+  'keys:manage': 'Manage your API keys, connected apps and saved reading defaults',
   'content:read': 'Read blog posts',
   'content:write': 'Write blog posts',
   'content:publish': 'Publish blog posts',

@@ -83,17 +83,21 @@ Tools are listed only when the caller holds the scope they need.
 
 | Tool | Input | Needs |
 |---|---|---|
-| `read_url` | `{ url, save?, fresh?, includeComments?, analyzeImages?, maxComments?, maxImages?, maxCredits? }` | `convert` (saving also needs `library:write`) |
+| `read_url` | `{ url, save?, fresh?, removeImages?, expandThread?, maxThreadPosts?, includeComments?, analyzeImages?, maxComments?, maxImages?, maxCredits? }` | `convert` (saving also needs `library:write`) |
 | `convert_url` | Same input as `read_url` | Same as `read_url`, kept under its original name for existing clients |
 | `search_library` | `{ query, mode?, limit? }` | `library:read` |
 | `get_document` | `{ id }` | `library:read` |
-| `list_documents` | `{ limit?, domain? }` | `library:read` |
+| `list_documents` | `{ limit?, domain?, tags?, before? }` | `library:read` |
+| `list_tags` | `{ limit? }` | `library:read` |
+| `tag_document` | `{ id, add?, remove?, set? }` | `library:write` |
 | `delete_document` | `{ id }` | `library:write` |
 | `usage_summary` | `{}` | `usage:read` |
 
 `read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
 
-`includeComments` and `analyzeImages` are opt-in enrichment flags. `maxCredits` defaults to 100 and is capped at 1,000; `maxComments` defaults to 100 and is capped at 1,000; `maxImages` defaults to 10 and is capped at 20. Signed-in X reads can expand the rooted same-author thread automatically. Social post adapters for Facebook, Instagram, Threads and LinkedIn require an account. The response includes `credit_breakdown` and `enrichment` coverage so partial provider, limit or timeout results are explicit; cached reads are free.
+`tag_document` adds and/or removes tags, or replaces them all with `set` (not combinable with `add`/`remove`; `[]` clears), and returns `{ id, tags }`. Tags are lowercased and keep only letters, digits, `-` and `_`; a document holds at most 20, and an edit past that fails with `too_many_tags` instead of dropping tags. `list_tags` returns `{ items: [{ tag, count }] }`, most used first. `list_documents` with `tags` keeps documents carrying every listed tag (whole-tag match, up to 10).
+
+`expandThread`, `includeComments` and `analyzeImages` are opt-in deep reading flags that cost extra credits. Options the agent leaves out follow the account's saved [deep reading defaults](/docs/api#deep-reading-options-and-saved-defaults), otherwise they are off: connecting an agent never turns enrichment on by itself. `maxThreadPosts` defaults to 20 and is capped at 100; `maxCredits` defaults to 100 and is capped at 1,000; `maxComments` defaults to 100 and is capped at 1,000; `maxImages` defaults to 10 and is capped at 20. `removeImages` strips image/media URLs at no credit cost. X reads return the single requested post unless thread expansion is enabled. The response's `reading_options` shows each effective value and its source (`request`, `preference` or `default`). Social post adapters for Facebook, Instagram, Threads and LinkedIn require an account. The response includes `credit_breakdown` and `enrichment` coverage so partial provider, limit or timeout results are explicit; cached reads are free.
 
 ### Pages and posts
 

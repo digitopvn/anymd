@@ -13,6 +13,7 @@ import {
   maskKey,
   normalizeTargetUrl,
   parseArgs,
+  parseTagList,
   resolveSettings,
   run,
   stripMark,
@@ -186,7 +187,7 @@ describe('run: meta commands', () => {
     const h = harness();
     assert.equal(await h.exec(['--version']), 0);
     assert.equal(h.stdout, `${VERSION}\n`);
-    assert.equal(VERSION, '0.1.1');
+    assert.equal(VERSION, '0.1.2');
   });
 
   test('unknown command fails with a usage error', async () => {
@@ -270,6 +271,100 @@ describe('run: convert', () => {
     ]) {
       const h = harness({ env: { ANYMD_API_KEY: KEY } });
       assert.equal(await h.exec(['convert', 'example.com', option, value]), 1);
+      assert.match(h.stderr, /^usage:/);
+      assert.equal(h.calls.length, 0);
+    }
+  });
+
+  test('sends no reading options unless given, so saved defaults decide', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'POST /api/v1/convert': () => jsonResponse({ markdown: '# Base' }) },
+    });
+    assert.equal(await h.exec(['convert', 'x.com/a/status/1']), 0);
+    assert.deepEqual(JSON.parse(h.calls[0].body), { url: 'https://x.com/a/status/1', format: 'markdown' });
+  });
+
+  test('forwards explicit thread expansion, one-time opt-outs and image retention', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'POST /api/v1/convert': () => jsonResponse({ markdown: '# Thread' }) },
+    });
+    assert.equal(await h.exec([
+      'convert', 'x.com/a/status/1', '--expand-thread', '--max-thread-posts', '30',
+      '--no-include-comments', '--no-analyze-images', '--no-images',
+    ]), 0);
+    assert.deepEqual(JSON.parse(h.calls[0].body), {
+      url: 'https://x.com/a/status/1',
+      format: 'markdown',
+      expandThread: true,
+      maxThreadPosts: 30,
+      includeComments: false,
+      analyzeImages: false,
+      removeImages: true,
+    });
+  });
+
+  test('maps reading options onto the anonymous URL API query', async () => {
+    const h = harness({ routes: { 'GET /https://a.com': (_call, u) => textResponse(`# ${u.search}`) } });
+    assert.equal(await h.exec(['convert', 'a.com', '--no-expand-thread', '--keep-images']), 0);
+    const query = new URL(h.calls[0].url).searchParams;
+    assert.equal(query.get('expandThread'), '0');
+    assert.equal(query.get('images'), '1');
+  });
+
+  test('rejects conflicting or out-of-range thread options before any request', async () => {
+    for (const argv of [
+      ['--expand-thread', '--no-expand-thread'],
+      ['--keep-images', '--no-images'],
+      ['--max-thread-posts', '0'],
+      ['--max-thread-posts', '101'],
+    ]) {
+      const h = harness({ env: { ANYMD_API_KEY: KEY } });
+      assert.equal(await h.exec(['convert', 'x.com/a/status/1', ...argv]), 1, argv.join(' '));
+      assert.match(h.stderr, /^usage:/);
+      assert.equal(h.calls.length, 0);
+    }
+    const anonymous = harness();
+    assert.equal(await anonymous.exec(['convert', 'x.com/a/status/1', '--expand-thread']), 1);
+    assert.match(anonymous.stderr, /^not_authenticated:/);
+  });
+
+  test('prefs shows, updates and resets saved reading defaults', async () => {
+    const state = { preferences: { expandThread: false, maxThreadPosts: 20, includeComments: false, maxComments: 100, keepImages: true, analyzeImages: false, maxImages: 10, maxCredits: 100 }, saved: false };
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: {
+        'GET /api/v1/account/reading-preferences': () => jsonResponse(state),
+        'PUT /api/v1/account/reading-preferences': (call) => jsonResponse({ preferences: { ...state.preferences, ...JSON.parse(call.body) }, saved: true }),
+        'DELETE /api/v1/account/reading-preferences': () => jsonResponse(state),
+      },
+    });
+    assert.equal(await h.exec(['prefs']), 0);
+    assert.match(h.stdout, /safe defaults: deep reading off/);
+    assert.equal(await h.exec(['prefs', 'set', 'expandThread=on', 'maxThreadPosts=30', '--json']), 0);
+    assert.deepEqual(JSON.parse(h.calls[1].body), { expandThread: true, maxThreadPosts: 30 });
+    assert.equal(await h.exec(['prefs', 'reset']), 0);
+    assert.equal(h.calls[2].method, 'DELETE');
+  });
+
+  test('prefs set and reset explain the keys:manage scope on 403', async () => {
+    const forbidden = () => jsonResponse({ error: { code: 'forbidden', message: 'Missing scope: keys:manage' } }, 403);
+    for (const args of [['prefs', 'set', 'expandThread=on'], ['prefs', 'reset']]) {
+      const h = harness({
+        env: { ANYMD_API_KEY: KEY },
+        routes: { 'PUT /api/v1/account/reading-preferences': forbidden, 'DELETE /api/v1/account/reading-preferences': forbidden },
+      });
+      assert.equal(await h.exec(args), 1, args.join(' '));
+      assert.match(h.stderr, /^forbidden: Missing scope: keys:manage/);
+      assert.match(h.stderr, /keys:manage scope, e\.g\. the "Everything my role allows" preset/);
+    }
+  });
+
+  test('prefs set validates fields locally', async () => {
+    for (const arg of ['expandThread=maybe', 'maxThreadPosts=0', 'maxImages=21', 'unknown=1', 'noequals']) {
+      const h = harness({ env: { ANYMD_API_KEY: KEY } });
+      assert.equal(await h.exec(['prefs', 'set', arg]), 1, arg);
       assert.match(h.stderr, /^usage:/);
       assert.equal(h.calls.length, 0);
     }
@@ -397,6 +492,77 @@ describe('run: library commands', () => {
     assert.equal(new URL(h.calls[0].url).searchParams.get('format'), 'md');
     assert.equal(await h.exec(['rm', 'doc_1']), 0);
     assert.equal(h.stdout, '# Doc\nDeleted doc_1\n');
+  });
+});
+
+describe('run: tag commands', () => {
+  test('parseTagList splits commas and rejects long tags', () => {
+    assert.deepEqual(parseTagList(' ai, research ,,rag ', '--add'), ['ai', 'research', 'rag']);
+    assert.deepEqual(parseTagList('', '--set'), []);
+    assert.throws(() => parseTagList('x'.repeat(41), '--add'), /at most 40/);
+  });
+
+  test('tag --add/--remove posts both lists and prints the resulting tags', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'POST /api/v1/library/doc_1/tags': () => jsonResponse({ id: 'doc_1', tags: ['ai', 'rag'] }) },
+    });
+    assert.equal(await h.exec(['tag', 'doc_1', '--add', 'ai,rag', '--remove', 'old']), 0);
+    assert.deepEqual(JSON.parse(h.calls[0].body), { add: ['ai', 'rag'], remove: ['old'] });
+    assert.equal(h.stdout, '#ai #rag\n');
+  });
+
+  test('tag --set "" clears all tags', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'POST /api/v1/library/doc_1/tags': () => jsonResponse({ id: 'doc_1', tags: [] }) },
+    });
+    assert.equal(await h.exec(['tag', 'doc_1', '--set', '']), 0);
+    assert.deepEqual(JSON.parse(h.calls[0].body), { set: [] });
+    assert.equal(h.stdout, 'No tags.\n');
+  });
+
+  test('tag rejects mixing --set with --add and requires an edit', async () => {
+    const h = harness({ env: { ANYMD_API_KEY: KEY } });
+    assert.equal(await h.exec(['tag', 'doc_1', '--set', 'a', '--add', 'b']), 1);
+    assert.match(h.stderr, /not both/);
+    assert.equal(await h.exec(['tag', 'doc_1']), 1);
+    assert.equal(await h.exec(['tag', '--add', 'a']), 1);
+    assert.equal(await h.exec(['tag', 'doc_1', '--add', '']), 1);
+    assert.match(h.stderr, /--add needs at least one tag/);
+    assert.equal(await h.exec(['tag', 'doc_1', '--remove', ' , ']), 1);
+    assert.equal(h.calls.length, 0);
+  });
+
+  test('tag surfaces the server error code', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'POST /api/v1/library/doc_1/tags': () => jsonResponse({ error: { code: 'too_many_tags', message: 'A document can have at most 20 tags' } }, 422) },
+    });
+    assert.equal(await h.exec(['tag', 'doc_1', '--add', 'x']), 1);
+    assert.match(h.stderr, /too_many_tags/);
+  });
+
+  test('tags prints a table with counts', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'GET /api/v1/library/tags': () => jsonResponse({ items: [{ tag: 'ai', count: 3 }, { tag: 'rag', count: 1 }] }) },
+    });
+    assert.equal(await h.exec(['tags', '--limit', '5']), 0);
+    assert.equal(new URL(h.calls[0].url).searchParams.get('limit'), '5');
+    const lines = h.stdout.trim().split('\n');
+    assert.match(lines[0], /^TAG\s+DOCS$/);
+    assert.match(lines[1], /^ai\s+3$/);
+  });
+
+  test('ls --tag sends a comma-separated tag filter', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'GET /api/v1/library': () => jsonResponse({ items: [], next_cursor: null }) },
+    });
+    assert.equal(await h.exec(['ls', '--tag', 'ai, rag']), 0);
+    assert.equal(new URL(h.calls[0].url).searchParams.get('tag'), 'ai,rag');
+    assert.equal(h.stdout, 'No documents.\n');
   });
 });
 
