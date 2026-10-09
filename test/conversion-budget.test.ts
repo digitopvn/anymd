@@ -61,7 +61,8 @@ async function database(): Promise<{ db: SqliteDatabase; env: Env }> {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       credits INTEGER NOT NULL,
-      expires_at INTEGER
+      expires_at INTEGER,
+      revoked_at INTEGER
     );
   `);
   db.exec(readMigration());

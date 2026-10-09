@@ -151,7 +151,7 @@ async function resolveUser(env: Env, metadata: Record<string, unknown> | null | 
 export async function handleCreemEvent(env: Env, event: CreemEvent): Promise<string> {
   const seen = await env.DB.prepare('SELECT id FROM webhook_events WHERE id = ?').bind(event.id).first();
   if (seen) return 'duplicate';
-  await env.DB.prepare('INSERT INTO webhook_events (id,type,received_at) VALUES (?,?,?)').bind(event.id, event.eventType, now()).run();
+  await env.DB.prepare('INSERT INTO webhook_events (id,type,received_at,provider) VALUES (?,?,?,?)').bind(event.id, event.eventType, now(), 'creem').run();
   const ts = now();
 
   if (event.eventType === 'checkout.completed') {
@@ -191,7 +191,7 @@ export async function handleCreemEvent(env: Env, event: CreemEvent): Promise<str
       env.DB.prepare('UPDATE users SET plan = ?, creem_customer_id = COALESCE(?, creem_customer_id), updated_at = ? WHERE id = ?').bind(
         planForStatus(sub.status, plan), refId(sub.customer), ts, userId,
       ),
-      env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)').bind(
+      env.DB.prepare("INSERT INTO audit_log (id,actor,action,target,meta,created_at,auth_kind,target_type,via) VALUES (?,?,?,?,?,?,'system','user','webhook:creem')").bind(
         newId('aud_'), 'creem', event.eventType, userId, JSON.stringify({ subscription: sub.id, status: sub.status, plan }), ts,
       ),
     ]);

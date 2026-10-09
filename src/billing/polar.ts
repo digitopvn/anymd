@@ -134,10 +134,15 @@ interface PolarSubscription {
 
 const ACTIVE = new Set(['active', 'trialing']);
 
+/** The plan a Polar subscription status entitles the user to. */
+export function polarPlanForStatus(status: string, plan: string): string {
+  return ACTIVE.has(status) ? plan : 'free';
+}
+
 export async function handlePolarEvent(env: Env, webhookId: string, event: { type: string; data: unknown }): Promise<string> {
   const seen = await env.DB.prepare('SELECT id FROM webhook_events WHERE id = ?').bind(webhookId).first();
   if (seen) return 'duplicate';
-  await env.DB.prepare('INSERT INTO webhook_events (id,type,received_at) VALUES (?,?,?)').bind(webhookId, event.type, now()).run();
+  await env.DB.prepare('INSERT INTO webhook_events (id,type,received_at,provider) VALUES (?,?,?,?)').bind(webhookId, event.type, now(), 'polar').run();
 
   if (event.type.startsWith('subscription.')) {
     const sub = event.data as PolarSubscription;
@@ -162,8 +167,8 @@ export async function handlePolarEvent(env: Env, webhookId: string, event: { typ
         sub.current_period_end ? Date.parse(sub.current_period_end) : null,
         sub.cancel_at_period_end ? 1 : 0, ts, ts,
       ),
-      env.DB.prepare('UPDATE users SET plan = ?, polar_customer_id = ?, updated_at = ? WHERE id = ?').bind(ACTIVE.has(sub.status) ? plan : 'free', sub.customer.id, ts, userId),
-      env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)').bind(
+      env.DB.prepare('UPDATE users SET plan = ?, polar_customer_id = ?, updated_at = ? WHERE id = ?').bind(polarPlanForStatus(sub.status, plan), sub.customer.id, ts, userId),
+      env.DB.prepare("INSERT INTO audit_log (id,actor,action,target,meta,created_at,auth_kind,target_type,via) VALUES (?,?,?,?,?,?,'system','user','webhook:polar')").bind(
         newId('aud_'), 'polar', event.type, userId, JSON.stringify({ subscription: sub.id, status: sub.status, plan }), ts,
       ),
     ]);

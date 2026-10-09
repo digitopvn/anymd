@@ -36,7 +36,7 @@ export async function creditsUsedThisMonth(env: Env, userId: string): Promise<nu
 
 export async function extraCredits(env: Env, userId: string): Promise<number> {
   const row = await env.DB.prepare(
-    'SELECT COALESCE(SUM(credits),0) AS c FROM credit_grants WHERE user_id = ? AND (expires_at IS NULL OR expires_at > ?)',
+    'SELECT COALESCE(SUM(credits),0) AS c FROM credit_grants WHERE user_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)',
   )
     .bind(userId, now())
     .first<{ c: number }>();
