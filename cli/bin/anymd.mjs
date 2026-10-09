@@ -853,6 +853,18 @@ ${dim('Flags on a single conversion override these; omitted flags use them.')}
 `;
 }
 
+/** Saved defaults apply to every credential of the account, so changing them needs `keys:manage`. */
+async function prefsWrite(ctx, method, options) {
+  try {
+    return await request(ctx, method, PREFS_PATH, options);
+  } catch (err) {
+    if (err instanceof CliError && err.status === 403) {
+      err.hint = 'Changing saved defaults needs a key with the keys:manage scope, e.g. the "Everything my role allows" preset (anymd.cc/dashboard/keys), or use the dashboard.';
+    }
+    throw err;
+  }
+}
+
 async function cmdPrefs(ctx, args) {
   const [sub = 'show', ...rest] = args;
   let res;
@@ -860,10 +872,10 @@ async function cmdPrefs(ctx, args) {
     expectArgs(rest, 0, 'anymd prefs [show]');
     res = await request(ctx, 'GET', PREFS_PATH);
   } else if (sub === 'set') {
-    res = await request(ctx, 'PUT', PREFS_PATH, { json: parsePreferenceAssignments(rest) });
+    res = await prefsWrite(ctx, 'PUT', { json: parsePreferenceAssignments(rest) });
   } else if (sub === 'reset') {
     expectArgs(rest, 0, 'anymd prefs reset');
-    res = await request(ctx, 'DELETE', PREFS_PATH);
+    res = await prefsWrite(ctx, 'DELETE');
   } else {
     throw usageError('usage: anymd prefs [show] | set <field>=<value>… | reset');
   }

@@ -36,6 +36,7 @@ export function conversionDatabase(): SqliteDatabase {
     CREATE TABLE site_optouts (domain TEXT PRIMARY KEY, reason TEXT, created_by TEXT, created_at INTEGER);
     CREATE TABLE usage_events (id TEXT PRIMARY KEY, user_id TEXT, credits REAL NOT NULL DEFAULT 0, trace_id TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE credit_grants (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, credits INTEGER NOT NULL, expires_at INTEGER);
+    CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL DEFAULT '', meta TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL);
   `);
   db.exec(migration('0005_conversion_enrichment.sql'));
   db.exec(migration('0006_reading_preferences.sql'));

@@ -6,9 +6,12 @@
  * off (progressive disclosure). Without JS every field stays usable.
  */
 import { ENRICHMENT_CREDITS } from '../../billing/plans';
-import { READING_LIMITS, creditEstimateText, type ReadingLimitKey, type ReadingPreferences } from '../../lib/reading-options';
+import { DEFAULT_READING_PREFERENCES, READING_LIMITS, creditEstimateText, type ReadingLimitKey, type ReadingPreferences } from '../../lib/reading-options';
 
 type ToggleKey = 'expandThread' | 'includeComments' | 'analyzeImages';
+
+/** Field values to render. Bounded numbers may be the raw text a user submitted (re-rendered after a 422). */
+export type ReadingFormValues = Omit<ReadingPreferences, ReadingLimitKey> & Record<ReadingLimitKey, number | string>;
 
 const credits = (n: number) => `${n} credit${n === 1 ? '' : 's'}`;
 
@@ -18,10 +21,16 @@ export const READING_HINTS: Record<ToggleKey, string> = {
   analyzeImages: `+${credits(ENRICHMENT_CREDITS.image)} per analyzed image`,
 };
 
-function Toggle({ id, name, checked, label, hint }: { id: string; name: string; checked: boolean; label: string; hint: string }) {
+/**
+ * `explicitOff` adds a hidden `name=0` after the checkbox. Browsers omit unticked boxes, and an
+ * omitted option follows the saved preference, so without it a no-JS user could not turn a saved
+ * enrichment off. The server reads the first value, so a ticked box (`1`) wins over the fallback.
+ */
+function Toggle({ id, name, checked, label, hint, explicitOff }: { id: string; name: string; checked: boolean; label: string; hint: string; explicitOff: boolean }) {
   return (
     <div class="flex items-start gap-2">
       <input id={id} class="mt-1 size-4 shrink-0 accent-[var(--color-accent)]" type="checkbox" name={name} value="1" checked={checked} aria-describedby={`${id}-hint`} data-reading-toggle={name} />
+      {explicitOff ? <input type="hidden" name={name} value="0" /> : null}
       <div class="min-w-0">
         <label for={id} class="font-medium">
           {label}
@@ -34,7 +43,7 @@ function Toggle({ id, name, checked, label, hint }: { id: string; name: string; 
   );
 }
 
-function Bounded({ id, name, value, label, requires }: { id: string; name: ReadingLimitKey; value: number; label: string; requires?: ToggleKey }) {
+function Bounded({ id, name, value, label, requires }: { id: string; name: ReadingLimitKey; value: number | string; label: string; requires?: ToggleKey }) {
   const { min, max } = READING_LIMITS[name];
   return (
     <div class={requires ? 'pl-6' : ''}>
@@ -46,38 +55,50 @@ function Bounded({ id, name, value, label, requires }: { id: string; name: Readi
   );
 }
 
+/** Numbers for the estimate: unparseable text reads as the default (the server rejects it anyway). */
+function estimateValues(values: ReadingFormValues): ReadingPreferences {
+  const out = { ...values } as ReadingPreferences;
+  for (const key of Object.keys(READING_LIMITS) as ReadingLimitKey[]) {
+    const n = Number(values[key]);
+    out[key] = Number.isFinite(n) && String(values[key]).trim() !== '' ? n : DEFAULT_READING_PREFERENCES[key];
+  }
+  return out;
+}
+
 /**
- * `imagesName` differs by form: the converter submits the URL API's `images=1`, the account
- * form saves `keepImages=1`.
+ * `imagesName` differs by form: the converter submits the URL API's `images=1|0` and sends every
+ * toggle explicitly (a one-time override must be able to say "off"); the account form saves
+ * `keepImages=1`, where an unticked box already means off.
  */
-export function ReadingOptionsFields({ values, idPrefix, imagesName }: { values: ReadingPreferences; idPrefix: string; imagesName: 'images' | 'keepImages' }) {
+export function ReadingOptionsFields({ values, idPrefix, imagesName }: { values: ReadingFormValues; idPrefix: string; imagesName: 'images' | 'keepImages' }) {
   const id = (name: string) => `${idPrefix}-${name}`;
+  const explicitOff = imagesName === 'images';
   return (
     <div class="grid gap-4" data-reading-options>
       <fieldset class="grid gap-3 rounded-xl border border-line p-3">
         <legend class="px-1 text-sm font-semibold">Base conversion · no extra credits</legend>
-        <Toggle id={id('keep-images')} name={imagesName} checked={values.keepImages} label="Keep image/media URLs" hint="Image and media links from the source stay in the Markdown. Included in the base price." />
+        <Toggle id={id('keep-images')} name={imagesName} checked={values.keepImages} label="Keep image/media URLs" hint="Image and media links from the source stay in the Markdown. Included in the base price." explicitOff={explicitOff} />
       </fieldset>
       <fieldset class="grid gap-3 rounded-xl border border-line p-3">
         <legend class="px-1 text-sm font-semibold">Deep reading · may use extra credits, off by default</legend>
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="grid gap-2">
-            <Toggle id={id('expand-thread')} name="expandThread" checked={values.expandThread} label="Expand X threads" hint={READING_HINTS.expandThread} />
+            <Toggle id={id('expand-thread')} name="expandThread" checked={values.expandThread} label="Expand X threads" hint={READING_HINTS.expandThread} explicitOff={explicitOff} />
             <Bounded id={id('max-thread-posts')} name="maxThreadPosts" value={values.maxThreadPosts} label="Max thread posts" requires="expandThread" />
           </div>
           <div class="grid gap-2">
-            <Toggle id={id('include-comments')} name="includeComments" checked={values.includeComments} label="Include comments & replies" hint={READING_HINTS.includeComments} />
+            <Toggle id={id('include-comments')} name="includeComments" checked={values.includeComments} label="Include comments & replies" hint={READING_HINTS.includeComments} explicitOff={explicitOff} />
             <Bounded id={id('max-comments')} name="maxComments" value={values.maxComments} label="Max comments" requires="includeComments" />
           </div>
           <div class="grid gap-2">
-            <Toggle id={id('analyze-images')} name="analyzeImages" checked={values.analyzeImages} label="Read text & details in images" hint={`${READING_HINTS.analyzeImages}. Needs kept images.`} />
+            <Toggle id={id('analyze-images')} name="analyzeImages" checked={values.analyzeImages} label="Read text & details in images" hint={`${READING_HINTS.analyzeImages}. Needs kept images.`} explicitOff={explicitOff} />
             <Bounded id={id('max-images')} name="maxImages" value={values.maxImages} label="Max analyzed images" requires="analyzeImages" />
           </div>
           <Bounded id={id('max-credits')} name="maxCredits" value={values.maxCredits} label="Max credits per conversion" />
         </div>
       </fieldset>
       <p class="text-sm" data-credit-estimate aria-live="polite">
-        {creditEstimateText(values)}
+        {creditEstimateText(estimateValues(values))}
       </p>
     </div>
   );

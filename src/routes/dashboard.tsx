@@ -10,7 +10,9 @@ import type { AppBindings } from '../env';
 import { deleteAccount, documentsToMarkdown, exportDocuments } from '../lib/account';
 import { renderMarkdown } from '../lib/markdown';
 import { applyPreferencesPatch, getReadingPreferences, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences } from '../convert/reading-preferences';
+import type { ReadingLimitKey } from '../lib/reading-options';
 import { quotaState, monthStart } from '../lib/usage';
+import type { ReadingFormValues } from '../views/components/reading-options-fields';
 import { getDocument, librarySummary, listDocuments, listTags, normalizeTag } from '../library/store';
 import { searchForPrincipal, parseMode, usageSummary } from '../services';
 import {
@@ -224,13 +226,13 @@ dashboardRoutes.post('/billing/portal', async (c) => {
 
 // ─── Account: export & delete ───────────────────────────────────────────────
 
-async function accountPage(c: AppContext, error?: string, status = 200, readingError?: string) {
+async function accountPage(c: AppContext, error?: string, status = 200, reading?: { error: string; submitted: ReadingFormValues }) {
   const user = c.get('user')!;
   const [lib, stored] = await Promise.all([librarySummary(c.env, user.id), getReadingPreferences(c.env, user.id)]);
   const saved = c.req.query('reading');
   const notice = saved === 'saved' ? 'Reading defaults saved. They apply to new conversions that leave an option out.' : saved === 'reset' ? 'Reading defaults reset: deep reading is off.' : undefined;
   c.header('Cache-Control', 'no-store');
-  return shell(c, '/dashboard/account', 'Account', <AccountPage user={user} docs={lib.docs} error={error} reading={{ stored, notice, error: readingError }} />, { status });
+  return shell(c, '/dashboard/account', 'Account', <AccountPage user={user} docs={lib.docs} error={error} reading={{ stored, notice, error: reading?.error, submitted: reading?.submitted }} />, { status });
 }
 
 dashboardRoutes.get('/account', (c) => accountPage(c));
@@ -241,25 +243,33 @@ dashboardRoutes.get('/account', (c) => accountPage(c));
  */
 dashboardRoutes.post('/account/reading', async (c) => {
   const user = c.get('user')!;
+  const principal = c.get('principal');
   const f = await formData(c);
   if (f.action === 'reset') {
-    await resetReadingPreferences(c.env, user.id);
+    await resetReadingPreferences(c.env, principal);
     return c.redirect('/dashboard/account?reading=reset#reading-defaults', 303);
   }
-  const patch: Record<string, unknown> = {
+  const toggles = {
     expandThread: f.expandThread === '1',
     includeComments: f.includeComments === '1',
     keepImages: f.keepImages === '1',
     analyzeImages: f.analyzeImages === '1',
   };
+  const patch: Record<string, unknown> = { ...toggles };
+  const submittedNumbers: Partial<Record<ReadingLimitKey, string>> = {};
   for (const key of ['maxThreadPosts', 'maxComments', 'maxImages', 'maxCredits'] as const) {
-    if (f[key] !== undefined) patch[key] = f[key].trim() === '' ? f[key] : Number(f[key]);
+    if (f[key] === undefined) continue;
+    submittedNumbers[key] = f[key];
+    patch[key] = f[key].trim() === '' ? f[key] : Number(f[key]);
   }
+  const current = await getReadingPreferences(c.env, user.id);
   try {
-    const current = await getReadingPreferences(c.env, user.id);
-    await saveReadingPreferences(c.env, user.id, applyPreferencesPatch(current.preferences, patch));
+    await saveReadingPreferences(c.env, principal, current, applyPreferencesPatch(current.preferences, patch));
   } catch (err) {
-    if (err instanceof ReadingPreferencesError) return accountPage(c, undefined, 422, `Reading defaults were not saved: ${err.message}.`);
+    if (err instanceof ReadingPreferencesError) {
+      // Re-render exactly what was submitted next to the error; nothing the user typed is lost.
+      return accountPage(c, undefined, 422, { error: `Reading defaults were not saved: ${err.message}.`, submitted: { ...current.preferences, ...toggles, ...submittedNumbers } });
+    }
     throw err;
   }
   return c.redirect('/dashboard/account?reading=saved#reading-defaults', 303);

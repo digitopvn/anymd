@@ -31,6 +31,13 @@ Branch: `feat/deep-reading-preferences` (from origin/main, PR targets `dev`). St
 - Without JS, the home/dashboard converter cannot turn off a saved enrichment for a single run, because an unchecked box is simply not submitted. With JS this works through dirty tracking. API, CLI and MCP can always send `false`.
 - `deleteAccount` does not list `reading_preferences` explicitly. The rows are removed by the foreign-key cascade, the same way `conversion_charges` is handled, which keeps the code safe if it runs before the migration.
 
+## Review follow-up
+- No-JS converter: every toggle, `images` included, is followed by a hidden `0` input. The server takes the first value, so an unticked box is an explicit off that overrides a saved default, and a ticked box still wins. Route tests cover `/convert` and the URL API.
+- PUT and DELETE on preferences now need `keys:manage`; GET still needs only `convert`. Every change writes an `audit_log` row recording the actor, auth kind, key/client id and a field-level before/after diff. The CLI shows a scope hint when it gets a 403. Docs and OpenAPI are updated.
+- The cache key includes a cap only while its enrichment is on, and `maxCredits` only while some enrichment is on. Base conversions are shared across users regardless of their saved caps.
+- The converter applies saved defaults to untouched fields only, and its status copy is neutral until the saved state is known.
+- When the account form returns 422, it re-renders what the user submitted.
+- Verification: typecheck clean, vitest 202/202, CLI 55/55, build OK.
+
 ## Unresolved questions
-- Should PUT/DELETE on preferences require a dedicated scope (for example `account:write`) rather than `convert`?
 - Migration 0006 has to be applied remotely before deploy. That needs the user's permission.

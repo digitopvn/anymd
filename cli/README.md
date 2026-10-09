@@ -48,7 +48,7 @@ anymd search "vector databases" --mode hybrid --limit 10
 | `anymd mcp` | Print MCP config snippets for Claude Code, Cursor and Claude Desktop. |
 | `anymd prefs [show]` | Show your saved reading (deep reading) defaults. |
 | `anymd prefs set <field>=<value>…` | Change saved defaults, e.g. `anymd prefs set expandThread=on maxThreadPosts=30`. Fields: `expandThread`, `includeComments`, `keepImages`, `analyzeImages` (true/false) and `maxThreadPosts`, `maxComments`, `maxImages`, `maxCredits` (integers). |
-| `anymd prefs reset` | Delete saved defaults; deep reading is off again. |
+| `anymd prefs reset` | Delete saved defaults; deep reading is off again. `set` and `reset` need a key with `keys:manage` (the "Everything my role allows" preset). |
 
 `--json` prints the raw API response for every read command. `-o, --output <file>` writes
 the result to a file and prints a one-line summary (bytes, credits, cache) on stderr.

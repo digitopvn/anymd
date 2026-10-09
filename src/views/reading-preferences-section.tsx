@@ -1,9 +1,10 @@
 /** Account → Reading defaults: persistent, user-scoped deep reading preferences (plain form POST). */
 import type { StoredReadingPreferences } from '../convert/reading-preferences';
 import { humanDate } from '../lib/util';
-import { ReadingOptionsFields } from './components/reading-options-fields';
+import { ReadingOptionsFields, type ReadingFormValues } from './components/reading-options-fields';
 
-export function ReadingPreferencesSection({ stored, notice, error }: { stored: StoredReadingPreferences; notice?: string; error?: string }) {
+/** `submitted` re-renders what the user sent after a rejected save, so nothing they typed is lost. */
+export function ReadingPreferencesSection({ stored, notice, error, submitted }: { stored: StoredReadingPreferences; notice?: string; error?: string; submitted?: ReadingFormValues }) {
   return (
     <section id="reading-defaults" class="card mt-4 scroll-mt-24 p-5" aria-labelledby="reading-defaults-title">
       <div class="flex flex-wrap items-baseline justify-between gap-2">
@@ -28,7 +29,7 @@ export function ReadingPreferencesSection({ stored, notice, error }: { stored: S
         </p>
       ) : null}
       <form method="post" action="/dashboard/account/reading" class="mt-4" aria-describedby={error ? 'reading-defaults-error' : undefined}>
-        <ReadingOptionsFields values={stored.preferences} idPrefix="account-reading" imagesName="keepImages" />
+        <ReadingOptionsFields values={submitted ?? stored.preferences}idPrefix="account-reading" imagesName="keepImages" />
         <div class="mt-4 flex flex-wrap gap-2">
           <button class="btn btn-dark btn-sm" type="submit" name="action" value="save">
             Save reading defaults

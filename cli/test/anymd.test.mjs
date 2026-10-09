@@ -348,6 +348,19 @@ describe('run: convert', () => {
     assert.equal(h.calls[2].method, 'DELETE');
   });
 
+  test('prefs set and reset explain the keys:manage scope on 403', async () => {
+    const forbidden = () => jsonResponse({ error: { code: 'forbidden', message: 'Missing scope: keys:manage' } }, 403);
+    for (const args of [['prefs', 'set', 'expandThread=on'], ['prefs', 'reset']]) {
+      const h = harness({
+        env: { ANYMD_API_KEY: KEY },
+        routes: { 'PUT /api/v1/account/reading-preferences': forbidden, 'DELETE /api/v1/account/reading-preferences': forbidden },
+      });
+      assert.equal(await h.exec(args), 1, args.join(' '));
+      assert.match(h.stderr, /^forbidden: Missing scope: keys:manage/);
+      assert.match(h.stderr, /keys:manage scope, e\.g\. the "Everything my role allows" preset/);
+    }
+  });
+
   test('prefs set validates fields locally', async () => {
     for (const arg of ['expandThread=maybe', 'maxThreadPosts=0', 'maxImages=21', 'unknown=1', 'noequals']) {
       const h = harness({ env: { ANYMD_API_KEY: KEY } });

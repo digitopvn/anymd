@@ -3,7 +3,8 @@
  * explicit request option > signed-in user's saved preference > safe system default (enrichment off).
  */
 import { z } from 'zod';
-import type { Env } from '../env';
+import type { Env, Principal } from '../env';
+import { newId } from '../lib/util';
 import { DEFAULT_READING_PREFERENCES, READING_LIMITS, type ReadingLimitKey, type ReadingPreferences } from '../lib/reading-options';
 import { ConvertError } from './types';
 
@@ -92,16 +93,51 @@ export async function getReadingPreferences(env: Env, userId: string): Promise<S
     : { preferences: { ...DEFAULT_READING_PREFERENCES }, saved: false, updatedAt: null };
 }
 
-export async function saveReadingPreferences(env: Env, userId: string, preferences: ReadingPreferences): Promise<StoredReadingPreferences> {
+type PreferencesDiff = Partial<Record<keyof ReadingPreferences, [unknown, unknown]>>;
+
+/** Field-level `[before, after]` pairs for the values that changed. */
+export function preferencesDiff(before: ReadingPreferences, after: ReadingPreferences): PreferencesDiff {
+  const out: PreferencesDiff = {};
+  for (const key of Object.keys(after) as (keyof ReadingPreferences)[]) if (before[key] !== after[key]) out[key] = [before[key], after[key]];
+  return out;
+}
+
+/**
+ * Saved defaults decide what other credentials of the account may spend, so every change is
+ * audited: who (auth kind plus key/client id, never a secret) and which fields changed.
+ */
+async function auditPreferenceChange(env: Env, actor: Principal, action: string, meta: Record<string, unknown>): Promise<void> {
+  const auth: Record<string, string> = { kind: actor.kind };
+  if (actor.apiKeyId) auth.key_id = actor.apiKeyId;
+  if (actor.clientId) auth.client_id = actor.clientId;
+  await env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)')
+    .bind(newId('aud_'), `${actor.kind}:${actor.userId}`, action, actor.userId ?? '', JSON.stringify({ auth, ...meta }), Date.now())
+    .run();
+}
+
+function accountOf(actor: Principal): string {
+  if (!actor.userId) throw new ReadingPreferencesError([{ path: '(root)', message: 'Reading preferences belong to an account' }]);
+  return actor.userId;
+}
+
+/** Saves the actor's own defaults on top of `previous` (what the caller read) and audits the change. */
+export async function saveReadingPreferences(env: Env, actor: Principal, previous: StoredReadingPreferences, preferences: ReadingPreferences): Promise<StoredReadingPreferences> {
+  const userId = accountOf(actor);
   const valid = ReadingPreferencesSchema.parse(preferences);
   const ts = Date.now();
   await env.DB.prepare('INSERT INTO reading_preferences (user_id, preferences, updated_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET preferences = excluded.preferences, updated_at = excluded.updated_at')
     .bind(userId, JSON.stringify(valid), ts).run();
+  await auditPreferenceChange(env, actor, 'reading_preferences.update', { was_saved: previous.saved, changes: preferencesDiff(previous.preferences, valid) });
   return { preferences: valid, saved: true, updatedAt: ts };
 }
 
-export async function resetReadingPreferences(env: Env, userId: string): Promise<StoredReadingPreferences> {
-  await env.DB.prepare('DELETE FROM reading_preferences WHERE user_id = ?').bind(userId).run();
+/** Deletes the actor's saved defaults (back to the safe defaults); audited when something was saved. */
+export async function resetReadingPreferences(env: Env, actor: Principal): Promise<StoredReadingPreferences> {
+  const userId = accountOf(actor);
+  const removed = await env.DB.prepare('DELETE FROM reading_preferences WHERE user_id = ? RETURNING preferences').bind(userId).first<{ preferences: string }>();
+  if (removed) {
+    await auditPreferenceChange(env, actor, 'reading_preferences.reset', { changes: preferencesDiff(normalizeStoredPreferences(removed.preferences), DEFAULT_READING_PREFERENCES) });
+  }
   return { preferences: { ...DEFAULT_READING_PREFERENCES }, saved: false, updatedAt: null };
 }
 

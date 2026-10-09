@@ -125,26 +125,32 @@ api.get('/account/reading-preferences', requireAccount, requireScope('convert'),
   return c.json(preferencesBody(await getReadingPreferences(c.env, me(c).userId)));
 });
 
+/**
+ * Saved defaults decide what every other credential of the account may spend, so changing them
+ * needs `keys:manage` (sessions hold it; "Convert only" and library presets do not). Reading
+ * them only needs `convert`.
+ */
+const PREFERENCES_WRITE_SCOPE = 'keys:manage';
+
 /** Partial update: omitted fields keep their saved value. Out-of-range values are rejected, not clamped. */
-api.put('/account/reading-preferences', requireAccount, requireScope('convert'), async (c) => {
+api.put('/account/reading-preferences', requireAccount, requireScope(PREFERENCES_WRITE_SCOPE), async (c) => {
   const raw = await c.req.json().catch(() => {
     throw Object.assign(new Error('Body must be JSON'), { status: 400, code: 'invalid_json' });
   });
-  const userId = me(c).userId;
-  const current = await getReadingPreferences(c.env, userId);
+  const current = await getReadingPreferences(c.env, me(c).userId);
   try {
     const next = applyPreferencesPatch(current.preferences, raw);
     c.header('Cache-Control', 'no-store');
-    return c.json(preferencesBody(await saveReadingPreferences(c.env, userId, next)));
+    return c.json(preferencesBody(await saveReadingPreferences(c.env, c.get('principal'), current, next)));
   } catch (err) {
     if (err instanceof ReadingPreferencesError) return apiError(c, err.status, err.code, err.message, { details: err.details });
     throw err;
   }
 });
 
-api.delete('/account/reading-preferences', requireAccount, requireScope('convert'), async (c) => {
+api.delete('/account/reading-preferences', requireAccount, requireScope(PREFERENCES_WRITE_SCOPE), async (c) => {
   c.header('Cache-Control', 'no-store');
-  return c.json(preferencesBody(await resetReadingPreferences(c.env, me(c).userId)));
+  return c.json(preferencesBody(await resetReadingPreferences(c.env, c.get('principal'))));
 });
 
 // ─── Convert ────────────────────────────────────────────────────────────────

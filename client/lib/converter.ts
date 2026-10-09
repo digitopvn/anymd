@@ -3,7 +3,7 @@ import { ApiFailure, convertUrl, getReadingPreferences, type ConvertPayload } fr
 import { copyText, isAiTarget, sendMarkdownToAi } from './clipboard';
 import { $, $$, closestTarget, reducedMotion, setupTabs } from './dom';
 import { loadMarkdownRenderer } from './markdown';
-import { applyPreferences, changedOptions, readPreferences } from './reading-options';
+import { applyPreferences, changedOptions, mergeUntouched, readPreferences } from './reading-options';
 
 const KIND_LABELS: Record<string, string> = {
   web: 'Web page',
@@ -129,11 +129,16 @@ function initConverter(root: HTMLElement): void {
       void getReadingPreferences()
         .then((stored) => {
           panel.dataset.readingSource = stored.saved ? 'saved' : 'default';
-          // Never overwrite something the user already changed.
-          if (baseline && Object.keys(changedOptions(baseline, readPreferences(fields))).length) return;
-          applyPreferences(fields, stored.preferences);
-          baseline = readPreferences(fields);
-          if (status?.firstChild && stored.saved) status.firstChild.textContent = 'Prefilled from your saved reading defaults. Changes here apply to this conversion only. ';
+          // Untouched fields show the saved defaults; a field the user already changed keeps their value.
+          const current = readPreferences(fields);
+          applyPreferences(fields, baseline ? mergeUntouched(baseline, current, stored.preferences) : stored.preferences);
+          // The server applies the saved defaults to anything not sent, so they are the new baseline.
+          baseline = { ...stored.preferences };
+          if (status?.firstChild) {
+            status.firstChild.textContent = stored.saved
+              ? 'Prefilled from your saved reading defaults. Changes here apply to this conversion only. '
+              : 'You have no saved reading defaults: deep reading is off unless you turn it on. Changes here apply to this conversion only. ';
+          }
         })
         .catch((err: unknown) => {
           panel.dataset.readingSource = 'default';

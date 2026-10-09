@@ -77,15 +77,21 @@ export function Converter({ compact = false, autofocus = false, reading }: { com
         <details class="w-full px-3 py-2 text-sm" data-reading-panel data-reading-source={reading ? (reading.saved ? 'saved' : 'default') : 'unknown'}>
           <summary class="cursor-pointer font-medium">Reading options & credit limit</summary>
           <p class="mt-2 text-muted" data-reading-status>
-            {reading?.saved
-              ? 'Prefilled from your saved reading defaults. Changes here apply to this conversion only.'
-              : 'Deep reading is off unless you turn it on. Changes here apply to this conversion only.'}{' '}
+            {reading
+              ? reading.saved
+                ? 'Prefilled from your saved reading defaults. Changes here apply to this conversion only.'
+                : 'You have no saved reading defaults: deep reading is off unless you turn it on. Changes here apply to this conversion only.'
+              : // Saved defaults are not known yet (loaded when the panel opens): describe the rule, not a state.
+                'Options you leave unchanged follow your saved reading defaults when signed in; without saved defaults deep reading is off. Changes here apply to this conversion only.'}{' '}
             <a class="text-link" href="/dashboard/account#reading-defaults">Saved defaults</a> · <a class="text-link" href="/docs/billing">Prices</a>
           </p>
           <div class="mt-3">
             <ReadingOptionsFields values={reading?.preferences ?? DEFAULT_READING_PREFERENCES} idPrefix={`convert-${crypto.randomUUID().slice(0, 8)}`} imagesName="images" />
           </div>
           <p class="mt-2 text-xs text-muted">Deep reading needs an account. Cached results are free.</p>
+          <noscript>
+            <p class="mt-1 text-xs text-muted">Without JavaScript this form sends every option exactly as shown here, overriding your saved defaults for this conversion.</p>
+          </noscript>
         </details>
       </form>
       {compact ? null : (

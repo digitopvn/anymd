@@ -103,6 +103,8 @@ anymd convert https://x.com/example/status/123 --no-expand-thread   # this conve
 anymd prefs reset                                                    # deep reading off again
 ```
 
+`anymd prefs` works with any key that has `convert`. `prefs set` and `prefs reset` change what every key and client of your account may spend, so they need a key with the `keys:manage` scope (the **Everything my role allows** preset); a **Convert only** key gets `forbidden`.
+
 Convert a local PDF:
 
 ```bash

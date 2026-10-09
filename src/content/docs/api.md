@@ -72,7 +72,8 @@ Read `code`, not `message`. Messages are for humans and may change.
 | GET, POST | `/keys` | `keys:manage` |
 | DELETE | `/keys/:id` | `keys:manage` |
 | GET | `/me` | any signed-in caller |
-| GET, PUT, DELETE | `/account/reading-preferences` | `convert` (signed-in callers) |
+| GET | `/account/reading-preferences` | `convert` (signed-in callers) |
+| PUT, DELETE | `/account/reading-preferences` | `keys:manage` |
 | POST | `/billing/checkout`, `/billing/portal` | browser session |
 | * | `/admin/pages…`, `/admin/blocks`, `/admin/templates` | `pages:*` (admins: [builder guide](/admin/docs/page-builder)) |
 | * | `/admin/posts…` | `content:*` |
@@ -171,6 +172,8 @@ Returns `{ preferences, saved, updated_at, defaults, limits }`. `saved: false` m
 
 #### PUT /account/reading-preferences
 
+Scope: `keys:manage`. Saved defaults decide what every other key, OAuth client and the web converter may spend when they leave an option out, so a **Convert only** key can read them but not change them: use a key with **Everything my role allows** (or the dashboard). Every change is written to the audit log with the auth kind, key id and the changed fields.
+
 A partial update: send only the fields to change; the rest keep their saved value. Unknown fields and out-of-range values are rejected (never silently clamped) with `422 invalid_preferences` and a `details` list naming each field and its allowed range. `analyzeImages` requires `keepImages`.
 
 | Field | Type | Default | Range / notes |
@@ -192,7 +195,7 @@ curl -X PUT https://anymd.cc/api/v1/account/reading-preferences \
 
 #### DELETE /account/reading-preferences
 
-Removes the saved defaults; the safe defaults apply again. The same settings live in the dashboard under [Account → Deep reading defaults](/dashboard/account#reading-defaults).
+Removes the saved defaults; the safe defaults apply again. Scope: `keys:manage`; audited. The same settings live in the dashboard under [Account → Deep reading defaults](/dashboard/account#reading-defaults).
 
 ### POST /convert/file
 

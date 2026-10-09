@@ -13,6 +13,7 @@ import { Icon, Logo } from './components/icons';
 import { Converter } from './components/marketing';
 import type { StoredReadingPreferences } from '../convert/reading-preferences';
 import { ReadingPreferencesSection } from './reading-preferences-section';
+import type { ReadingFormValues } from './components/reading-options-fields';
 
 const NAV: { href: string; label: string; icon: string; min?: RoleName }[] = [
   { href: '/dashboard', label: 'Overview', icon: 'home' },
@@ -903,7 +904,7 @@ export function BillingPage({ user, quota, enabled, provider = 'Creem', notice, 
   );
 }
 
-export function AccountPage({ user, docs, error, reading }: { user: UserRow; docs: number; error?: string; reading: { stored: StoredReadingPreferences; notice?: string; error?: string } }) {
+export function AccountPage({ user, docs, error, reading }: { user: UserRow; docs: number; error?: string; reading: { stored: StoredReadingPreferences; notice?: string; error?: string; submitted?: ReadingFormValues } }) {
   const isOwner = user.role === 'owner';
   return (
     <>
@@ -950,7 +951,7 @@ export function AccountPage({ user, docs, error, reading }: { user: UserRow; doc
           </div>
         </div>
       </div>
-      <ReadingPreferencesSection stored={reading.stored} notice={reading.notice} error={reading.error} />
+      <ReadingPreferencesSection stored={reading.stored} notice={reading.notice} error={reading.error} submitted={reading.submitted} />
       <div class="card mt-4 border-danger-line p-5">
         <p class="font-bold text-danger">Delete account</p>
         <p class="mt-1 max-w-2xl text-sm text-muted">

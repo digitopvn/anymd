@@ -36,6 +36,18 @@ export function applyPreferences(root: HTMLElement, prefs: ReadingPreferences): 
   sync(root);
 }
 
+/**
+ * Saved defaults that arrive after the user already edited some fields: fields the user changed
+ * (they differ from `baseline`) keep the user's value, every untouched field takes the saved one.
+ */
+export function mergeUntouched(baseline: ReadingPreferences, current: ReadingPreferences, saved: ReadingPreferences): ReadingPreferences {
+  const out = { ...saved };
+  for (const key of Object.keys(saved) as (keyof ReadingPreferences)[]) {
+    if (current[key] !== baseline[key]) (out as Record<string, unknown>)[key] = current[key];
+  }
+  return out;
+}
+
 /** Request options for the fields that differ from `initial`: untouched fields follow saved defaults. */
 export function changedOptions(initial: ReadingPreferences, current: ReadingPreferences): ConversionOptions {
   const out: ConversionOptions = {};

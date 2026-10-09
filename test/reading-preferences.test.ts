@@ -1,5 +1,8 @@
+import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Env, Principal } from '../src/env';
+import type { AppBindings, Env, Principal } from '../src/env';
+import { convertRoutes } from '../src/routes/convert';
+import { changedOptions, mergeUntouched } from '../client/lib/reading-options';
 import { conversionDatabase, d1 } from './helpers/sqlite-d1';
 import { ConversionBudget } from '../src/convert/enrichment-types';
 import {
@@ -9,7 +12,7 @@ import {
   resolveReadingOptions,
   type RequestReadingOptions,
 } from '../src/convert/reading-preferences';
-import { reservationCredits, runConversion } from '../src/convert/service';
+import { cacheKey, reservationCredits, runConversion } from '../src/convert/service';
 import type { ConvertContext, ConvertResult } from '../src/convert/types';
 import { boundedThread, enrichX, type Tweet } from '../src/convert/x-thread';
 import { creditEstimateText, DEFAULT_READING_PREFERENCES, maxEnrichmentCredits, type ReadingPreferences } from '../src/lib/reading-options';
@@ -66,6 +69,17 @@ describe('reading option precedence: request > saved preference > safe default',
     const snapshot = JSON.stringify(saved);
     resolveReadingOptions({ expandThread: false, maxThreadPosts: 3, removeImages: true }, saved);
     expect(JSON.stringify(saved)).toBe(snapshot);
+  });
+});
+
+describe('converter prefill', () => {
+  it('applies late-loading saved defaults to untouched fields only, and sends just the user edits', () => {
+    const baseline = prefs();
+    const current = prefs({ includeComments: true }); // edited before the saved defaults arrived
+    const saved = prefs({ expandThread: true, maxThreadPosts: 30, maxCredits: 200 });
+    const shown = mergeUntouched(baseline, current, saved);
+    expect(shown).toEqual({ ...saved, includeComments: true });
+    expect(changedOptions(saved, shown)).toEqual({ includeComments: true });
   });
 });
 
@@ -251,6 +265,19 @@ describe('runConversion reading preferences', () => {
     }
   });
 
+  it('keeps caps of disabled enrichment out of the cache key so base conversions share an entry', async () => {
+    const req = { principal: user };
+    const a = resolveReadingOptions({}, prefs({ maxComments: 40, maxImages: 3, maxCredits: 50, maxThreadPosts: 7 }));
+    const b = resolveReadingOptions({}, prefs({ maxComments: 900, maxImages: 20, maxCredits: 1000 }));
+    expect(await cacheKey('https://x.com/alice/status/1', req, a)).toBe(await cacheKey('https://x.com/alice/status/1', req, b));
+    // Once an enrichment is on, its cap and the credit cap change what is produced.
+    const c = resolveReadingOptions({}, prefs({ includeComments: true, maxComments: 40 }));
+    const d = resolveReadingOptions({}, prefs({ includeComments: true, maxComments: 900 }));
+    expect(await cacheKey('https://x.com/alice/status/1', req, c)).not.toBe(await cacheKey('https://x.com/alice/status/1', req, d));
+    const e = resolveReadingOptions({}, prefs({ includeComments: true, maxCredits: 20 }));
+    expect(await cacheKey('https://x.com/alice/status/1', req, c)).not.toBe(await cacheKey('https://x.com/alice/status/1', req, e));
+  });
+
   it('rejects an anonymous thread opt-in and an out-of-range maxThreadPosts', async () => {
     const { db, env } = setup();
     stubX();
@@ -258,6 +285,59 @@ describe('runConversion reading preferences', () => {
       const anonymous: Principal = { kind: 'anonymous', userId: null, role: 'user', scopes: ['convert'] } as unknown as Principal;
       await expect(convert(env, { principal: anonymous, expandThread: true })).rejects.toMatchObject({ code: 'authentication_required', status: 401 });
       await expect(convert(env, { expandThread: true, maxThreadPosts: 101 })).rejects.toMatchObject({ code: 'invalid_options', status: 400 });
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// ─── URL API / converter form without JavaScript ──────────────────────────────
+
+describe('converter form without JavaScript', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const app = (env: Env) => {
+    const hono = new Hono<AppBindings>();
+    hono.use('*', async (c, next) => { c.set('principal', user); await next(); });
+    hono.route('/', convertRoutes);
+    const execution = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext;
+    return (path: string) => hono.fetch(new Request(`https://anymd.cc${path}`), env, execution);
+  };
+  /** What a browser submits for the converter form: a ticked box sends `1` before its hidden `0`. */
+  const formQuery = (ticked: boolean) => `${ticked ? 'expandThread=1&' : ''}expandThread=0&maxThreadPosts=20&includeComments=0&maxComments=100&images=1&images=0&analyzeImages=0&maxImages=10&maxCredits=100`;
+
+  it('treats an unticked box as an explicit off that overrides a saved opt-in', async () => {
+    const { db, env } = setup({ expandThread: true });
+    const calls = stubX();
+    try {
+      const res = await app(env)(`/x.com/alice/status/1?${formQuery(false)}&fresh=1&save=0&format=json`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { credit_breakdown: Record<string, number>; reading_options: { expandThread: boolean; removeImages: boolean; sources: Record<string, string> } };
+      expect(providerCalls(calls)).toEqual([]);
+      expect(body.credit_breakdown.thread).toBe(0);
+      expect(body.reading_options.expandThread).toBe(false);
+      expect(body.reading_options.sources.expandThread).toBe('request');
+      // The ticked "Keep image/media URLs" box wins over its hidden fallback.
+      expect(body.reading_options.removeImages).toBe(false);
+      expect(body.reading_options.sources.removeImages).toBe('request');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('treats a ticked box as an explicit opt-in, also through the /convert redirect', async () => {
+    const { db, env } = setup();
+    const calls = stubX();
+    try {
+      const redirect = await app(env)(`/convert?url=${encodeURIComponent('x.com/alice/status/1')}&${formQuery(true)}`);
+      expect(redirect.status).toBe(302);
+      const location = new URL(redirect.headers.get('location')!, 'https://anymd.cc');
+      expect(location.searchParams.get('expandThread')).toBe('1');
+      const res = await app(env)(`${location.pathname}${location.search}&fresh=1&save=0&format=json`);
+      const body = (await res.json()) as { credit_breakdown: Record<string, number>; reading_options: { expandThread: boolean } };
+      expect(providerCalls(calls).length).toBeGreaterThan(0);
+      expect(body.reading_options.expandThread).toBe(true);
+      expect(body.credit_breakdown.thread).toBe(2);
     } finally {
       db.close();
     }

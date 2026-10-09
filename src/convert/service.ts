@@ -49,10 +49,18 @@ const CACHE_TTL = 3600;
 const MAX_DETECTED_DOCUMENT_CREDITS = Math.max(...(['pdf', 'image', 'document'] as const).map((kind) => creditCost(kind)));
 
 /** v4: X threads no longer expand implicitly for accounts, so v3 entries must not be reused. */
-function cacheKey(url: string, req: ConvertRequest, o: ResolvedReadingOptions): Promise<string> {
+/**
+ * Only values that can change the output are part of the key: a cap counts only while its
+ * enrichment is on (`maxCredits` only while any enrichment is on), so users with different saved
+ * caps but enrichment off share the same base-conversion cache entry.
+ */
+export function cacheKey(url: string, req: Pick<ConvertRequest, 'language' | 'selector' | 'principal'>, o: ResolvedReadingOptions): Promise<string> {
   return sha256(['v4', url, req.language ?? '', req.selector ?? '', o.removeImages ? 1 : 0,
-    req.principal.userId ? 'account' : 'anonymous', o.expandThread, o.expandThread ? o.maxThreadPosts : 0,
-    o.includeComments, o.analyzeImages, o.maxComments, o.maxImages, o.maxCredits].join('|')).then((h) => `conv:${h}`);
+    req.principal.userId ? 'account' : 'anonymous',
+    o.expandThread, o.expandThread ? o.maxThreadPosts : 0,
+    o.includeComments, o.includeComments ? o.maxComments : 0,
+    o.analyzeImages, o.analyzeImages ? o.maxImages : 0,
+    wantsEnrichment(o) ? o.maxCredits : 0].join('|')).then((h) => `conv:${h}`);
 }
 
 /** Base-only conversions reserve just the base price; only opted-in enrichment reserves up to the cap. */
