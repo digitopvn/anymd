@@ -24,8 +24,16 @@ export interface GrantView {
   createdAt: number;
 }
 
-/** OAuth grants of one user; empty when the OAuth store is unavailable (e.g. tests, misconfigured KV). */
-export async function grantsOf(env: Env, userId: string): Promise<GrantView[]> {
+/** Raised when the OAuth grant store cannot be read or written, so callers answer 503, not 404. */
+function oauthStoreUnavailable(): AdminError {
+  return new AdminError('The OAuth grant store is unavailable. Retry shortly.', 503, 'oauth_store_unavailable');
+}
+
+/**
+ * OAuth grants of one user. Listings tolerate an unavailable store (empty list, e.g. tests or a
+ * misconfigured KV); with `strict`, used before revoking, the failure surfaces as a 503.
+ */
+export async function grantsOf(env: Env, userId: string, strict = false): Promise<GrantView[]> {
   try {
     const { items } = await env.OAUTH_PROVIDER.listUserGrants(userId);
     return items.map((g) => ({
@@ -36,6 +44,7 @@ export async function grantsOf(env: Env, userId: string): Promise<GrantView[]> {
       createdAt: g.createdAt * (g.createdAt < 1e12 ? 1000 : 1),
     }));
   } catch {
+    if (strict) throw oauthStoreUnavailable();
     return [];
   }
 }
@@ -123,11 +132,22 @@ export async function revokeOwnGrant(env: Env, actor: Principal, grantId: string
   return revokeGrantOf(env, actor, actor.userId, grantId);
 }
 
+/**
+ * The grant store (KV) and the audit log (D1) cannot share a transaction, so the audit row is
+ * written first and the outcome recorded after: a revocation is never unaudited, and a failed one
+ * leaves an `oauth_grant.revoke_failed` row next to the request.
+ */
 async function revokeGrantOf(env: Env, actor: Actor, userId: string, grantId: string): Promise<{ revoked: boolean }> {
-  const grant = (await grantsOf(env, userId)).find((g) => g.id === grantId);
+  const grant = (await grantsOf(env, userId, true)).find((g) => g.id === grantId);
   if (!grant) throw new AdminError('OAuth grant not found for this user. List them with list_user_credentials or list_oauth_grants.', 404, 'not_found');
-  await env.OAUTH_PROVIDER.revokeGrant(grantId, userId);
-  await recordAudit(env, actor, { action: 'oauth_grant.revoke', targetType: 'oauth_grant', target: grantId, meta: { owner: userId, client: grant.clientName, scopes: grant.scopes } });
+  const meta = { owner: userId, client: grant.clientName, scopes: grant.scopes };
+  await recordAudit(env, actor, { action: 'oauth_grant.revoke', targetType: 'oauth_grant', target: grantId, meta });
+  try {
+    await env.OAUTH_PROVIDER.revokeGrant(grantId, userId);
+  } catch (err) {
+    await recordAudit(env, actor, { action: 'oauth_grant.revoke_failed', targetType: 'oauth_grant', target: grantId, meta: { ...meta, error: err instanceof Error ? err.message.slice(0, 200) : 'unknown' } }).catch(() => undefined);
+    throw oauthStoreUnavailable();
+  }
   return { revoked: true };
 }
 

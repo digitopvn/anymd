@@ -209,7 +209,7 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
         tracer,
       ).catch(() => undefined),
     );
-    if (principal.userId && credits > 0) ctx.waitUntil(ingestPolarUsage(env, principal.userId, credits, result.sourceKind).catch(() => undefined));
+    if (principal.userId && credits > 0) ctx.waitUntil(ingestPolarUsage(env, principal.userId, credits, result.sourceKind, reserved ? tracer.id : undefined).catch(() => undefined));
 
     return { result, markdown, documentId, notSavedReason, credits, cached, traceId: tracer.id, durationMs, creditBreakdown, readingOptions: options };
   } catch (err) {

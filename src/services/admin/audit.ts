@@ -27,16 +27,32 @@ export interface AuditInput {
 const SECRET_KEY = /(secret|token|password|hash|authorization)$/i;
 const MAX_META = 4000;
 
-function scrub(value: unknown, depth = 0): unknown {
-  if (depth > 4 || value === null || typeof value !== 'object') return typeof value === 'string' ? value.slice(0, 500) : value;
-  if (Array.isArray(value)) return value.slice(0, 50).map((v) => scrub(v, depth + 1));
-  return Object.fromEntries(Object.entries(value).filter(([k]) => !SECRET_KEY.test(k)).map(([k, v]) => [k, scrub(v, depth + 1)]));
+/** Longest string kept per value, tried in order until the row fits MAX_META. */
+const VALUE_CAPS = [500, 200, 80, 24];
+
+function shorten(text: string, cap: number): string {
+  return text.length <= cap ? text : `${text.slice(0, cap)}… (${text.length} chars)`;
 }
 
+function scrub(value: unknown, cap: number, depth = 0): unknown {
+  if (depth > 4 || value === null || typeof value !== 'object') return typeof value === 'string' ? shorten(value, cap) : value;
+  if (Array.isArray(value)) return value.slice(0, 50).map((v) => scrub(v, cap, depth + 1));
+  return Object.fromEntries(Object.entries(value).filter(([k]) => !SECRET_KEY.test(k)).map(([k, v]) => [k, scrub(v, cap, depth + 1)]));
+}
+
+/**
+ * Keeps every key of the diff and meta, shortening long values until the row fits, so a large
+ * change still records what changed from what. Only if even short values do not fit (very many
+ * keys) does it fall back to listing the keys.
+ */
 function serializeMeta(input: AuditInput): string {
-  const body = scrub({ ...(input.diff ? { diff: input.diff } : {}), ...(input.meta ?? {}) });
-  const text = JSON.stringify(body);
-  return text.length <= MAX_META ? text : JSON.stringify({ truncated: true, keys: Object.keys(body as object) });
+  const raw = { ...(input.diff ? { diff: input.diff } : {}), ...(input.meta ?? {}) };
+  for (const cap of VALUE_CAPS) {
+    const text = JSON.stringify(scrub(raw, cap));
+    if (text.length <= MAX_META) return text;
+  }
+  const keys = (o: object | undefined) => (o ? Object.keys(o).filter((k) => !SECRET_KEY.test(k)) : []);
+  return JSON.stringify({ truncated: true, keys: keys(raw), ...(input.diff ? { diff_keys: keys(input.diff) } : {}) });
 }
 
 /** The legacy `actor` column (`<kind>:<userId>`), kept so existing readers still see who acted; the credential has its own column. */

@@ -79,7 +79,7 @@ Roles are templates. Your account has exactly one.
 
 **Owner vs admin.** Changing roles and granting or revoking credits are owner-only. Admins can read everything operational and act on accounts ranked **below** their own: sign them out, suspend them, revoke their keys and grants. Nobody can change their own account through admin tools. Reading is not ranked: an admin with `users:read` can view any account's support context, including an owner's API key and OAuth grant metadata (key name, prefix, scopes, created, last used, expiry and revocation; grant client and scopes). That view is read-only and never includes key secrets, token hashes or session tokens, so admins can audit who holds which access without being able to use or change it. `GET /api/v1/admin/roles` returns the live role templates and presets.
 
-**Plans follow billing.** A user's plan comes from the billing provider and cannot be edited by hand. To give someone more allowance for support or a promotion, grant credits instead: an active grant raises their monthly allowance until it expires or is revoked.
+**Plans follow billing.** A user's plan comes from the billing provider and cannot be edited by hand. To give someone more allowance for support or a promotion, grant credits instead: an active grant raises their allowance in every month it is active. By default a grant expires at the end of the current month (UTC), so it is a one-time amount; pass `recurring: true` (with or without `expiresAt`) for credits that come back every month. On Pro and Scale, credits are used in this order: the plan's included credits, then active grants, then paid overage, and the units a grant covers are never sent to the billing meter, so a grant really lowers the overage bill.
 
 ## How capping works
 

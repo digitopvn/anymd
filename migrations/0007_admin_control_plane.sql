@@ -47,4 +47,6 @@ CREATE INDEX IF NOT EXISTS idx_webhook_events_received ON webhook_events(receive
 -- Bounded system-wide views.
 CREATE INDEX IF NOT EXISTS idx_traces_created ON traces(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_created ON subscriptions(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status_created ON subscriptions(status, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);

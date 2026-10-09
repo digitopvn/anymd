@@ -56,20 +56,21 @@ export async function readSettings(env: Env, actor: Principal) {
   return { ...(await snapshot(env)), fields: SETTING_FIELDS.map((f) => f.key) };
 }
 
-/** Values are trimmed; empty or null deletes the key. Known keys are validated by type. */
+/** Values are trimmed; empty or null deletes the key. */
 function normalize(patch: Record<string, string | null>): Record<string, string | null> {
-  const out: Record<string, string | null> = {};
-  for (const [key, raw] of Object.entries(patch)) {
-    const value = raw?.trim() ?? '';
-    if (!value) {
-      out[key] = null;
-      continue;
-    }
-    const check = KNOWN[key]?.safeParse(value);
+  return Object.fromEntries(Object.entries(patch).map(([key, raw]) => [key, raw?.trim() || null]));
+}
+
+/**
+ * Known keys are validated by type, but only when they change: a value stored before validation
+ * existed (and resubmitted unchanged by a full form) must not block saving an unrelated field.
+ */
+function validateChanges(diff: Record<string, { from: string | null; to: string | null }>): void {
+  for (const [key, { to }] of Object.entries(diff)) {
+    if (to === null) continue;
+    const check = KNOWN[key]?.safeParse(to);
     if (check && !check.success) throw new AdminError(`Invalid value for ${key}: ${check.error.issues[0]?.message}`, 422, 'invalid_setting', { key });
-    out[key] = value;
   }
-  return out;
 }
 
 export async function updateSettings(env: Env, actor: Principal, raw: unknown) {
@@ -84,6 +85,7 @@ export async function updateSettings(env: Env, actor: Principal, raw: unknown) {
     const diff: Record<string, { from: string | null; to: string | null }> = {};
     for (const [key, value] of Object.entries(patch)) if ((before.settings[key] ?? null) !== value) diff[key] = { from: before.settings[key] ?? null, to: value };
     if (!Object.keys(diff).length) return { settings: before.settings, version: before.version, changed: [] as string[] };
+    validateChanges(diff);
 
     const ts = now();
     const token = randomToken(12);

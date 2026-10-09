@@ -8,6 +8,12 @@ import { now, safeJson } from '../../lib/util';
 import { AdminError, assertScope, clampLimit, cursorClause, decodeCursor, iso, page, parseInput, Timestamp, type Paged } from './shared';
 
 const DAY = 86_400_000;
+/** The longest window any system-wide view reads. */
+export const MAX_WINDOW_DAYS = 30;
+/** Latency percentiles come from the newest events in the window, at most this many. */
+export const LATENCY_SAMPLE = 10_000;
+/** sort=slowest ranks at most this many of the newest traces in the window. */
+export const SLOWEST_SCAN = 5_000;
 
 /** Source kind from the target URL; usage rows do not store it, so it is derived for reporting. */
 const SOURCE_SQL = `CASE
@@ -64,12 +70,49 @@ async function usageTotals(env: Env, since: number, filter = '', binds: unknown[
 }
 
 export const SystemUsageQuery = z.object({
-  days: z.number().int().min(1).max(30).optional().describe('Window in days, default 7, at most 30'),
+  days: z.number().int().min(1).max(MAX_WINDOW_DAYS).optional().describe('Window in days, default 7, at most 30'),
   channel: z.enum(['web', 'api', 'mcp', 'cli', 'webmcp']).optional(),
   kind: z.string().max(40).optional(),
 });
 
-/** Usage across all users: totals, latency percentiles, breakdowns, daily series, top errors. */
+interface UsageGroup {
+  channel: string;
+  kind: string;
+  source: string;
+  day: string;
+  n: number;
+  credits: number;
+  errors: number;
+  cached: number;
+}
+
+type Breakdown = { n: number; credits: number; errors: number };
+
+/** Sums the grouped rows by one dimension, largest first (or by key for the daily series). */
+function rollUp(groups: UsageGroup[], key: 'channel' | 'kind' | 'source' | 'day') {
+  const out = new Map<string, Breakdown>();
+  for (const g of groups) {
+    const b = out.get(g[key]) ?? { n: 0, credits: 0, errors: 0 };
+    b.n += g.n;
+    b.credits += g.credits;
+    b.errors += g.errors;
+    out.set(g[key], b);
+  }
+  const rows = [...out].sort(([ka, a], [kb, b]) => (key === 'day' ? ka.localeCompare(kb) : b.n - a.n));
+  return rows.map(([k, b]) => ({ [key]: k, ...b }));
+}
+
+/** Nearest-rank percentile of an ascending list. */
+export function percentile(sorted: number[], p: number): number | null {
+  if (!sorted.length) return null;
+  return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+}
+
+/**
+ * Usage across all users: totals, latency percentiles, breakdowns, daily series, top errors.
+ * Totals and every breakdown come from one grouped pass over the window; latency percentiles from
+ * a bounded sample of the newest events, read through the created_at index.
+ */
 export async function systemUsage(env: Env, actor: Principal, raw: unknown) {
   assertScope(actor, 'system:read');
   const q = parseInput(SystemUsageQuery, raw);
@@ -81,45 +124,44 @@ export async function systemUsage(env: Env, actor: Principal, raw: unknown) {
   if (q.kind) (filter += ' AND kind = ?'), binds.push(q.kind);
   const where = `WHERE created_at >= ?${filter}`;
   const all = [since, ...binds];
-  const [totals, byChannel, byKind, bySource, daily, topErrors, failed] = await Promise.all([
-    usageTotals(env, since, filter, binds),
-    env.DB.prepare(`SELECT channel, COUNT(*) AS n, COALESCE(SUM(credits),0) AS credits FROM usage_events ${where} GROUP BY channel ORDER BY n DESC`).bind(...all).all(),
-    env.DB.prepare(`SELECT kind, COUNT(*) AS n, COALESCE(SUM(credits),0) AS credits FROM usage_events ${where} GROUP BY kind ORDER BY n DESC`).bind(...all).all(),
-    env.DB.prepare(`SELECT ${SOURCE_SQL} AS source, COUNT(*) AS n, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors FROM usage_events ${where} GROUP BY source ORDER BY n DESC`).bind(...all).all(),
+  const [grouped, users, sample, topErrors, failed] = await Promise.all([
     env.DB.prepare(
-      `SELECT strftime('%Y-%m-%d', created_at / 1000, 'unixepoch') AS day, COUNT(*) AS n, COALESCE(SUM(credits),0) AS credits, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors FROM usage_events ${where} GROUP BY day ORDER BY day`,
+      `SELECT channel, kind, ${SOURCE_SQL} AS source, strftime('%Y-%m-%d', created_at / 1000, 'unixepoch') AS day, COUNT(*) AS n, COALESCE(SUM(credits),0) AS credits,
+         SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors, SUM(CASE WHEN status='cached' THEN 1 ELSE 0 END) AS cached
+       FROM usage_events ${where} GROUP BY 1, 2, 3, 4`,
     )
       .bind(...all)
-      .all(),
+      .all<UsageGroup>(),
+    env.DB.prepare(`SELECT COUNT(DISTINCT user_id) AS n FROM usage_events ${where}`).bind(...all).first<{ n: number }>(),
+    env.DB.prepare(`SELECT duration_ms AS v FROM usage_events ${where} ORDER BY created_at DESC LIMIT ?`).bind(...all, LATENCY_SAMPLE).all<{ v: number }>(),
     env.DB.prepare(`SELECT substr(COALESCE(error,''),1,200) AS error, COUNT(*) AS n, MAX(created_at) AS last_at FROM usage_events ${where} AND status = 'error' GROUP BY 1 ORDER BY n DESC LIMIT 10`).bind(...all).all(),
     env.DB.prepare(`SELECT id, user_id, channel, kind, target, http_status, substr(COALESCE(error,''),1,300) AS error, trace_id, created_at FROM usage_events ${where} AND status = 'error' AND kind = 'convert' ORDER BY created_at DESC LIMIT 10`)
       .bind(...all)
       .all(),
   ]);
+  const groups = grouped.results;
+  const requests = groups.reduce((s, g) => s + g.n, 0);
+  const errors = groups.reduce((s, g) => s + g.errors, 0);
+  const durations = sample.results.map((r) => r.v).sort((a, b) => a - b);
   return {
     window: { days, since: iso(since) },
     filters: { channel: q.channel ?? null, kind: q.kind ?? null },
-    totals,
-    latency_ms: await percentiles(env, where, all, totals.requests),
-    by_channel: byChannel.results,
-    by_kind: byKind.results,
-    by_source: bySource.results,
-    daily: daily.results,
+    totals: {
+      requests,
+      credits: groups.reduce((s, g) => s + g.credits, 0),
+      errors,
+      cached: groups.reduce((s, g) => s + g.cached, 0),
+      users: users?.n ?? 0,
+      error_rate: requests ? Math.round((errors / requests) * 10_000) / 10_000 : 0,
+    },
+    latency_ms: { p50: percentile(durations, 0.5), p90: percentile(durations, 0.9), p99: percentile(durations, 0.99), sample_size: durations.length },
+    by_channel: rollUp(groups, 'channel').map(({ errors: _e, ...r }) => r),
+    by_kind: rollUp(groups, 'kind').map(({ errors: _e, ...r }) => r),
+    by_source: rollUp(groups, 'source').map(({ credits: _c, ...r }) => r),
+    daily: rollUp(groups, 'day'),
     top_errors: topErrors.results,
     recent_failed_conversions: failed.results,
   };
-}
-
-/** p50/p90/p99 of duration_ms by offset into the sorted window (D1 has no percentile function). */
-async function percentiles(env: Env, where: string, binds: unknown[], count: number) {
-  if (!count) return { p50: null, p90: null, p99: null };
-  const at = (p: number) =>
-    env.DB.prepare(`SELECT duration_ms AS v FROM usage_events ${where} ORDER BY duration_ms LIMIT 1 OFFSET ?`)
-      .bind(...binds, Math.min(count - 1, Math.floor(p * count)))
-      .first<{ v: number }>()
-      .then((r) => r?.v ?? null);
-  const [p50, p90, p99] = await Promise.all([at(0.5), at(0.9), at(0.99)]);
-  return { p50, p90, p99 };
 }
 
 interface TraceRow {
@@ -147,7 +189,7 @@ export const SystemTraceQuery = z.object({
   status: z.string().max(20).optional(),
   kind: z.string().max(40).optional(),
   userId: z.string().max(80).optional(),
-  since: Timestamp.optional().describe('Default: 7 days ago'),
+  since: Timestamp.optional().describe('Default: 7 days ago; at most 30 days ago'),
   cursor: z.string().max(400).optional(),
   limit: z.number().int().min(1).max(100).optional(),
 });
@@ -156,15 +198,27 @@ export async function listSystemTraces(env: Env, actor: Principal, raw: unknown)
   assertScope(actor, 'system:read');
   const q = parseInput(SystemTraceQuery, raw);
   const limit = clampLimit(q.limit, 25, 100);
+  const ts = now();
+  const oldest = ts - MAX_WINDOW_DAYS * DAY;
+  if (q.since !== undefined && q.since < oldest) {
+    throw new AdminError(`since must be within the last ${MAX_WINDOW_DAYS} days (on or after ${iso(oldest)}).`, 422, 'invalid_request', [{ path: 'since', message: `At most ${MAX_WINDOW_DAYS} days ago` }]);
+  }
   const parts = ['created_at >= ?'];
-  const binds: unknown[] = [q.since ?? now() - 7 * DAY];
+  const binds: unknown[] = [q.since ?? ts - 7 * DAY];
   if (q.status) parts.push('status = ?'), binds.push(q.status);
   if (q.kind) parts.push('kind = ?'), binds.push(q.kind);
   if (q.userId) parts.push('user_id = ?'), binds.push(q.userId);
   const cols = 'id,user_id,kind,target,status,duration_ms,meta,created_at';
   if (q.sort === 'slowest') {
     if (q.cursor) throw new AdminError('sort=slowest returns a single page; narrow the window with since instead of a cursor.', 400, 'invalid_cursor');
-    const { results } = await env.DB.prepare(`SELECT ${cols} FROM traces WHERE ${parts.join(' AND ')} ORDER BY duration_ms DESC LIMIT ?`).bind(...binds, limit).all<TraceRow>();
+    // Rank only the newest SLOWEST_SCAN traces of the window, reading just the columns stored before
+    // the large spans blob, then fetch the full summary for the winners.
+    const { results } = await env.DB.prepare(
+      `SELECT ${cols.split(',').map((c) => `t.${c}`).join(',')} FROM (SELECT id, duration_ms FROM traces WHERE ${parts.join(' AND ')} ORDER BY created_at DESC LIMIT ?) w
+       JOIN traces t ON t.id = w.id ORDER BY w.duration_ms DESC, w.id LIMIT ?`,
+    )
+      .bind(...binds, SLOWEST_SCAN, limit)
+      .all<TraceRow>();
     return { items: results.map(traceSummary), next_cursor: null };
   }
   const c = cursorClause(decodeCursor(q.cursor));

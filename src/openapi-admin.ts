@@ -129,7 +129,7 @@ export const ADMIN_OPS: Record<string, Record<string, Op>> = {
     post: { summary: 'Revoke a credit grant', description: 'Admin and promo grants only; grants from billing orders return `billing_owned` (409). Repeating is safe.', tag: 'Admin', scope: 'credits:write', params: [idParam('Credit grant')], body: body(RevokeGrantInput, ['grantId']), ok: obj({ grant: ref('CreditGrant'), changed: bool(), alreadyRevoked: bool() }), errors: [404, 409] },
   },
   '/admin/subscriptions': {
-    get: { summary: 'Subscriptions (read-only)', description: 'Most recently updated first. Billing changes happen in the billing provider.', tag: 'Admin', scope: 'billing:read', params: queryParams(SubscriptionQuery), ok: paged(anyObject) },
+    get: { summary: 'Subscriptions (read-only)', description: 'Newest first (by creation time). Billing changes happen in the billing provider.', tag: 'Admin', scope: 'billing:read', params: queryParams(SubscriptionQuery), ok: paged(anyObject) },
   },
   '/admin/subscriptions/{id}': {
     get: { summary: 'Subscription with plan consistency', description: '`consistency` compares the user plan with what the subscription entitles.', tag: 'Admin', scope: 'billing:read', params: [idParam('Subscription')], ok: anyObject, errors: [404] },

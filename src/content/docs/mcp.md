@@ -146,9 +146,9 @@ Owners and admins can run the deployment from an agent: users, credentials, cred
 - **Scoped.** Each tool needs one granular scope and is hidden without it. Owner-only tools (`update_user_role`, `grant_credits`, `revoke_credit_grant`) never appear for admins.
 - **Ranked.** Nobody can act on their own account; admins only act on accounts ranked below them.
 - **Bounded.** Every list is paginated: pass `next_cursor` back as `cursor`. There is no SQL or shell tool.
-- **Safe to retry.** Mutations accept an `idempotencyKey` (required for `grant_credits`); a retry returns the first result with `replayed: true`. Changes guarded by `expectedRole` or `expectedVersion` fail with a conflict instead of overwriting someone else's change.
+- **Safe to retry.** Mutations accept an `idempotencyKey` (required for `grant_credits`); a retry returns the first result with `replayed: true`, and a retry that arrives while the first attempt is still running gets `idempotency_in_progress` (retry shortly) instead of running the change twice. Changes guarded by `expectedRole` or `expectedVersion` fail with a conflict instead of overwriting someone else's change.
 - **Audited.** Every change writes an audit row with the acting user, the API key or OAuth client, the tool (`via: mcp:<tool>`), the request id and a minimal diff. Secrets are never recorded or returned.
-- **Billing stays with the provider.** Plans and subscriptions are read-only here. Use credit grants for support allowances.
+- **Billing stays with the provider.** Plans and subscriptions are read-only here. Use credit grants for support allowances: an active grant raises their allowance in every month it is active. By default a grant expires at the end of the current month (UTC), so it is a one-time amount; pass `recurring: true` (with or without `expiresAt`) for credits that come back every month. On Pro and Scale, credits are used in this order: the plan's included credits, then active grants, then paid overage, and the units a grant covers are never sent to the billing meter, so a grant really lowers the overage bill.
 
 Tool annotations tell the client what to expect: read tools are `readOnlyHint`, and tools that remove access or data (`set_user_status`, `revoke_*`, `remove_site_optout`, `update_settings`, `delete_post`, `archive_page`) are `destructiveHint`, so a well-behaved client asks before running them.
 
@@ -158,7 +158,7 @@ Tool annotations tell the client what to expect: read tools are `readOnlyHint`, 
 |---|---|---|
 | `system_overview` | `{}` | `system:read` |
 | `list_system_usage` | `{ days? (1–30, default 7), channel?, kind? }` | `system:read` |
-| `list_system_traces` | `{ sort?, status?, kind?, userId?, since?, cursor?, limit? }` | `system:read` |
+| `list_system_traces` | `{ sort?, status?, kind?, userId?, since? (at most 30 days ago), cursor?, limit? }` | `system:read` |
 | `get_system_trace` | `{ traceId }` | `system:read` |
 | `list_users` | `{ search?, role?, plan?, status?, createdAfter?, createdBefore?, lastLoginAfter?, lastLoginBefore?, cursor?, limit? }` | `users:read` |
 | `get_user` | `{ userId }` | `users:read` |
@@ -183,7 +183,7 @@ Timestamps accept epoch milliseconds or ISO 8601. `action` in `list_audit_events
 | `revoke_user_sessions` | `{ userId, sessionHandle?, idempotencyKey? }` | `users:sessions:write` |
 | `revoke_user_api_key` | `{ userId, keyId, idempotencyKey? }` | `users:credentials:write` |
 | `revoke_oauth_grant` | `{ userId, grantId }` | `users:credentials:write` |
-| `grant_credits` | `{ userId, credits, reason, source?, expiresAt?, idempotencyKey }` | `credits:write` (owner) |
+| `grant_credits` | `{ userId, credits, reason, source?, expiresAt?, recurring?, idempotencyKey }` | `credits:write` (owner) |
 | `revoke_credit_grant` | `{ grantId, reason }` | `credits:write` (owner) |
 | `add_site_optout` | `{ domain, reason?, idempotencyKey? }` | `optouts:write` |
 | `remove_site_optout` | `{ domain, idempotencyKey? }` | `optouts:write` |
@@ -212,7 +212,7 @@ Things to ask an admin agent:
 
 - "How is the system doing this week? Show error rate, the slowest traces and the top errors."
 - "Find the account for jane@example.com, show its keys and sessions, and sign it out everywhere."
-- "Grant 500 credits to that user for the outage, reason 'October incident', and tell me the grant id."
+- "Grant 500 credits to that user for the outage, reason 'October incident', for this month only, and tell me the grant id."
 - "Is billing healthy? Check webhook failures and any users whose plan doesn't match their subscription."
 - "Show every settings change in the last 30 days and who made it."
 

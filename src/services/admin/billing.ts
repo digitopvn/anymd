@@ -60,7 +60,7 @@ export const SubscriptionQuery = z.object({
   limit: z.number().int().min(1).max(100).optional(),
 });
 
-/** Most recently updated first. Needs `billing:read`. */
+/** Newest first (by creation, a stable order for keyset pagination). Needs `billing:read`. */
 export async function listSubscriptions(env: Env, actor: Principal, raw: unknown): Promise<Paged<ReturnType<typeof subscriptionView>>> {
   assertScope(actor, 'billing:read');
   const q = parseInput(SubscriptionQuery, raw);

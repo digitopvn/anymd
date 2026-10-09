@@ -42,14 +42,14 @@ Every error has the same shape and a matching HTTP status:
 | 401 | `unauthorized`, `invalid_api_key` |
 | 402 | `quota_exceeded` |
 | 408 | `processing_limit` |
-| 403 | `forbidden` (missing scope), `forbidden_rank`, `forbidden_self`, `bad_origin` |
+| 403 | `forbidden` (missing scope), `forbidden_rank`, `forbidden_self`, `bad_origin`, `oauth_key_creation_forbidden` |
 | 404 | `not_found`, `upstream_status` |
-| 409 | `revision_conflict`, `slug_taken`, `tag_conflict`, `role_conflict`, `status_conflict`, `settings_conflict`, `billing_owned` |
+| 409 | `revision_conflict`, `slug_taken`, `tag_conflict`, `role_conflict`, `status_conflict`, `settings_conflict`, `billing_owned`, `idempotency_in_progress` |
 | 413 | `too_large` |
 | 415 | `unsupported_type` |
 | 422 | `empty_content`, `document_failed`, `invalid_props`, `idempotency_mismatch`, `invalid_request`, `too_many_tags`, `invalid_preferences`, `invalid_setting`, `plan_managed_by_billing` |
 | 429 | `anonymous_limit`, rate limits |
-| 503 | `provider_unavailable` |
+| 503 | `provider_unavailable`, `oauth_store_unavailable` |
 | 502 | `fetch_failed`, `upstream_status` |
 
 Read `code`, not `message`. Messages are for humans and may change.
@@ -378,7 +378,7 @@ Conventions:
 
 - **Pagination.** Lists return `{ items, next_cursor }`; pass `next_cursor` back as `?cursor=`. `limit` is bounded.
 - **Timestamps** in filters accept epoch milliseconds or ISO 8601.
-- **Idempotency.** Mutations accept an `Idempotency-Key` header (or `idempotencyKey` in the body). A retry returns the first result with `replayed: true`; reusing a key for a different change is `422 idempotency_mismatch`.
+- **Idempotency.** Mutations accept an `Idempotency-Key` header (or `idempotencyKey` in the body). A retry returns the first result with `replayed: true`; reusing a key for a different change is `422 idempotency_mismatch`; a retry that arrives while the first attempt is still running is `409 idempotency_in_progress` (retry after a second).
 - **Concurrency.** Send `expectedRole` or `expectedVersion` to get `409` instead of overwriting a change made meanwhile.
 - **Audit.** Every change records the acting user, credential, route (`via: api:<METHOD route>`), request id and a minimal diff.
 
@@ -420,13 +420,13 @@ curl -X PATCH https://anymd.cc/api/v1/admin/users/usr_… \
 | Endpoint | Body or query | Scope |
 |---|---|---|
 | `GET /admin/credits` | `?userId=&state=active\|expired\|revoked&source=&cursor=&limit=` | `credits:read` |
-| `POST /admin/credits` | `{ userId, credits, reason, source?, expiresAt? }` plus `Idempotency-Key` (required) | `credits:write` |
+| `POST /admin/credits` | `{ userId, credits, reason, source?, expiresAt?, recurring? }` plus `Idempotency-Key` (required) | `credits:write` |
 | `POST /admin/credits/:id/revoke` | `{ reason }` | `credits:write` |
 | `GET /admin/subscriptions` | `?status=&plan=&userId=&cursor=&limit=` | `billing:read` |
 | `GET /admin/subscriptions/:id` | Includes `consistency` between the user plan and the subscription | `billing:read` |
 | `GET /admin/billing/diagnostics` | Provider config (secrets as present/missing only), webhook outcomes and failures, plan drift | `billing:read` |
 
-`POST /admin/credits` answers `201` for a new grant and `200` with `replayed: true` for a retry. Grants from billing orders cannot be revoked here (`409 billing_owned`).
+`POST /admin/credits` answers `201` for a new grant and `200` with `replayed: true` for a retry. Grants from billing orders cannot be revoked here (`409 billing_owned`). How grants count: an active grant raises their allowance in every month it is active. By default a grant expires at the end of the current month (UTC), so it is a one-time amount; pass `recurring: true` (with or without `expiresAt`) for credits that come back every month. On Pro and Scale, credits are used in this order: the plan's included credits, then active grants, then paid overage, and the units a grant covers are never sent to the billing meter, so a grant really lowers the overage bill. An `expiresAt` past this month without `recurring: true` is `422`.
 
 ```bash
 curl https://anymd.cc/api/v1/admin/credits \
@@ -444,7 +444,7 @@ curl https://anymd.cc/api/v1/admin/credits \
 | `GET /admin/audit/export` | Same filters; NDJSON, up to 5,000 rows (`X-Anymd-Count`, `X-Anymd-Truncated`) | `audit:read` |
 | `GET /admin/system/overview` | | `system:read` |
 | `GET /admin/system/usage` | `?days=7&channel=&kind=` (`days` 1–30) | `system:read` |
-| `GET /admin/system/traces` | `?sort=recent\|slowest&status=&kind=&userId=&since=&cursor=&limit=` | `system:read` |
+| `GET /admin/system/traces` | `?sort=recent\|slowest&status=&kind=&userId=&since=&cursor=&limit=` (`since` at most 30 days ago; `slowest` ranks the newest 5,000 traces in the window) | `system:read` |
 | `GET /admin/system/traces/:id` | | `system:read` |
 
 `GET /admin/roles` lists role templates, scopes, key presets and plans for any signed-in caller.
