@@ -5,8 +5,7 @@
  */
 import type { Env } from '../env';
 import { newId, now } from '../lib/util';
-import { extraCredits } from '../lib/usage';
-import { meteredUnits, usedBeforeCharge } from './grant-covered-usage';
+import { meteredUnits, meterWindow } from './grant-covered-usage';
 import { getPlan, type PlanId } from './plans';
 
 export function polarEnabled(env: Env): boolean {
@@ -81,16 +80,15 @@ export async function customerPortalUrl(env: Env, userId: string): Promise<strin
 }
 
 /**
- * Report spent credits so Polar's meter can bill overage on paid plans. Units covered by active
- * credit grants are left out (see `meteredUnits`): Polar's benefit covers the plan's included
- * credits, but it does not know about grants. `chargeId` locates the conversion within the month.
+ * Report spent credits so Polar's meter can bill overage on paid plans. Units inside a credit
+ * grant's band are left out (see `meterWindow`): Polar's benefit covers the plan's included credits,
+ * but it does not know about grants. `chargeId` locates the conversion within the billing period.
  */
 export async function ingestPolarUsage(env: Env, userId: string, credits: number, kind: string, chargeId?: string): Promise<void> {
   if (!polarEnabled(env)) return;
   const user = await env.DB.prepare('SELECT plan FROM users WHERE id = ?').bind(userId).first<{ plan: string }>();
   if (!user || user.plan === 'free') return;
-  const [usedBefore, granted] = await Promise.all([usedBeforeCharge(env, userId, credits, chargeId), extraCredits(env, userId)]);
-  const units = meteredUnits({ usedBefore, credits, included: getPlan(user.plan).credits, granted });
+  const units = meteredUnits(await meterWindow(env, userId, credits, getPlan(user.plan).credits, chargeId));
   if (!units) return;
   await polarFetch(env, '/v1/events/ingest', {
     method: 'POST',

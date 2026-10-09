@@ -67,10 +67,15 @@ describe('OAuth principal scopes', () => {
     expect(oauthPrincipalScopes('owner', [], OAUTH_GRANT_VERSION)).toEqual([]);
   });
 
-  it('narrows to the token\'s own scopes when it was downscoped, and ignores an empty token scope', () => {
+  it('narrows to the token\'s own scopes when it was downscoped, and holds nothing when the token scope is empty', () => {
     const grant = ['convert', 'library:read', 'settings:read', 'settings:write'];
     expect(oauthPrincipalScopes('owner', grant, OAUTH_GRANT_VERSION, ['convert', 'settings:read'])).toEqual(['convert', 'settings:read']);
-    expect(oauthPrincipalScopes('owner', grant, OAUTH_GRANT_VERSION, [])).toEqual(capScopes('owner', grant));
+    // A downscope that matched nothing yields an empty token scope: no access, not the whole grant.
+    expect(oauthPrincipalScopes('owner', ['convert', 'users:read'], OAUTH_GRANT_VERSION, [])).toEqual([]);
+    expect(oauthPrincipalScopes('owner', grant, undefined, [])).toEqual([]);
+    // Unknown token scopes leave the grant in charge; a legacy empty grant's tokens are empty too.
+    expect(oauthPrincipalScopes('owner', grant, OAUTH_GRANT_VERSION)).toEqual(capScopes('owner', grant));
+    expect(oauthPrincipalScopes('user', [], undefined, [])).toEqual(['convert', 'library:read', 'library:write', 'usage:read']);
     // A token never widens the grant.
     expect(oauthPrincipalScopes('owner', ['convert'], OAUTH_GRANT_VERSION, ['convert', 'users:read'])).toEqual(['convert']);
     // Legacy token scope names are translated before narrowing.

@@ -3,7 +3,7 @@ import { scopesForRole } from '../src/auth/roles';
 import type { Env, Principal } from '../src/env';
 import { listSubscriptions } from '../src/services/admin/billing';
 import { revokeUserOAuthGrant } from '../src/services/admin/credentials';
-import { grantCredits, nextMonthStart } from '../src/services/admin/credits';
+import { defaultGrantExpiry, grantCredits, nextMonthStart } from '../src/services/admin/credits';
 import { PENDING_TTL_MS, withIdempotency } from '../src/services/admin/idempotency';
 import { listSystemTraces, percentile, systemUsage } from '../src/services/admin/observability';
 import { addSiteOptout } from '../src/services/admin/optouts';
@@ -173,6 +173,52 @@ describe('idempotent admin writes under concurrency', () => {
   });
 });
 
+describe('idempotency claim ownership', () => {
+  /** A run that waits until the test lets it finish (or fail). */
+  function gated<T>(value: T) {
+    let finish!: () => void;
+    let fail!: (e: Error) => void;
+    const gate = new Promise<void>((res, rej) => ((finish = res), (fail = rej)));
+    return { run: async () => (await gate, value), finish, fail };
+  }
+  const age = (key: string) => t.db.prepare('UPDATE idempotency_keys SET created_at = ? WHERE key = ?').run(Date.now() - PENDING_TTL_MS - 1000, key);
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it('keeps the result of the request that took over when the slow first holder finishes late', async () => {
+    const actor = await owner();
+    const slow = gated({ by: 'slow' });
+    const fast = gated({ by: 'takeover' });
+    const first = withIdempotency(t.env, actor, 'test.op', 'k-own', {}, slow.run);
+    await tick();
+    age('k-own');
+    const second = withIdempotency(t.env, actor, 'test.op', 'k-own', {}, fast.run);
+    await tick();
+    slow.finish();
+    expect(await first).toEqual({ by: 'slow', replayed: false });
+    // The late holder did not overwrite the claim: the new holder is still running.
+    expect((await failure(withIdempotency(t.env, actor, 'test.op', 'k-own', {}, async () => ({ by: 'third' })))).code).toBe('idempotency_in_progress');
+    fast.finish();
+    expect(await second).toEqual({ by: 'takeover', replayed: false });
+    expect(await withIdempotency(t.env, actor, 'test.op', 'k-own', {}, async () => ({ by: 'third' }))).toEqual({ by: 'takeover', replayed: true });
+  });
+
+  it('does not release the new holder claim when the old holder fails late', async () => {
+    const actor = await owner();
+    const slow = gated({ by: 'slow' });
+    const fast = gated({ by: 'takeover' });
+    const first = withIdempotency(t.env, actor, 'test.op', 'k-fail', {}, slow.run);
+    await tick();
+    age('k-fail');
+    const second = withIdempotency(t.env, actor, 'test.op', 'k-fail', {}, fast.run);
+    await tick();
+    slow.fail(new Error('late failure'));
+    await expect(first).rejects.toThrow('late failure');
+    expect((await failure(withIdempotency(t.env, actor, 'test.op', 'k-fail', {}, async () => ({ by: 'third' })))).code).toBe('idempotency_in_progress');
+    fast.finish();
+    expect(await second).toEqual({ by: 'takeover', replayed: false });
+  });
+});
+
 describe('OAuth grant revocation', () => {
   const grant: TestGrant = { id: 'gr_1', clientId: 'client_1', userId: '', scope: ['convert'], metadata: { clientName: 'Agent' }, createdAt: 1_700_000_000 };
 
@@ -229,12 +275,12 @@ describe('OAuth grant revocation', () => {
 describe('credit grant expiry', () => {
   const base = { credits: 100, reason: 'support goodwill' };
 
-  it('defaults to a one-time grant that ends with the month', async () => {
+  it('defaults to a grant that ends with the month (or the next one late in the month)', async () => {
     const actor = await owner();
     const target = await seedUser(t, 'user');
     const before = Date.now();
     const out = await grantCredits(t.env, actor, { ...base, userId: target.id, idempotencyKey: 'g-default' });
-    expect(out.grant.expires_at).toBe(nextMonthStart(before));
+    expect(out.grant.expires_at).toBe(defaultGrantExpiry(before));
     const again = await grantCredits(t.env, actor, { ...base, userId: target.id, idempotencyKey: 'g-default' });
     expect([again.replayed, again.grant.id]).toEqual([true, out.grant.id]);
   });
@@ -248,10 +294,10 @@ describe('credit grant expiry', () => {
     expect((await failure(grantCredits(t.env, actor, { ...base, userId: target.id, idempotencyKey: 'g-recurring' }))).code).toBe('idempotency_mismatch');
   });
 
-  it('requires recurring for an expiry past this month', async () => {
+  it('requires recurring for an expiry past the default', async () => {
     const actor = await owner();
     const target = await seedUser(t, 'user');
-    const later = nextMonthStart(Date.now()) + 15 * DAY;
+    const later = defaultGrantExpiry(Date.now()) + DAY;
     expect((await failure(grantCredits(t.env, actor, { ...base, userId: target.id, expiresAt: later, idempotencyKey: 'grant-later' }))).status).toBe(422);
     const out = await grantCredits(t.env, actor, { ...base, userId: target.id, expiresAt: later, recurring: true, idempotencyKey: 'grant-later' });
     expect(out.grant.expires_at).toBe(later);
@@ -260,6 +306,13 @@ describe('credit grant expiry', () => {
   it('computes the end of the month in UTC', () => {
     expect(nextMonthStart(Date.UTC(2026, 9, 9, 12))).toBe(Date.UTC(2026, 10, 1));
     expect(nextMonthStart(Date.UTC(2026, 11, 31, 23, 59))).toBe(Date.UTC(2027, 0, 1));
+  });
+
+  it('extends the default to the end of next month when fewer than 7 days remain', () => {
+    expect(defaultGrantExpiry(Date.UTC(2026, 9, 9, 12))).toBe(Date.UTC(2026, 10, 1));
+    expect(defaultGrantExpiry(Date.UTC(2026, 9, 25, 0))).toBe(Date.UTC(2026, 10, 1)); // exactly 7 days left
+    expect(defaultGrantExpiry(Date.UTC(2026, 9, 25, 0, 0, 1))).toBe(Date.UTC(2026, 11, 1));
+    expect(defaultGrantExpiry(Date.UTC(2026, 11, 31, 23))).toBe(Date.UTC(2027, 1, 1));
   });
 });
 

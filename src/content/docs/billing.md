@@ -54,7 +54,7 @@ The worst case is bounded before you convert: for example, threads up to 20 post
 The [pricing page](/pricing) is always current and lists each plan's extras (library size, key limits, support).
 
 - **Free** keeps working for search and reads after credits run out; new conversions return `402 quota_exceeded` until the next month.
-- **Pro and Scale** never block: usage beyond the included credits is metered and billed as overage. Credits granted by support are used after the included credits and before overage, and are never billed.
+- **Pro and Scale** never block: usage beyond the included credits is metered and billed as overage. Credits granted by support are used after the included credits and before overage, from the moment they are granted: they keep later usage off the overage bill but do not refund overage already billed.
 - Credits reset at the start of each calendar month (UTC).
 
 ### No account?

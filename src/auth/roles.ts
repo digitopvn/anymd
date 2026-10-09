@@ -156,19 +156,22 @@ export function oauthConsentScopes(role: RoleName, requested: readonly string[])
 
 /**
  * Effective scopes of an OAuth token: the grant's scopes capped by the current role, narrowed to
- * the token's own scopes when it was downscoped at refresh or exchange.
+ * the token's own scopes when it was downscoped at refresh or exchange. A token whose scope list is
+ * empty holds nothing (the provider downscopes a request for scopes outside the grant to `[]`),
+ * except for a legacy grant stored with no scopes, whose tokens carry the same empty list.
+ * `tokenScopes` undefined means the token's scopes are not known, so the grant alone decides.
  *
  * Grants issued before least-privilege consent (no `v` in their props) could hold every scope of
  * the role without asking; they keep only non-admin scopes and must be re-authorized to reach the
  * admin control plane. Such a grant stored with no scopes meant "the whole role"; it now resolves to
  * the role's non-elevated scopes, so existing connectors keep reading and saving.
  */
-export function oauthPrincipalScopes(role: RoleName, grantScopes: readonly string[], grantVersion: number | undefined, tokenScopes: readonly string[] = []): Scope[] {
+export function oauthPrincipalScopes(role: RoleName, grantScopes: readonly string[], grantVersion: number | undefined, tokenScopes?: readonly string[]): Scope[] {
   let scopes: Scope[];
   if (grantVersion && grantVersion >= OAUTH_GRANT_VERSION) scopes = capScopes(role, grantScopes);
   else if (grantScopes.length) scopes = capScopes(role, grantScopes).filter((s) => !ADMIN_SCOPES.has(s));
   else scopes = capScopes(role, null).filter((s) => !ELEVATED_SCOPES.has(s));
-  if (!tokenScopes.length) return scopes;
+  if (!tokenScopes || (!tokenScopes.length && !grantScopes.length)) return scopes;
   const token = new Set(expandScopes(tokenScopes));
   return scopes.filter((s) => token.has(s));
 }

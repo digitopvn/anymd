@@ -170,7 +170,7 @@ const mcpApiHandler = {
       kind: 'oauth',
       userId: user.id,
       role,
-      scopes: oauthPrincipalScopes(role, ctx.props?.scopes ?? [], ctx.props?.v, ctx.auth?.scope ?? []),
+      scopes: oauthPrincipalScopes(role, ctx.props?.scopes ?? [], ctx.props?.v, ctx.auth?.scope),
       clientId: ctx.auth?.clientId ?? ctx.props?.clientId,
       requestId: request.headers.get('cf-ray') ?? crypto.randomUUID(),
     };

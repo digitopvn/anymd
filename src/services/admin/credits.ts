@@ -1,8 +1,9 @@
 /**
  * Credit grants: support allowances on top of a plan. An active grant (not revoked, not expired)
- * raises the user's monthly allowance by its credits in every month it is active, so a grant is a
- * one-time amount only when it expires within its month: grants default to expiring at the end of
- * the current month (UTC), and only `recurring: true` grants may run longer or forever. Granting and
+ * raises the user's monthly allowance by its credits in every month it is active. Grants default to
+ * expiring at the end of the current month (UTC), or of the next month when fewer than
+ * MIN_DEFAULT_GRANT_DAYS remain (so a grant made on the last day still lasts a week or more); only
+ * `recurring: true` grants may run longer or forever. Granting and
  * revoking need `credits:write` (owner only by template) and are always audited; grants carry a
  * reason, the granting admin and a required idempotency key, so a retried grant never doubles up.
  */
@@ -16,6 +17,15 @@ import { monthStart } from '../../lib/usage';
 export function nextMonthStart(ts: number): number {
   const d = new Date(monthStart(ts));
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+}
+
+/** A default grant lasts at least this many days. */
+export const MIN_DEFAULT_GRANT_DAYS = 7;
+
+/** The default expiry of a grant made at `ts`: the end of its month, or of the next month when that is under a week away. */
+export function defaultGrantExpiry(ts: number): number {
+  const end = nextMonthStart(ts);
+  return end - ts < MIN_DEFAULT_GRANT_DAYS * 86_400_000 ? nextMonthStart(end) : end;
 }
 import { auditStatement } from './audit';
 import { AdminError, assertCanManage, assertScope, clampLimit, cursorClause, decodeCursor, IdempotencyKey, iso, page, parseInput, Timestamp, type Paged } from './shared';
@@ -96,7 +106,7 @@ export const GrantCreditsInput = z.object({
   credits: z.number().int().min(1).max(1_000_000),
   reason: z.string().trim().min(3).max(300).describe('Why the credits are granted; shown in the audit log'),
   source: z.enum(['admin', 'promo']).optional().describe('Default admin'),
-  expiresAt: Timestamp.optional().describe('When the grant stops counting. Default: the end of this month (UTC), so the credits are a one-time amount'),
+  expiresAt: Timestamp.optional().describe('When the grant stops counting. Default: the end of this month (UTC), or of next month when fewer than 7 days remain. Later than the default needs recurring: true'),
   recurring: z.boolean().optional().describe('true: the credits are added again every month until expiresAt (or forever when it is omitted)'),
   idempotencyKey: IdempotencyKey.describe('Required: retrying with the same key returns the original grant'),
 });
@@ -108,11 +118,11 @@ export async function grantCredits(env: Env, actor: Principal, raw: unknown) {
   const source = input.source ?? 'admin';
   const ts = now();
   if (input.expiresAt !== undefined && input.expiresAt <= ts) throw new AdminError('expiresAt must be in the future.', 422, 'invalid_request');
-  const monthEnd = nextMonthStart(ts);
-  if (!input.recurring && input.expiresAt !== undefined && input.expiresAt > monthEnd) {
-    throw new AdminError('A grant that runs past this month adds its credits again every month. Pass recurring: true to confirm, or an expiresAt within this month.', 422, 'invalid_request');
+  const defaultExpiry = defaultGrantExpiry(ts);
+  if (!input.recurring && input.expiresAt !== undefined && input.expiresAt > defaultExpiry) {
+    throw new AdminError(`A grant adds its credits again in every month it is active. Pass recurring: true to confirm, or an expiresAt no later than ${new Date(defaultExpiry).toISOString()}.`, 422, 'invalid_request');
   }
-  const expiresAt = input.expiresAt ?? (input.recurring ? null : monthEnd);
+  const expiresAt = input.expiresAt ?? (input.recurring ? null : defaultExpiry);
   const user = await getUser(env, input.userId);
   if (!user) throw new AdminError('User not found. Find ids with list_users.', 404, 'not_found');
   assertCanManage(actor, { id: user.id, role: isRole(user.role) ? user.role : 'user' });

@@ -205,7 +205,7 @@ export const ADMIN_TOOLS: ToolDef[] = [
     name: 'grant_credits',
     title: 'Grant credits',
     description:
-      'Grant a user extra credits (support or promo allowance) with a reason and optional expiry. While active, a grant raises their monthly allowance. Owner only. idempotencyKey is required: retrying with it returns the original grant (replayed: true) and never grants twice.',
+      'Grant a user extra credits (support or promo allowance) with a reason. While active, a grant raises their allowance by its credits in every month it is active. Default expiry: the end of the current month (UTC), or the end of next month when fewer than 7 days of this month remain; pass recurring: true for monthly credits or a later expiresAt. On paid plans a grant covers usage from when it is granted onward; it does not refund overage already billed. Owner only. idempotencyKey is required: retrying with it returns the original grant (replayed: true) and never grants twice.',
     scope: 'credits:write',
     input: GrantCreditsInput,
     annotations: IDEMPOTENT_WRITE,
