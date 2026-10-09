@@ -3,7 +3,7 @@
  * explicit request option > signed-in user's saved preference > safe system default (enrichment off).
  */
 import { z } from 'zod';
-import type { Env, Principal } from '../env';
+import type { Env, Principal, Scope } from '../env';
 import { DEFAULT_READING_PREFERENCES, READING_LIMITS, type ReadingLimitKey, type ReadingPreferences } from '../lib/reading-options';
 import { auditStatement } from '../services/admin/audit';
 import { ConvertError } from './types';
@@ -114,14 +114,44 @@ function preferenceAudit(env: Env, actor: Principal, action: string, meta: Recor
   return auditStatement(env, actor, { action, targetType: 'reading_preferences', target: actor.userId ?? '', meta: { auth, ...meta } }, ts, guard);
 }
 
+/** The scope an API key or OAuth grant needs to change saved reading defaults. */
+export const PREFERENCES_WRITE_SCOPE: Scope = 'keys:manage';
+
+/**
+ * Who may change an account's saved reading defaults. A signed-in session of any role is the user
+ * acting directly on their own account, so it always may. An API key or OAuth grant needs
+ * `keys:manage`: saved defaults decide what every other credential of the account spends, so a
+ * "Convert only" or library key, or a default OAuth grant, must not raise them.
+ */
+export function canWriteReadingPreferences(actor: Principal): boolean {
+  return Boolean(actor.userId) && (actor.kind === 'session' || actor.scopes.includes(PREFERENCES_WRITE_SCOPE));
+}
+
+/** Raised when a credential without `keys:manage` tries to change saved defaults. */
+export class ReadingPreferencesForbiddenError extends Error {
+  readonly status = 403;
+  readonly code = 'forbidden';
+  readonly required = [PREFERENCES_WRITE_SCOPE];
+  constructor() {
+    super(`Missing scope: ${PREFERENCES_WRITE_SCOPE}`);
+  }
+}
+
 function accountOf(actor: Principal): string {
   if (!actor.userId) throw new ReadingPreferencesError([{ path: '(root)', message: 'Reading preferences belong to an account' }]);
   return actor.userId;
 }
 
+/** The writer's account id, after the write guard; every save and reset goes through it. */
+function writableAccountOf(actor: Principal): string {
+  const userId = accountOf(actor);
+  if (!canWriteReadingPreferences(actor)) throw new ReadingPreferencesForbiddenError();
+  return userId;
+}
+
 /** Saves the actor's own defaults on top of `previous` (what the caller read) and audits the change. */
 export async function saveReadingPreferences(env: Env, actor: Principal, previous: StoredReadingPreferences, preferences: ReadingPreferences): Promise<StoredReadingPreferences> {
-  const userId = accountOf(actor);
+  const userId = writableAccountOf(actor);
   const valid = ReadingPreferencesSchema.parse(preferences);
   const ts = Date.now();
   await env.DB.batch([
@@ -133,7 +163,7 @@ export async function saveReadingPreferences(env: Env, actor: Principal, previou
 
 /** Deletes the actor's saved defaults (back to the safe defaults); audited when something was saved. */
 export async function resetReadingPreferences(env: Env, actor: Principal): Promise<StoredReadingPreferences> {
-  const userId = accountOf(actor);
+  const userId = writableAccountOf(actor);
   const saved = await env.DB.prepare('SELECT preferences FROM reading_preferences WHERE user_id = ?').bind(userId).first<{ preferences: string }>();
   if (saved) {
     // The audit row is guarded by the row it describes, so a concurrent reset cannot audit twice.

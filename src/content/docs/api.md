@@ -73,7 +73,7 @@ Read `code`, not `message`. Messages are for humans and may change.
 | DELETE | `/keys/:id` | `keys:manage` |
 | GET | `/me` | any signed-in caller |
 | GET | `/account/reading-preferences` | `convert` (signed-in callers) |
-| PUT, DELETE | `/account/reading-preferences` | `keys:manage` |
+| PUT, DELETE | `/account/reading-preferences` | `keys:manage` for API keys and OAuth clients; any signed-in session |
 | POST | `/billing/checkout`, `/billing/portal` | browser session |
 | * | `/admin/pages…`, `/admin/blocks`, `/admin/templates` | `pages:*` (admins: [builder guide](/admin/docs/page-builder)) |
 | * | `/admin/posts…` | `content:*` |
@@ -180,7 +180,7 @@ Returns `{ preferences, saved, updated_at, defaults, limits }`. `saved: false` m
 
 #### PUT /account/reading-preferences
 
-Scope: `keys:manage`. Saved defaults decide what every other key, OAuth client and the web converter may spend when they leave an option out, so a **Convert only** key can read them but not change them: use a key with **Everything my role allows** (or the dashboard). Every change is written to the audit log with the auth kind, key id and the changed fields.
+Who may change them: any signed-in session (you, in the dashboard or browser, whatever your role), or an API key or OAuth client holding `keys:manage`. Saved defaults decide what every other key, OAuth client and the web converter may spend when they leave an option out, so a **Convert only** or **Convert + library** key, or an OAuth client with the default scopes, can read them but not change them (`403 forbidden`): use a key with **Everything my role allows**, or the dashboard. Every change is written to the audit log with the auth kind, key id and the changed fields.
 
 A partial update: send only the fields to change; the rest keep their saved value. Unknown fields and out-of-range values are rejected (never silently clamped) with `422 invalid_preferences` and a `details` list naming each field and its allowed range. `analyzeImages` requires `keepImages`.
 
@@ -203,7 +203,7 @@ curl -X PUT https://anymd.cc/api/v1/account/reading-preferences \
 
 #### DELETE /account/reading-preferences
 
-Removes the saved defaults; the safe defaults apply again. Scope: `keys:manage`; audited. The same settings live in the dashboard under [Account → Deep reading defaults](/dashboard/account#reading-defaults).
+Removes the saved defaults; the safe defaults apply again. Same rule as PUT (any signed-in session, or `keys:manage` for keys and OAuth clients); audited. The same settings live in the dashboard under [Account → Deep reading defaults](/dashboard/account#reading-defaults).
 
 ### POST /convert/file
 

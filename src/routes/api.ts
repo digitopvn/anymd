@@ -3,7 +3,7 @@ import { Hono, type MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
 import { z } from 'zod';
 import { getUser } from '../auth/identity';
-import { apiError, requireScope, sameOriginWrites, type AppContext } from '../auth/middleware';
+import { apiError, markVia, requireScope, sameOriginWrites, type AppContext } from '../auth/middleware';
 import { getPlan, type PlanId } from '../billing/plans';
 import { billingEnabled, createCheckout, customerPortalUrl } from '../billing/provider';
 import { blockCatalog } from '../cms/blocks';
@@ -28,7 +28,7 @@ import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setP
 import { convertBlobToMarkdown, documentCreditCost, mimeFor } from '../convert/document';
 import { runConversion } from '../convert/service';
 import { enrichmentOptions } from '../convert/enrichment-types';
-import { applyPreferencesPatch, getReadingPreferences, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences, type StoredReadingPreferences } from '../convert/reading-preferences';
+import { applyPreferencesPatch, canWriteReadingPreferences, getReadingPreferences, PREFERENCES_WRITE_SCOPE, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences, type StoredReadingPreferences } from '../convert/reading-preferences';
 import { DEFAULT_READING_PREFERENCES, READING_LIMITS } from '../lib/reading-options';
 import { ConvertError, countWords, type ConvertResult } from '../convert/types';
 import type { AppBindings, Principal } from '../env';
@@ -132,14 +132,19 @@ api.get('/account/reading-preferences', requireAccount, requireScope('convert'),
 });
 
 /**
- * Saved defaults decide what every other credential of the account may spend, so changing them
- * needs `keys:manage` (sessions hold it; "Convert only" and library presets do not). Reading
- * them only needs `convert`.
+ * Changing saved defaults: any signed-in session, or an API key / OAuth grant holding
+ * `keys:manage` (see `canWriteReadingPreferences`). Reading them only needs `convert`.
  */
-const PREFERENCES_WRITE_SCOPE = 'keys:manage';
+const requirePreferencesWriter: MiddlewareHandler<AppBindings> = async (c, next) => {
+  if (!canWriteReadingPreferences(c.get('principal'))) {
+    return apiError(c, 403, 'forbidden', `Missing scope: ${PREFERENCES_WRITE_SCOPE}`, { required: [PREFERENCES_WRITE_SCOPE] });
+  }
+  markVia(c, 'api');
+  await next();
+};
 
 /** Partial update: omitted fields keep their saved value. Out-of-range values are rejected, not clamped. */
-api.put('/account/reading-preferences', requireAccount, requireScope(PREFERENCES_WRITE_SCOPE), async (c) => {
+api.put('/account/reading-preferences', requireAccount, requirePreferencesWriter, async (c) => {
   const raw = await c.req.json().catch(() => {
     throw Object.assign(new Error('Body must be JSON'), { status: 400, code: 'invalid_json' });
   });
@@ -154,7 +159,7 @@ api.put('/account/reading-preferences', requireAccount, requireScope(PREFERENCES
   }
 });
 
-api.delete('/account/reading-preferences', requireAccount, requireScope(PREFERENCES_WRITE_SCOPE), async (c) => {
+api.delete('/account/reading-preferences', requireAccount, requirePreferencesWriter, async (c) => {
   c.header('Cache-Control', 'no-store');
   return c.json(preferencesBody(await resetReadingPreferences(c.env, c.get('principal'))));
 });

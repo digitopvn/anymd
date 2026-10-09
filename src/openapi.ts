@@ -46,7 +46,7 @@ const OPS: Record<string, Record<string, Op>> = {
     },
     put: {
       summary: 'Update reading defaults',
-      description: 'Partial update: omitted fields keep their saved value; unknown fields and out-of-range values are rejected with `422 invalid_preferences` and per-field `details`. Saved defaults never bypass plan credits or a request\'s own `maxCredits`. Needs `keys:manage` because the defaults apply to every credential of the account; each change is audited.',
+      description: 'Partial update: omitted fields keep their saved value; unknown fields and out-of-range values are rejected with `422 invalid_preferences` and per-field `details`. Saved defaults never bypass plan credits or a request\'s own `maxCredits`. Any signed-in session may change its own defaults; an API key or OAuth grant needs `keys:manage`, because the defaults apply to every credential of the account. Each change is audited.',
       tag: 'Account',
       scope: 'keys:manage',
       body: ref('ReadingPreferencesPatch'),
@@ -55,7 +55,7 @@ const OPS: Record<string, Record<string, Op>> = {
     },
     delete: {
       summary: 'Reset reading defaults',
-      description: 'Deletes the saved defaults so the safe defaults (enrichment off) apply again. Needs `keys:manage`; audited.',
+      description: 'Deletes the saved defaults so the safe defaults (enrichment off) apply again. Any signed-in session may; an API key or OAuth grant needs `keys:manage`. Audited.',
       tag: 'Account',
       scope: 'keys:manage',
       ...READING_PREFERENCES_BODY,
