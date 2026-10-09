@@ -76,6 +76,14 @@ describe('scope vocabulary', () => {
     expect(scopesForRole('admin')).toEqual(expect.arrayContaining(['users:read', 'audit:read', 'system:read', 'settings:write', 'optouts:write', 'users:sessions:write']));
   });
 
+  it('keeps keys:manage (saved reading defaults, own keys) out of narrow presets and OAuth defaults', () => {
+    const preset = (id: string) => KEY_PRESETS.find((p) => p.id === id)?.scopes ?? [];
+    for (const role of ROLES) expect(scopesForRole(role).includes('keys:manage'), role).toBe(role !== 'viewer');
+    for (const id of ['convert-only', 'library', 'read-only']) expect(preset(id), id).not.toEqual(expect.arrayContaining(['keys:manage']));
+    expect(OAUTH_DEFAULT_SCOPES).not.toEqual(expect.arrayContaining(['keys:manage']));
+    for (const role of ROLES) expect(oauthConsentScopes(role, []).granted, role).not.toEqual(expect.arrayContaining(['keys:manage']));
+  });
+
   it('offers least-privilege admin key presets', () => {
     const preset = (id: string) => KEY_PRESETS.find((p) => p.id === id)?.scopes ?? [];
     expect(preset('admin-read-only').every((s) => s.endsWith(':read'))).toBe(true);

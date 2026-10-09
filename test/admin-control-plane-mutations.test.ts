@@ -184,7 +184,10 @@ describe('reads', () => {
     const actor = await owner();
     const env = { ...t.env, POLAR_ACCESS_TOKEN: 'polar-token-value-for-test' } as typeof t.env;
     expect(ok(await callTool(env, actor, 'system_overview'))).toBeTruthy();
-    expect(ok(await callTool(env, actor, 'list_system_usage', { days: 7 }))).toBeTruthy();
+    expect(ok(await callTool(env, actor, 'list_system_usage', { days: 30 })).window.days).toBe(30);
+    const tooWide = await callTool(env, actor, 'list_system_usage', { days: 31 });
+    expect(tooWide.result.isError).toBe(true);
+    expect(tooWide.result.content[0].text).toMatch('days');
     expect(ok(await callTool(env, actor, 'list_audit_events', { limit: 5 })).items).toEqual([]);
     const diag = await callTool(env, actor, 'get_billing_diagnostics');
     expect(ok(diag).secrets.POLAR_ACCESS_TOKEN).toBe(true);

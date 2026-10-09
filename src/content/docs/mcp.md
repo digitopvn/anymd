@@ -157,7 +157,7 @@ Tool annotations tell the client what to expect: read tools are `readOnlyHint`, 
 | Tool | Input | Needs |
 |---|---|---|
 | `system_overview` | `{}` | `system:read` |
-| `list_system_usage` | `{ days?, channel?, kind? }` | `system:read` |
+| `list_system_usage` | `{ days? (1–30, default 7), channel?, kind? }` | `system:read` |
 | `list_system_traces` | `{ sort?, status?, kind?, userId?, since?, cursor?, limit? }` | `system:read` |
 | `get_system_trace` | `{ traceId }` | `system:read` |
 | `list_users` | `{ search?, role?, plan?, status?, createdAfter?, createdBefore?, lastLoginAfter?, lastLoginBefore?, cursor?, limit? }` | `users:read` |

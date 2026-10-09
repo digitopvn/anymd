@@ -80,6 +80,31 @@ describe('tool visibility matrix', () => {
   });
 });
 
+describe('library tag tools', () => {
+  it('annotates list_tags as read-only and tag_document as an idempotent, non-destructive write', () => {
+    const tool = (n: string) => MCP_TOOL_CATALOG.find((x) => x.name === n);
+    expect(tool('list_tags')?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    expect(tool('tag_document')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    expect(tool('list_tags')?.scope).toBe('library:read');
+    expect(tool('tag_document')?.scope).toBe('library:write');
+  });
+
+  it('shows the tag tools by library scope for every role and credential kind', async () => {
+    for (const role of ROLES) {
+      const session = await toolNames(t.env, principal(role, 'session', scopesForRole(role)));
+      expect(session.includes('list_tags'), role).toBe(scopesForRole(role).includes('library:read'));
+      expect(session.includes('tag_document'), role).toBe(scopesForRole(role).includes('library:write'));
+      const readKey = await toolNames(t.env, principal(role, 'api_key', capScopes(role, ['convert', 'library:read']), { apiKeyId: 'key_r' }));
+      expect(readKey.includes('list_tags'), role).toBe(true);
+      expect(readKey.includes('tag_document'), role).toBe(false);
+      const grant = oauthPrincipalScopes(role, ['convert', 'library:read', 'library:write'], OAUTH_GRANT_VERSION);
+      const oauth = await toolNames(t.env, principal(role, 'oauth', grant, { clientId: 'client_x' }));
+      expect(oauth.includes('list_tags'), role).toBe(true);
+      expect(oauth.includes('tag_document'), role).toBe(grant.includes('library:write'));
+    }
+  });
+});
+
 describe('MCP authorization', () => {
   it('rejects an unauthenticated request with 401', async () => {
     const res = await rpc(t.env, { kind: 'anonymous', userId: null, role: 'user', scopes: ['convert'] }, 'tools/list');

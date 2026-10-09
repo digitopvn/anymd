@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { scopesForRole } from '../src/auth/roles';
 import type { Principal } from '../src/env';
 import { LEGACY_VERSIONS, META_PROTOCOL_VERSION, META_SERVER_INFO, MODERN_VERSIONS } from '../src/mcp/protocol';
+import { MCP_TOOL_CATALOG } from '../src/mcp/server';
+import { isMutation } from '../src/mcp/tool-types';
 import { rpc, send } from './helpers/mcp-client';
 import { counter, createTestEnv, seedUser, type TestEnv } from './helpers/sqlite-env';
 
@@ -83,6 +85,30 @@ describe('modern protocol (2026-07-28)', () => {
   });
 });
 
+describe('library and reading tools in both eras', () => {
+  const schemaOf = (tools: { name: string; inputSchema: { properties: Record<string, unknown> } }[], name: string) => tools.find((x) => x.name === name)?.inputSchema.properties ?? {};
+
+  it('exposes deep reading options and the tags filter to modern and legacy clients alike', async () => {
+    for (const res of [await modern('tools/list'), await rpc(t.env, p, 'tools/list')]) {
+      const tools = res.body.result.tools;
+      expect(Object.keys(schemaOf(tools, 'read_url'))).toEqual(expect.arrayContaining(['expandThread', 'maxThreadPosts']));
+      expect(Object.keys(schemaOf(tools, 'list_documents'))).toEqual(expect.arrayContaining(['tags']));
+      expect(tools.map((x: { name: string }) => x.name)).toEqual(expect.arrayContaining(['tag_document', 'list_tags']));
+    }
+  });
+
+  it('runs the tag tools under the modern protocol', async () => {
+    const tags = await modern('tools/call', { name: 'list_tags', arguments: {} });
+    expect(tags.status).toBe(200);
+    expect(tags.body.result.structuredContent).toEqual({ items: [] });
+    const missing = await modern('tools/call', { name: 'tag_document', arguments: { id: 'doc_missing', add: ['ai'] } });
+    expect(missing.status).toBe(200);
+    expect(missing.body.result.isError).toBe(true);
+    const invalid = await modern('tools/call', { name: 'read_url', arguments: { url: 'https://example.com', maxThreadPosts: 1000 } });
+    expect(invalid.body.result.isError).toBe(true);
+  });
+});
+
 describe('legacy protocol (2025 clients)', () => {
   it('keeps initialize, ping and batches working', async () => {
     const init = await rpc(t.env, p, 'initialize', { protocolVersion: '2025-06-18' });
@@ -140,6 +166,12 @@ describe('MCP rate limits', () => {
     // Reads keep working while the mutation bucket is spent.
     expect((await rpc(t.env, p, 'tools/call', { name: 'list_site_optouts', arguments: {} })).status).toBe(200);
     expect(mutation.calls).toHaveLength(2);
+  });
+
+  it('keeps conversions and reads out of the mutation bucket, and counts tag edits in it', () => {
+    const tool = (n: string) => MCP_TOOL_CATALOG.find((x) => x.name === n)!;
+    for (const n of ['read_url', 'convert_url', 'list_tags', 'list_documents']) expect(isMutation(tool(n)), n).toBe(false);
+    expect(isMutation(tool('tag_document'))).toBe(true);
   });
 
   it('falls back to RL_AUTH and fails open when the limiter errors', async () => {

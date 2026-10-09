@@ -77,7 +77,7 @@ Roles are templates. Your account has exactly one.
 | `admin` | Run content, pages, settings and opt-outs; support lower-ranked users | `editor` scopes + every `:read` admin scope, `settings:write`, `optouts:write`, `users:sessions:write`, `users:credentials:write` |
 | `owner` | Full control | every scope, including `users:roles:write`, `credits:write` and `billing:write` |
 
-**Owner vs admin.** Changing roles and granting or revoking credits are owner-only. Admins can read everything operational and act on accounts ranked **below** their own: sign them out, suspend them, revoke their keys and grants. Nobody can change their own account through admin tools. `GET /api/v1/admin/roles` returns the live role templates and presets.
+**Owner vs admin.** Changing roles and granting or revoking credits are owner-only. Admins can read everything operational and act on accounts ranked **below** their own: sign them out, suspend them, revoke their keys and grants. Nobody can change their own account through admin tools. Reading is not ranked: an admin with `users:read` can view any account's support context, including an owner's API key and OAuth grant metadata (key name, prefix, scopes, created, last used, expiry and revocation; grant client and scopes). That view is read-only and never includes key secrets, token hashes or session tokens, so admins can audit who holds which access without being able to use or change it. `GET /api/v1/admin/roles` returns the live role templates and presets.
 
 **Plans follow billing.** A user's plan comes from the billing provider and cannot be edited by hand. To give someone more allowance for support or a promotion, grant credits instead: an active grant raises their monthly allowance until it expires or is revoked.
 

@@ -64,7 +64,7 @@ async function usageTotals(env: Env, since: number, filter = '', binds: unknown[
 }
 
 export const SystemUsageQuery = z.object({
-  days: z.number().int().min(1).max(90).optional().describe('Window in days, default 7'),
+  days: z.number().int().min(1).max(30).optional().describe('Window in days, default 7, at most 30'),
   channel: z.enum(['web', 'api', 'mcp', 'cli', 'webmcp']).optional(),
   kind: z.string().max(40).optional(),
 });

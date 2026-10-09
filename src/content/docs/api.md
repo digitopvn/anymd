@@ -443,7 +443,7 @@ curl https://anymd.cc/api/v1/admin/credits \
 | `GET /admin/audit` | `?action=user.*&actorUserId=&target=&targetType=&since=&until=&cursor=&limit=` | `audit:read` |
 | `GET /admin/audit/export` | Same filters; NDJSON, up to 5,000 rows (`X-Anymd-Count`, `X-Anymd-Truncated`) | `audit:read` |
 | `GET /admin/system/overview` | | `system:read` |
-| `GET /admin/system/usage` | `?days=7&channel=&kind=` | `system:read` |
+| `GET /admin/system/usage` | `?days=7&channel=&kind=` (`days` 1–30) | `system:read` |
 | `GET /admin/system/traces` | `?sort=recent\|slowest&status=&kind=&userId=&since=&cursor=&limit=` | `system:read` |
 | `GET /admin/system/traces/:id` | | `system:read` |
 
