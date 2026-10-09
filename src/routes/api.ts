@@ -28,9 +28,11 @@ import {
 import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { convertBlobToMarkdown, documentCreditCost, mimeFor } from '../convert/document';
 import { runConversion } from '../convert/service';
+import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError, countWords, type ConvertResult } from '../convert/types';
 import type { AppBindings, Principal } from '../env';
 import { embedDocument, getDocument, listDocuments, saveDocument, deleteDocument, updateTags } from '../library/store';
+import { editTags, listTags, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags, parseTagFilter } from '../library/store';
 import { getSettings, putSettings } from '../lib/settings';
 import { Tracer } from '../lib/tracer';
 import { canSpend, recordUsage } from '../lib/usage';
@@ -107,6 +109,7 @@ api.get('/me', requireScope(), async (c) => {
 // ─── Convert ────────────────────────────────────────────────────────────────
 
 const ConvertBody = z.object({
+  ...enrichmentOptions,
   url: z.string().min(1).max(4000),
   language: z.string().max(20).optional(),
   selector: z.string().max(200).optional(),
@@ -120,6 +123,8 @@ const ConvertBody = z.object({
 api.post('/convert', requireScope('convert'), async (c) => {
   const b = await body(c, ConvertBody);
   const r = await runConversion(c.env, c.executionCtx, {
+    includeComments: b.includeComments, analyzeImages: b.analyzeImages,
+    maxComments: b.maxComments, maxImages: b.maxImages, maxCredits: b.maxCredits,
     url: b.url,
     channel: channelFor(c),
     principal: c.get('principal'),
@@ -180,8 +185,25 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
 
 api.get('/library', requireScope('library:read'), async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 20, 1), 100);
-  const items = await listDocuments(c.env, me(c).userId, { limit, before: Number(c.req.query('before')) || undefined, domain: c.req.query('domain') || undefined, kind: c.req.query('kind') || undefined });
+  // `?tag=a&tag=b` or `?tag=a,b`: documents carrying every tag.
+  const tags = parseTagFilter(c.req.queries('tag'));
+  const items = await listDocuments(c.env, me(c).userId, { limit, before: Number(c.req.query('before')) || undefined, domain: c.req.query('domain') || undefined, kind: c.req.query('kind') || undefined, tags });
   return c.json({ items, next_cursor: items.length === limit ? items[items.length - 1].created_at : null });
+});
+
+// Registered before /library/:id so "tags" is not taken for a document id.
+api.get('/library/tags', requireScope('library:read'), async (c) => {
+  return c.json({ items: await listTags(c.env, me(c).userId, Number(c.req.query('limit')) || 100) });
+});
+
+const TagList = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAGS);
+api.post('/library/:id/tags', requireScope('library:write'), async (c) => {
+  const b = await body(c, z.object({ add: TagList.optional(), remove: TagList.optional(), set: TagList.optional() }).strict());
+  if (b.set && (b.add || b.remove)) return apiError(c, 422, 'invalid_request', 'Use either `set`, or `add` and/or `remove`, not both.');
+  if (!b.set && !b.add && !b.remove) return apiError(c, 422, 'invalid_request', 'Pass `add`, `remove` or `set`.');
+  const tags = await editTags(c.env, me(c).userId, c.req.param('id'), b);
+  if (!tags) return apiError(c, 404, 'not_found', 'Document not found');
+  return c.json({ id: c.req.param('id'), tags });
 });
 
 api.get('/library/:id', requireScope('library:read'), async (c) => {
@@ -191,7 +213,7 @@ api.get('/library/:id', requireScope('library:read'), async (c) => {
     const md = `---\ntitle: ${JSON.stringify(doc.title)}\nsource: ${JSON.stringify(doc.url)}\n---\n\n${doc.markdown}`;
     return c.body(md, 200, { 'Content-Type': 'text/markdown; charset=utf-8' });
   }
-  return c.json({ ...doc, tags: doc.tags.split(' ').filter(Boolean) });
+  return c.json({ ...doc, tags: parseStoredTags(doc.tags) });
 });
 
 api.patch('/library/:id', requireScope('library:write'), async (c) => {
@@ -436,4 +458,3 @@ admin.put('/settings', requireScope('settings:write'), async (c) => {
 });
 
 api.route('/admin', admin);
-

@@ -1,7 +1,7 @@
 ---
 title: "Library & search"
 description: "How anymd saves your conversions and searches them with BM25, full-text, semantic and hybrid modes, query fan-out, RRF and Jev."
-updated: "2026-09-26"
+updated: "2026-10-09"
 ---
 
 Sign in (or use an API key) and every conversion lands in your private library. Then you can find it again the way you remember it: by exact words, by a phrase, or by the idea.
@@ -37,7 +37,7 @@ Search costs **0 credits** in every mode.
 | Phrase | `"reciprocal rank fusion"` |
 | Boolean | `cloudflare AND workers NOT pages` |
 | Prefix | `embed*` |
-| Column filter | `title:markdown`, `domain:github.com` |
+| Column filter | `title:markdown`, `domain:github.com`, `tags:rag` |
 
 If the syntax is invalid, anymd falls back to plain keyword matching instead of failing the request.
 
@@ -116,5 +116,19 @@ Values are illustrative. Snippets from keyword matches wrap hits in `<mark>` tag
 ## Tips
 
 - Remember exact words? `bm25`. Remember a phrase? `fulltext` with quotes. Remember the gist? `semantic` or `hybrid`.
-- Tag documents with `PATCH /api/v1/library/:id` (`{"tags": ["rag", "research"]}`); tags are indexed and weighted highly.
-- Browse instead of search with `GET /api/v1/library?domain=github.com` or `?kind=youtube`.
+- Tag documents to find them again; tags are indexed and weighted highly (see Tags below).
+- Browse instead of search with `GET /api/v1/library?domain=github.com`, `?kind=youtube` or `?tag=rag`.
+
+## Tags
+
+Tags are your own labels on library documents. They are lowercased and keep only letters, digits, `-` and `_` (`Machine Learning` becomes `machinelearning`). A document holds at most 20; an edit that would exceed that fails with `too_many_tags` rather than dropping tags.
+
+| Channel | Edit | List tags | Filter by tag |
+|---|---|---|---|
+| REST | `POST /library/:id/tags` `{ add?, remove? }` or `{ set }`; `PATCH /library/:id` `{ tags }` replaces | `GET /library/tags` | `GET /library?tag=a&tag=b` |
+| MCP | `tag_document` | `list_tags` | `list_documents` `{ tags }` |
+| WebMCP | `tag_document` | `list_tags` | `list_documents` `{ tags }` |
+| CLI | `anymd tag <id> --add a,b --remove c` or `--set a,b` | `anymd tags` | `anymd ls --tag a,b` |
+| Dashboard | Tags field on a document | Tag chips on the Library page | Click a tag chip |
+
+Tag filters match whole tags: `ai` never matches `rai` or `ai-safety`. Several tags mean every one must be present. Search modes don't take a tag filter; in `fulltext` mode you can use the FTS5 column filter `tags:rag`. It matches tokens, not whole tags, so `tags:ai` also matches `ai-safety`; prefer the exact tag filter when that matters. Editing tags needs `library:write`; listing and filtering need `library:read`.

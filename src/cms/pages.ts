@@ -111,7 +111,7 @@ function createNode(input: z.infer<typeof newBlock>): BlockNode {
   const { version, props } = validateProps(input.type, input.props);
   const size = input.size ?? def!.defaultSize;
   if (!def!.sizes.includes(size)) throw new PageError(`${input.type} supports sizes: ${def!.sizes.join(', ')}`, 422, 'invalid_size');
-  const node: BlockNode = { id: newId('b_').slice(0, 14), type: input.type, version, size, props };
+  const node: BlockNode = { id: newId('b_'), type: input.type, version, size, props };
   if (def!.slots) node.slots = Object.fromEntries(def!.slots.map((s) => [s, []]));
   return node;
 }
@@ -147,7 +147,7 @@ function targetList(doc: PageDocument, parentId?: string, slot?: string): BlockN
 function cloneWithNewIds(node: BlockNode): BlockNode {
   return {
     ...structuredClone(node),
-    id: newId('b_').slice(0, 14),
+    id: newId('b_'),
     slots: node.slots ? Object.fromEntries(Object.entries(node.slots).map(([k, v]) => [k, v.map(cloneWithNewIds)])) : undefined,
   };
 }

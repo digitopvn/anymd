@@ -69,8 +69,10 @@ const usageError = (message) =>
 const LONG_VALUE = {
   key: 'key', base: 'base', output: 'output', mode: 'mode', limit: 'limit',
   domain: 'domain', slug: 'slug', title: 'title', template: 'template', file: 'file',
+  tag: 'tag', add: 'add', remove: 'remove', set: 'set',
+  'max-comments': 'maxComments', 'max-images': 'maxImages', 'max-credits': 'maxCredits',
 };
-const LONG_BOOL = { json: 'json', 'no-save': 'noSave', fresh: 'fresh', help: 'help', version: 'version' };
+const LONG_BOOL = { json: 'json', 'no-save': 'noSave', fresh: 'fresh', help: 'help', version: 'version', 'include-comments': 'includeComments', 'analyze-images': 'analyzeImages' };
 const SHORT = { h: 'help', v: 'version', o: 'output' };
 
 /** Parse argv into `{ flags, positionals }`. Supports `--name value`, `--name=value`, `-o value` and `--`. */
@@ -449,9 +451,20 @@ async function cmdConvert(ctx, args) {
   const [raw] = expectArgs(args, 1, 'anymd convert <url> [--json] [-o file] [--no-save] [--fresh]');
   const target = normalizeTargetUrl(raw);
   const { json, noSave, fresh } = ctx.flags;
+  const extras = {};
+  for (const [name, max] of [['maxComments', 1000], ['maxImages', 20], ['maxCredits', 1000]]) {
+    if (ctx.flags[name] !== undefined) {
+      const value = Number(ctx.flags[name]);
+      if (!Number.isInteger(value) || value < 1 || value > max) throw usageError(`${name} must be an integer between 1 and ${max}`);
+      extras[name] = value;
+    }
+  }
+  if (ctx.flags.includeComments) extras.includeComments = true;
+  if (ctx.flags.analyzeImages) extras.analyzeImages = true;
+  if (extras.includeComments || extras.analyzeImages) requireKey(ctx);
   let res;
   if (ctx.key) {
-    const body = { url: target, format: json ? 'json' : 'markdown' };
+    const body = { url: target, format: json ? 'json' : 'markdown', ...extras };
     if (noSave) body.save = false;
     if (fresh) body.fresh = true;
     res = await request(ctx, 'POST', '/api/v1/convert', {
@@ -461,7 +474,7 @@ async function cmdConvert(ctx, args) {
   } else {
     res = await request(ctx, 'GET', `/${target}`, {
       auth: false,
-      query: { format: json ? 'json' : undefined, fresh: fresh ? '1' : undefined, save: noSave ? '0' : undefined },
+      query: { format: json ? 'json' : undefined, fresh: fresh ? '1' : undefined, save: noSave ? '0' : undefined, ...extras },
       accept: json ? 'application/json' : 'text/markdown',
     });
   }
@@ -501,10 +514,11 @@ async function cmdSearch(ctx, args) {
 }
 
 async function cmdList(ctx, args) {
-  expectArgs(args, 0, 'anymd ls [--limit 20] [--domain x]');
+  expectArgs(args, 0, 'anymd ls [--limit 20] [--domain x] [--tag a,b]');
   const limit = parseLimit(ctx.flags.limit, 20);
+  const tag = ctx.flags.tag === undefined ? undefined : parseTagList(ctx.flags.tag, '--tag').join(',') || undefined;
   const data = await readJson(
-    await request(ctx, 'GET', '/api/v1/library', { query: { limit, domain: ctx.flags.domain } }),
+    await request(ctx, 'GET', '/api/v1/library', { query: { limit, domain: ctx.flags.domain, tag } }),
   );
   if (ctx.flags.json) return ctx.out(toJson(data));
   const items = pickArray(data, 'items', 'documents');
@@ -533,6 +547,39 @@ async function cmdRemove(ctx, args) {
   const [id] = expectArgs(args, 1, 'anymd rm <id>');
   await request(ctx, 'DELETE', `/api/v1/library/${enc(id)}`);
   ctx.out(`Deleted ${id}\n`);
+}
+
+/** Split a comma-separated flag value into trimmed, non-empty tags. */
+export function parseTagList(value, flag) {
+  const tags = String(value).split(',').map((t) => t.trim()).filter(Boolean);
+  if (tags.some((t) => t.length > 40)) throw usageError(`${flag}: tags can be at most 40 characters`);
+  return tags;
+}
+
+async function cmdTag(ctx, args) {
+  const usage = 'anymd tag <id> [--add a,b] [--remove c] | --set a,b';
+  const [id] = expectArgs(args, 1, usage);
+  const body = {};
+  if (ctx.flags.add !== undefined) body.add = parseTagList(ctx.flags.add, '--add');
+  if (ctx.flags.remove !== undefined) body.remove = parseTagList(ctx.flags.remove, '--remove');
+  if (ctx.flags.set !== undefined) body.set = parseTagList(ctx.flags.set, '--set');
+  if (body.set && (body.add || body.remove)) throw usageError('use either --set, or --add and/or --remove, not both');
+  for (const flag of ['add', 'remove']) if (body[flag]?.length === 0) throw usageError(`--${flag} needs at least one tag (use --set "" to clear all tags)`);
+  if (!body.set && !body.add && !body.remove) throw usageError(`usage: ${usage}`);
+  const data = await readJson(await request(ctx, 'POST', `/api/v1/library/${enc(id)}/tags`, { json: body }));
+  if (ctx.flags.json) return ctx.out(toJson(data));
+  const tags = pickArray(data, 'tags');
+  ctx.out(tags.length ? `${tags.map((t) => `#${t}`).join(' ')}\n` : 'No tags.\n');
+}
+
+async function cmdTags(ctx, args) {
+  expectArgs(args, 0, 'anymd tags [--limit 100] [--json]');
+  const limit = parseLimit(ctx.flags.limit, 100, 500);
+  const data = await readJson(await request(ctx, 'GET', '/api/v1/library/tags', { query: { limit } }));
+  if (ctx.flags.json) return ctx.out(toJson(data));
+  const items = pickArray(data, 'items');
+  if (!items.length) return ctx.out('No tags.\n');
+  ctx.out(formatTable(['TAG', 'DOCS'], items.map((t) => [pick(t, 'tag') ?? '-', String(pick(t, 'count') ?? 0)]), ctx.colors));
 }
 
 async function cmdUsage(ctx, args) {
@@ -741,6 +788,7 @@ async function cmdMcp(ctx, args) {
 
 const COMMANDS = {
   convert: cmdConvert, file: cmdFile, search: cmdSearch, ls: cmdList, get: cmdGet, rm: cmdRemove,
+  tag: cmdTag, tags: cmdTags,
   usage: cmdUsage, login: cmdLogin, logout: cmdLogout, whoami: cmdWhoami, pages: cmdPages, mcp: cmdMcp,
 };
 
@@ -753,9 +801,13 @@ ${bold('Usage')}
   anymd convert <url> [--json] [-o file] [--no-save] [--fresh]
   anymd file <path> [--json] [-o file] Convert a local file (PDF, DOCX, XLSX, CSV, images…; max 20 MB)
   anymd search <query> [--mode hybrid] [--limit 10] [--json]
-  anymd ls [--limit 20] [--domain x]   List documents in your library
+  anymd ls [--limit 20] [--domain x] [--tag a,b]
+                                       List documents in your library (--tag: all tags must match)
   anymd get <id> [-o file]             Print a library document as Markdown
   anymd rm <id>                        Delete a library document
+  anymd tag <id> [--add a,b] [--remove c] | --set a,b
+                                       Edit a document's tags (--set "" clears; max 20 per document)
+  anymd tags [--limit 100]             List your tags with document counts
   anymd usage                          Show plan, quota and usage
   anymd login [--key amd_…]            Save an API key (validated against the server)
   anymd logout                         Remove the saved API key
@@ -769,6 +821,11 @@ ${bold('Options')}
   -o, --output <f>  Write the result to a file instead of stdout
   --no-save         Do not save the conversion to your library
   --fresh           Bypass the cache
+  --include-comments  Read comments and replies (requires a key; extra credits)
+  --analyze-images    OCR and describe article images (requires a key; extra credits)
+  --max-comments <n>  Comment/reply limit, 1–1000 (default 100)
+  --max-images <n>    Image limit, 1–20 (default 10)
+  --max-credits <n>   Hard request credit limit, 1–1000 (default 100)
   --mode <m>        Search mode: ${SEARCH_MODES.join(', ')}
   --limit <n>       Number of results
   --key <amd_…>     API key (overrides ANYMD_API_KEY and the config file)

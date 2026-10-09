@@ -60,13 +60,20 @@ const readUrlSchema = {
   properties: {
     url: { type: 'string', description: 'The public URL to read, with or without https://' },
     save: { type: 'boolean', description: 'Save to the library when signed in (default true)' },
+    includeComments: { type: 'boolean', description: 'Read raw comments and replies (extra credits)' },
+    analyzeImages: { type: 'boolean', description: 'OCR and describe article images (extra credits)' },
+    maxComments: { type: 'integer', minimum: 1, maximum: 1000, default: 100 },
+    maxImages: { type: 'integer', minimum: 1, maximum: 20, default: 10 },
+    maxCredits: { type: 'integer', minimum: 1, maximum: 1000, default: 100 },
   },
   required: ['url'],
 };
 
 async function readUrl(input: Input): Promise<string> {
   const save = typeof input.save === 'boolean' ? input.save : undefined;
-  const { data } = await convertUrl(requiredString(input, 'url', 4000), save);
+  const options: Record<string, unknown> = {};
+  for (const key of ['includeComments', 'analyzeImages', 'maxComments', 'maxImages', 'maxCredits']) if (input[key] !== undefined) options[key] = input[key];
+  const { data } = await convertUrl(requiredString(input, 'url', 4000), save, options);
   return data.markdown;
 }
 
@@ -112,13 +119,58 @@ const listTool = tool(
     properties: {
       limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Max documents (default 20)' },
       domain: { type: 'string', description: 'Only documents from this domain' },
+      tags: { type: 'array', items: { type: 'string', maxLength: 40 }, maxItems: 10, description: 'Only documents carrying every one of these tags' },
     },
   },
   async (input) => {
     const params = new URLSearchParams({ limit: String(clampInt(input.limit, 1, 100, 20)) });
     if (typeof input.domain === 'string' && input.domain.trim()) params.set('domain', input.domain.trim().slice(0, 253));
+    for (const tag of optionalTags(input, 'tags', 10) ?? []) params.append('tag', tag);
     return json((await request(`/api/v1/library?${params}`)).data);
   },
+);
+
+// ─── Library tags ───────────────────────────────────────────────────────────
+
+/** An optional array of tag strings; the server normalizes and enforces the per-document cap. */
+function optionalTags(input: Input, key: string, maxItems: number): string[] | undefined {
+  const v = input[key];
+  if (v === undefined) return undefined;
+  if (!Array.isArray(v) || v.some((t) => typeof t !== 'string')) throw new Error(`\`${key}\` must be an array of strings.`);
+  if (v.length > maxItems) throw new Error(`\`${key}\` accepts at most ${maxItems} tags.`);
+  if (v.some((t: string) => t.length > 40)) throw new Error('Tags can be at most 40 characters.');
+  return v as string[];
+}
+
+const tagListSchema = { type: 'array', items: { type: 'string', maxLength: 40 }, maxItems: 20 };
+
+const tagTool = tool(
+  'tag_document',
+  "Add and/or remove tags on a document in the signed-in user's anymd library, or replace them all with set. At most 20 tags per document. Returns the resulting tags.",
+  {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: 'Document id (doc_…)' },
+      add: { ...tagListSchema, description: 'Tags to add' },
+      remove: { ...tagListSchema, description: 'Tags to remove' },
+      set: { ...tagListSchema, description: 'Replace all tags (not combinable with add/remove; [] clears)' },
+    },
+    required: ['id'],
+  },
+  async (input) => {
+    const id = requiredString(input, 'id', 100);
+    const body = { add: optionalTags(input, 'add', 20), remove: optionalTags(input, 'remove', 20), set: optionalTags(input, 'set', 20) };
+    if (body.set && (body.add || body.remove)) throw new Error('Use either `set`, or `add` and/or `remove`, not both.');
+    if (!body.set && !body.add && !body.remove) throw new Error('Pass `add`, `remove` or `set`.');
+    return json((await request(`/api/v1/library/${encodeURIComponent(id)}/tags`, { method: 'POST', body })).data);
+  },
+);
+
+const listTagsTool = tool(
+  'list_tags',
+  "List the tags in the signed-in user's anymd library with how many documents carry each, most used first.",
+  { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 500, description: 'Max tags (default 100)' } } },
+  async (input) => json((await request(`/api/v1/library/tags?limit=${clampInt(input.limit, 1, 500, 100)}`)).data),
 );
 
 async function signedIn(): Promise<boolean> {
@@ -134,7 +186,7 @@ export async function initWebMcp(): Promise<void> {
   const mc = (navigator as Navigator & { modelContext?: ModelContext }).modelContext;
   if (!mc || (typeof mc.registerTool !== 'function' && typeof mc.provideContext !== 'function')) return;
   const tools = [readTool, convertTool, pageMarkdownTool];
-  if (await signedIn()) tools.push(searchTool, listTool);
+  if (await signedIn()) tools.push(searchTool, listTool, listTagsTool, tagTool);
   // registerTool adds to what other scripts (the page editor) register; provideContext replaces it.
   if (typeof mc.registerTool === 'function') {
     for (const t of tools) {

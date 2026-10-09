@@ -44,7 +44,7 @@ export function Converter({ compact = false, autofocus = false }: { compact?: bo
   ];
   return (
     <div class="w-full" data-converter>
-      <form class="card flex flex-col gap-2 p-2 sm:flex-row sm:items-center shadow-pop" data-converter-form action="/convert" method="get">
+      <form class="card flex flex-col gap-2 p-2 sm:flex-row sm:flex-wrap sm:items-center shadow-pop" data-converter-form action="/convert" method="get">
         <label for="convert-url" class="sr-only">
           URL to convert
         </label>
@@ -67,6 +67,19 @@ export function Converter({ compact = false, autofocus = false }: { compact?: bo
         <button type="submit" class="btn btn-primary h-12 sm:w-auto" data-converter-submit>
           Convert <Icon name="arrow" size={16} />
         </button>
+        <details class="w-full px-3 py-2 text-sm">
+          <summary class="cursor-pointer font-medium">Reading options & credit limit</summary>
+          <div class="mt-3 flex flex-wrap gap-4">
+            <label class="flex items-center gap-2"><input type="checkbox" name="includeComments" value="1" /> Include comments and replies</label>
+            <label class="flex items-center gap-2"><input type="checkbox" name="analyzeImages" value="1" /> Read text and details in images</label>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-3">
+            <label>Max comments <input class="ml-1 w-20 rounded border p-1" name="maxComments" type="number" min="1" max="1000" value="100" /></label>
+            <label>Max images <input class="ml-1 w-20 rounded border p-1" name="maxImages" type="number" min="1" max="20" value="10" /></label>
+            <label>Max credits <input class="ml-1 w-20 rounded border p-1" name="maxCredits" type="number" min="1" max="1000" value="100" /></label>
+          </div>
+          <p class="mt-2 text-muted">Sign in for extra reading options. X threads expand automatically for accounts. Extra content uses credits; cached results are free. <a class="text-link" href="/docs/billing">See prices</a>.</p>
+        </details>
       </form>
       {compact ? null : (
         <div class="mt-3 flex flex-wrap items-center gap-2 text-[13px]">

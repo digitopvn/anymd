@@ -25,7 +25,7 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 
 | Path | Owns |
 |---|---|
-| `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, file conversion (`document.ts`) |
+| `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, bounded enrichment (`enrichment-types.ts`, `image-enrichment.ts`, `x-thread.ts`, and social adapters), file conversion (`document.ts`) |
 | `src/library/` | Library persistence and embeddings (`store.ts`), search modes, fan-out and RRF (`search.ts`), Jev tie-break (`jev.ts`) |
 | `src/auth/` | Principal resolution, scope guards, same-origin writes (`middleware.ts`), users/sessions/API keys (`identity.ts`), role templates and key presets (`roles.ts`) |
 | `src/billing/` | Plans, credit table, offers (`plans.ts`); `provider.ts` routes checkout and portal to the provider named by `BILLING_PROVIDER`: Creem (`creem.ts`: checkout, portal, webhooks) or Polar (`polar.ts`: also usage ingest for metered overage) |
@@ -53,6 +53,8 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 3. On a miss: quota check (signed-in) or anonymous daily counter, then `pickAdapter` → adapter. Adapters are tried in registry order; the web adapter is the fallback and itself hands binary responses to `document.ts`.
 4. Credits come from the adapter's resulting `sourceKind`. The quota pre-check uses the cheapest cost because the kind is unknown until the adapter runs.
 5. Save to the library when signed in, `save !== false` and the principal has `library:write`. Embedding, usage recording and (when Polar is the provider) Polar usage ingest run in `waitUntil` so they never add latency or fail the request.
+
+Signed-in X conversions may expand the rooted same-author thread automatically. Comments and article-image analysis are explicit opt-ins, and Facebook, Instagram, Threads and LinkedIn adapters require an account. Enrichment coverage is returned with the conversion so provider failures, limits and timeouts remain visible instead of looking complete; the executable bounds and unit prices live in `src/convert/enrichment-types.ts` and `src/billing/plans.ts`.
 
 Why a caller-independent cache: identical URLs are converted once per hour for everyone, and cached hits are free, which is the pricing promise.
 
@@ -83,4 +85,4 @@ Add schema changes as a new numbered file in `migrations/`; never edit an applie
 
 ## Graceful degradation
 
-Every secret in `src/env.ts` is optional. Missing key for the `BILLING_PROVIDER` provider → no billing; missing transcript keys → YouTube without transcripts; missing OpenRouter/TypeSafe → fan-out via Workers AI and no Jev; missing Resend → no email. Keep new integrations behind the same pattern: detect the secret, do nothing harmful without it.
+Every secret in `src/env.ts` is optional. Missing key for the `BILLING_PROVIDER` provider → no billing; missing transcript keys → YouTube without transcripts; missing `RAPIDAPI_KEY` → social adapters are unavailable; missing `OPENROUTER_API_KEY` → image analysis is unavailable while fan-out can still use Workers AI and Jev can remain disabled; missing Resend → no email. Image analysis uses the `qwen/qwen3.6-35b-a3b` model when OpenRouter is configured. Keep new integrations behind the same pattern: detect the secret, do nothing harmful without it.

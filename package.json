@@ -1,6 +1,6 @@
 {
   "name": "anymd",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "The web context layer for AI agents: read public web content as structured Markdown, remember it in a private searchable library, and use it over MCP, API and CLI.",

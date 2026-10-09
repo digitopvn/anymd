@@ -1,6 +1,6 @@
 {
   "name": "@digitop/anymd-cli",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Read public URLs and files as clean Markdown with anymd.cc, the web context layer for AI agents, and search your library from the terminal.",
   "type": "module",
   "bin": {
