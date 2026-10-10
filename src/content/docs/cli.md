@@ -110,6 +110,8 @@ Download YouTube videos to the anymd CDN (off by default, 20 credits per video w
 anymd prefs set downloadVideo=on
 anymd convert https://www.youtube.com/watch?v=dQw4w9WgXcQ   # ends with "## Video download … Job: `vid_…`"
 anymd video vid_…                                              # status, then cdn_url
+anymd prefs set analyzeVideo=on                                # also AI-analyze each downloaded video (10 + 20 credits per started minute)
+anymd video vid_…                                              # analysis status, then the analysis Markdown
 ```
 
 `anymd prefs` works with any key that has `convert`. `prefs set` and `prefs reset` change what every key and client of your account may spend, so they need a key with the `keys:manage` scope (the **Everything my role allows** preset); a **Convert only** key gets `forbidden`.

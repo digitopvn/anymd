@@ -86,6 +86,12 @@ The lowest-quality MP4 of this video is being downloaded to the anymd CDN in the
 
 Status goes `queued` → `downloading` → `ready` or `failed`. Reading the same video again returns the running or finished job instead of starting a new one. When the account cannot pay for a download or the feature is unavailable, the section says why and no job starts.
 
+### AI video analysis
+
+Also off by default, and only available with video download on: turn on **Analyze downloaded videos with AI** (`{"analyzeVideo": true}`). Once the MP4 is `ready`, Google's Gemini 3.8 Flash (`google/gemini-3.8-flash`, through OpenRouter) watches and listens to it and writes a Markdown analysis: summary, a timeline with `mm:ss` timestamps, spoken content, on-screen text and visual details, in the video's main language. Keep polling the same job until `analysis.status` is `ready` (the result is `analysis.markdown`) or `failed` (see `analysis.error`). A later read of a video whose analysis is ready includes it in the Markdown under **Video analysis (AI-generated)**.
+
+It costs **10 credits plus 20 per started minute** of video (a 19-second clip is 30 credits, a 3.5-minute video 90), charged only when the analysis is ready. Videos longer than 60 minutes are not analyzed (`video_too_long`), and an account without enough credits for the video's length gets `quota_exceeded` before the model runs. Turning the setting on later and reading a video again adds an analysis to its existing download.
+
 ## Hacker News
 
 `news.ycombinator.com/item?id=…` uses the official Hacker News API: the story (points, author, comment count, link, text) and the top 20 comment threads, each with up to 3 replies, nested as blockquotes up to 3 levels deep.

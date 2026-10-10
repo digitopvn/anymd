@@ -192,7 +192,7 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
     // Per-account and asynchronous, so it runs after the shared cache and is never cached itself.
     let videoDownload: VideoDownloadState | null = null;
     if (result.sourceKind === 'youtube' && principal.userId && preferences?.downloadVideo) {
-      videoDownload = await tracer.span('video.start', () => startVideoDownload(env, principal, plan, req.channel, result!.source));
+      videoDownload = await tracer.span('video.start', () => startVideoDownload(env, principal, plan, req.channel, result!.source, preferences.analyzeVideo));
       if (videoDownload) markdown = `${markdown.trimEnd()}\n\n${videoDownloadMarkdown(videoDownload)}\n`;
     }
     const credits = cached ? 0 : budget?.used ?? creditCost(result.sourceKind);

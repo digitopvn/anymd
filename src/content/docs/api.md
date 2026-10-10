@@ -197,6 +197,7 @@ A partial update: send only the fields to change; the rest keep their saved valu
 | `maxImages` | integer | `10` | 1–20 |
 | `maxCredits` | integer | `100` | 1–1,000; cap per conversion including the base price |
 | `downloadVideo` | boolean | `false` | Saved setting only: YouTube reads also download the lowest-quality video to the anymd CDN in the background; 20 credits per video, charged when ready. See [GET /videos/:id](#get-videosid) |
+| `analyzeVideo` | boolean | `false` | Saved setting only; needs `downloadVideo`: each downloaded video (up to 60 minutes) is analyzed by `google/gemini-3.8-flash`; 10 + 20 credits per started minute, charged when ready |
 
 ```bash
 curl -X PUT https://anymd.cc/api/v1/account/reading-preferences \
@@ -222,6 +223,15 @@ curl https://anymd.cc/api/v1/videos/vid_… -H "Authorization: Bearer amd_…"
 ```
 
 `status` is `queued`, `downloading`, `ready` or `failed`; `error` names the failure (for example `video_unavailable`, `video_too_large`, `provider_unavailable`) and a failed job costs nothing. Jobs belong to the account that started them: another account gets `404 not_found`. Scope: `convert`; signed-in callers only. MCP: `get_video_download`.
+
+With `analyzeVideo` also on, the job carries `analysis` (`null` when no analysis was requested) and `duration_seconds`. After the download is `ready`, keep polling (`Retry-After` stays set) until `analysis.status` is `ready` or `failed`:
+
+```json
+"analysis": { "status": "ready", "model": "google/gemini-3.8-flash", "credits": 90,
+  "markdown": "### Summary\n…\n### Timeline\n- **00:00** …", "error": null }
+```
+
+`analysis.status` is `queued`, `running`, `ready` or `failed`; `analysis.error` is for example `video_too_long`, `quota_exceeded`, `analysis_failed` or `download_failed`, and a failed analysis costs nothing.
 
 ### POST /convert/file
 

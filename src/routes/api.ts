@@ -27,7 +27,7 @@ import {
 import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { convertBlobToMarkdown, documentCreditCost, mimeFor } from '../convert/document';
 import { runConversion, type NotSavedReason } from '../convert/service';
-import { getVideoJob, videoJobPayload } from '../convert/youtube-video';
+import { getVideoJob, videoJobPayload, videoJobPending } from '../convert/youtube-video';
 import { runSocialSearch, socialSearchPayload } from '../convert/social-search';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { applyPreferencesPatch, canWriteReadingPreferences, getReadingPreferences, PREFERENCES_WRITE_SCOPE, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences, type StoredReadingPreferences } from '../convert/reading-preferences';
@@ -209,7 +209,7 @@ api.get('/videos/:id', requireScope('convert'), async (c) => {
   const job = await getVideoJob(c.env, userId, c.req.param('id'));
   if (!job) return apiError(c, 404, 'not_found', 'Video download not found');
   c.header('Cache-Control', 'no-store');
-  if (job.status === 'queued' || job.status === 'downloading') c.header('Retry-After', '15');
+  if (videoJobPending(job)) c.header('Retry-After', '15');
   return c.json(videoJobPayload(c.env, job));
 });
 

@@ -48,8 +48,8 @@ anymd search "vector databases" --mode hybrid --limit 10
 | `anymd pages blocks` | Block catalog (types, sizes, slots). |
 | `anymd mcp` | Print MCP config snippets for Claude Code, Cursor and Claude Desktop. |
 | `anymd prefs [show]` | Show your saved reading (deep reading) defaults. |
-| `anymd prefs set <field>=<value>…` | Change saved defaults, e.g. `anymd prefs set expandThread=on maxThreadPosts=30`. Fields: `expandThread`, `includeComments`, `keepImages`, `analyzeImages`, `downloadVideo` (true/false) and `maxThreadPosts`, `maxComments`, `maxImages`, `maxCredits` (integers). |
-| `anymd video <id>` | Check a background YouTube video download started by a conversion when `downloadVideo` is on: status, then the CDN URL of the MP4. |
+| `anymd prefs set <field>=<value>…` | Change saved defaults, e.g. `anymd prefs set expandThread=on maxThreadPosts=30`. Fields: `expandThread`, `includeComments`, `keepImages`, `analyzeImages`, `downloadVideo`, `analyzeVideo` (true/false) and `maxThreadPosts`, `maxComments`, `maxImages`, `maxCredits` (integers). |
+| `anymd video <id>` | Check a background YouTube video download started by a conversion when `downloadVideo` is on: status, then the CDN URL of the MP4, and with `analyzeVideo` on the AI analysis of the video. |
 | `anymd prefs reset` | Delete saved defaults; deep reading is off again. `set` and `reset` need a key with `keys:manage` (the "Everything my role allows" preset). |
 
 `--json` prints the raw API response for every read command. `-o, --output <file>` writes

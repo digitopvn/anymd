@@ -363,6 +363,27 @@ describe('run: convert', () => {
     assert.deepEqual(JSON.parse(h.calls[1].body), { downloadVideo: true });
   });
 
+  test('video prints the AI analysis once ready and keeps polling while it runs', async () => {
+    const analysis = (status, markdown = null) => ({ status, model: 'google/gemini-3.8-flash', credits: status === 'ready' ? 30 : 0, markdown, error: null });
+    const job = (a) => ({ id: 'vid_1', status: 'ready', quality: '360p', cdn_url: 'https://cdn.anymd.test/v.mp4', credits: 20, error: null, analysis: a });
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: {
+        'GET /api/v1/videos/vid_1': () => jsonResponse(job(analysis('running'))),
+        'GET /api/v1/videos/vid_2': () => jsonResponse(job(analysis('ready', '## Summary\nA man at the zoo.'))),
+        'PUT /api/v1/account/reading-preferences': (call) => jsonResponse({ preferences: JSON.parse(call.body), saved: true }),
+      },
+    });
+    assert.equal(await h.exec(['video', 'vid_1']), 0);
+    assert.match(h.stdout, /analysis\s+running \(google\/gemini-3\.8-flash\)/);
+    assert.match(h.stdout, /check again/);
+    assert.equal(await h.exec(['video', 'vid_2']), 0);
+    assert.match(h.stdout, /ready \(google\/gemini-3\.8-flash, 30 credits\)/);
+    assert.match(h.stdout, /A man at the zoo/);
+    assert.equal(await h.exec(['prefs', 'set', 'analyzeVideo=on', '--json']), 0);
+    assert.deepEqual(JSON.parse(h.calls[2].body), { analyzeVideo: true });
+  });
+
   test('prefs set and reset explain the keys:manage scope on 403', async () => {
     const forbidden = () => jsonResponse({ error: { code: 'forbidden', message: 'Missing scope: keys:manage' } }, 403);
     for (const args of [['prefs', 'set', 'expandThread=on'], ['prefs', 'reset']]) {

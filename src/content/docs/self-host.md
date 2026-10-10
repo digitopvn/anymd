@@ -1,7 +1,7 @@
 ---
 title: "Self-hosting"
 description: "Deploy your own copy of anymd on Cloudflare Workers with D1, KV, R2, Vectorize and Workers AI, plus secrets and CI."
-updated: "2026-10-04"
+updated: "2026-10-10"
 ---
 
 anymd is MIT-licensed and runs as a single Cloudflare Worker. Everything the hosted service uses is in the repository at [github.com/digitopvn/anymd](https://github.com/digitopvn/anymd).
@@ -111,7 +111,7 @@ npm run secrets:production   # pushes every known secret found in .env, without 
 | `GITHUB_TOKEN` | Higher GitHub API rate limit for the changelog |
 | `RESEND_API_KEY` | Transactional email (welcome, password reset) |
 | `RAPIDAPI_KEY`, `VIDCAP_API_KEY` | YouTube transcripts (either works; RapidAPI is tried first) and the opt-in video download (either works; VidCap is tried first, with `VIDEO_QUEUE`). `RAPIDAPI_KEY` also enables Facebook, Instagram, Threads (API4) and LinkedIn adapters and their provider-backed comments. |
-| `OPENROUTER_API_KEY` | Query fan-out and Jev via OpenRouter (Workers AI is the fan-out fallback), plus article-image OCR and descriptions using `qwen/qwen3.6-35b-a3b` |
+| `OPENROUTER_API_KEY` | Query fan-out and Jev via OpenRouter (Workers AI is the fan-out fallback), article-image OCR and descriptions using `qwen/qwen3.6-35b-a3b`, and the opt-in video analysis using `google/gemini-3.8-flash` |
 | `TYPESAFE_API_KEY` | Jev directly from TypeSafe, when OpenRouter isn't configured |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | "Continue with GitHub" sign-in |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | "Continue with Google" sign-in |

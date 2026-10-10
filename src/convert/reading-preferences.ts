@@ -25,11 +25,15 @@ const fields = {
   maxImages: boundedInt('maxImages'),
   maxCredits: boundedInt('maxCredits'),
   downloadVideo: flag('downloadVideo'),
+  analyzeVideo: flag('analyzeVideo'),
 };
 
 const IMAGE_CONFLICT = 'analyzeImages requires keepImages: image analysis reads the images the conversion keeps';
+const VIDEO_CONFLICT = 'analyzeVideo requires downloadVideo: video analysis reads the downloaded video';
 
-export const ReadingPreferencesSchema = z.strictObject(fields).refine((p) => !(p.analyzeImages && !p.keepImages), { error: IMAGE_CONFLICT, path: ['analyzeImages'] });
+export const ReadingPreferencesSchema = z.strictObject(fields)
+  .refine((p) => !(p.analyzeImages && !p.keepImages), { error: IMAGE_CONFLICT, path: ['analyzeImages'] })
+  .refine((p) => !(p.analyzeVideo && !p.downloadVideo), { error: VIDEO_CONFLICT, path: ['analyzeVideo'] });
 
 /** A partial update: omitted fields keep their saved value. Unknown keys are rejected. */
 export const ReadingPreferencesPatchSchema = z.strictObject(fields).partial();
@@ -58,7 +62,8 @@ export function applyPreferencesPatch(current: ReadingPreferences, patch: unknow
 
 /**
  * Stored JSON is read leniently but deterministically: a value outside today's bounds is clamped,
- * anything malformed falls back to the safe default, and image analysis without kept images is off.
+ * anything malformed falls back to the safe default, and image analysis without kept images (or
+ * video analysis without video download) is off.
  */
 export function normalizeStoredPreferences(raw: string | null | undefined): ReadingPreferences {
   let data: Record<string, unknown> = {};
@@ -69,7 +74,7 @@ export function normalizeStoredPreferences(raw: string | null | undefined): Read
     // Corrupt rows read as the safe default rather than failing every conversion.
   }
   const out: ReadingPreferences = { ...DEFAULT_READING_PREFERENCES };
-  for (const key of ['expandThread', 'includeComments', 'keepImages', 'analyzeImages', 'downloadVideo'] as const) {
+  for (const key of ['expandThread', 'includeComments', 'keepImages', 'analyzeImages', 'downloadVideo', 'analyzeVideo'] as const) {
     if (typeof data[key] === 'boolean') out[key] = data[key];
   }
   for (const key of Object.keys(READING_LIMITS) as ReadingLimitKey[]) {
@@ -77,6 +82,7 @@ export function normalizeStoredPreferences(raw: string | null | undefined): Read
     if (typeof value === 'number' && Number.isFinite(value)) out[key] = Math.min(READING_LIMITS[key].max, Math.max(READING_LIMITS[key].min, Math.round(value)));
   }
   if (out.analyzeImages && !out.keepImages) out.analyzeImages = false;
+  if (out.analyzeVideo && !out.downloadVideo) out.analyzeVideo = false;
   return out;
 }
 

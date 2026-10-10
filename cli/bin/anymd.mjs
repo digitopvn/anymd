@@ -617,8 +617,12 @@ async function cmdVideo(ctx, args) {
   const job = await readJson(await request(ctx, 'GET', `/api/v1/videos/${enc(id)}`));
   if (ctx.flags.json) return ctx.out(toJson(job));
   const lines = [['id', job.id], ['status', job.status], ['quality', job.quality], ['cdn_url', job.cdn_url], ['credits', job.credits], ['error', job.error]];
-  ctx.out(lines.filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `${k.padEnd(8)}${v}\n`).join(''));
-  if (job.status === 'queued' || job.status === 'downloading') ctx.out(ctx.colors.dim('Still running: check again in 15–30 seconds.\n'));
+  const analysis = job.analysis;
+  if (analysis) lines.push(['analysis', `${analysis.status} (${analysis.model}${analysis.credits ? `, ${analysis.credits} credits` : ''}${analysis.error ? `, ${analysis.error}` : ''})`]);
+  ctx.out(lines.filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `${k.padEnd(9)}${v}\n`).join(''));
+  if (analysis?.status === 'ready' && analysis.markdown) ctx.out(`\n${analysis.markdown}\n`);
+  const running = job.status === 'queued' || job.status === 'downloading' || (job.status === 'ready' && (analysis?.status === 'queued' || analysis?.status === 'running'));
+  if (running) ctx.out(ctx.colors.dim('Still running: check again in 15–30 seconds.\n'));
 }
 
 async function cmdRemove(ctx, args) {
@@ -869,7 +873,7 @@ const PREFS_PATH = '/api/v1/account/reading-preferences';
 /** `key=value` pairs for `anymd prefs set`: booleans take true/false/on/off/1/0, limits take integers. */
 export function parsePreferenceAssignments(args) {
   if (!args.length) throw usageError('usage: anymd prefs set <field>=<value>… (e.g. expandThread=true maxThreadPosts=30)');
-  const booleans = ['expandThread', 'includeComments', 'keepImages', 'analyzeImages', 'downloadVideo'];
+  const booleans = ['expandThread', 'includeComments', 'keepImages', 'analyzeImages', 'downloadVideo', 'analyzeVideo'];
   const out = {};
   for (const arg of args) {
     const eq = arg.indexOf('=');
@@ -902,6 +906,7 @@ function formatPreferences(data, colors) {
   read images (OCR)       ${onOff(p.analyzeImages)}  max ${p.maxImages}   ${dim('extra credits')}
   max credits/conversion  ${p.maxCredits}
   YouTube video to CDN    ${onOff(p.downloadVideo)}            ${dim('extra credits, charged when ready')}
+  AI video analysis       ${onOff(p.analyzeVideo)}            ${dim('extra credits by video length, needs video download')}
 ${dim('Flags on a single conversion override these; omitted flags use them.')}
 `;
 }
@@ -973,7 +978,7 @@ ${bold('Usage')}
   anymd mcp                            Print MCP client configuration snippets
   anymd prefs [show] | set <field>=<value>… | reset
                                        Show or change your saved reading defaults
-  anymd video <id> [--json]            Check a YouTube video download (prefs set downloadVideo=on)
+  anymd video <id> [--json]            Check a YouTube video download and its AI analysis (prefs set downloadVideo=on analyzeVideo=on)
 
 ${bold('Options')}
   --json            Print raw JSON
