@@ -104,10 +104,11 @@ anymd convert https://x.com/example/status/123 --no-expand-thread   # this conve
 anymd prefs reset                                                    # deep reading off again
 ```
 
-Download YouTube videos to the anymd CDN (off by default, 20 credits per video when ready). Conversions of YouTube URLs then print a job id; check it until it is `ready`:
+Download a YouTube video to the anymd CDN (off by default, 20 credits per video when ready), and optionally have AI analyze it (10 + 20 credits per started minute when ready, videos up to 60 minutes). Per conversion with `--download-video` / `--analyze-video` (the latter implies the former; `--no-download-video` / `--no-analyze-video` switch a saved default off once), or as saved defaults. The conversion prints a job id; check it until it is `ready`:
 
 ```bash
-anymd prefs set downloadVideo=on
+anymd convert https://www.youtube.com/watch?v=dQw4w9WgXcQ --analyze-video   # this conversion only
+anymd prefs set downloadVideo=on                               # or for every YouTube read
 anymd convert https://www.youtube.com/watch?v=dQw4w9WgXcQ   # ends with "## Video download … Job: `vid_…`"
 anymd video vid_…                                              # status, then cdn_url
 anymd prefs set analyzeVideo=on                                # also AI-analyze each downloaded video (10 + 20 credits per started minute)

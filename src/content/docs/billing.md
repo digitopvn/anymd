@@ -41,10 +41,10 @@ Thread expansion, comments and article-image analysis can spend credits beyond t
 | Comments & replies (`includeComments`) | Off | `maxComments` 1–1,000, default 100 | 10 per started batch of 20 |
 | Read text & details in images (`analyzeImages`) | Off | `maxImages` 1–20, default 10 | 5 per analyzed image |
 | Max credits per conversion (`maxCredits`) | 100 | 1–1,000 | Cap including the base price |
-| Download YouTube videos to the anymd CDN (`downloadVideo`) | Off | Saved setting only | 20 per video, charged when the download is ready |
-| Analyze downloaded videos with AI (`analyzeVideo`) | Off | Saved setting only; needs `downloadVideo`; videos up to 60 minutes | 10 + 20 per started minute of video, charged when the analysis is ready |
+| Download YouTube videos to the anymd CDN (`downloadVideo`) | Off | Per request or saved; account required | 20 per video, charged when the download is ready |
+| Analyze downloaded videos with AI (`analyzeVideo`) | Off | Per request (turns on `downloadVideo`) or saved (needs `downloadVideo`); videos up to 60 minutes | 10 + 20 per started minute of video, charged when the analysis is ready |
 
-`downloadVideo` and `analyzeVideo` are saved settings, not per-request options, and run outside the conversion: they are not part of `maxCredits` or `credit_breakdown`. Each finished download is a separate `video_download` row in your usage log, and each finished analysis a `video_analysis` row. A failed download or analysis costs nothing, and reading the same video again while its job is running or ready reuses that job instead of charging twice.
+`downloadVideo` and `analyzeVideo` can be sent with each request or saved as defaults, and run outside the conversion: they are not part of `maxCredits` or `credit_breakdown`. Each finished download is a separate `video_download` row in your usage log, and each finished analysis a `video_analysis` row. A failed download or analysis costs nothing, and reading the same video again while its job is running or ready reuses that job instead of charging twice.
 
 The worst case is bounded before you convert: for example, threads up to 20 posts add at most 19 credits, and 10 analyzed images add at most 50, always capped by `maxCredits`. Saved defaults never raise your plan's allowance, and a request's own `maxCredits` wins over the saved one. Each response's `credit_breakdown` (`base`, `thread`, `comments`, `images`) and the trace in **Dashboard → Traces** show which enrichment produced a charge and whether it came from the request, your saved default or the safe default.
 

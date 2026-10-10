@@ -72,7 +72,7 @@ Pass `lang=vi` (or any language code) to prefer a transcript language. When no t
 
 ### Video download to the anymd CDN
 
-Off by default. Turn on **Download YouTube videos to the anymd CDN** in [Account → Deep reading defaults](/dashboard/account#reading-defaults) (or `PUT /api/v1/account/reading-preferences` with `{"downloadVideo": true}`). Every YouTube read from your account then also downloads the lowest-quality MP4 of the video (the smallest stream that has sound; a video-only stream only when no other exists, up to 500 MB) to `cdn.anymd.cc`, in the background. The read does not wait for it: the Markdown ends with a section like this, and the JSON response carries the same data in `video_download`:
+Off by default, account required. Ask for it on one read with `downloadVideo: true` (REST and MCP), `?downloadVideo=1` (URL API) or `--download-video` (CLI), or turn on **Download YouTube videos to the anymd CDN** in [Account → Deep reading defaults](/dashboard/account#reading-defaults) (or `PUT /api/v1/account/reading-preferences` with `{"downloadVideo": true}`) for every YouTube read; `downloadVideo: false` on a request switches the saved default off once. The read then also downloads the lowest-quality MP4 of the video (the smallest stream that has sound; a video-only stream only when no other exists, up to 500 MB) to `cdn.anymd.cc`, in the background. The read does not wait for it: the Markdown ends with a section like this, and the JSON response carries the same data in `video_download`:
 
 ```markdown
 ## Video download
@@ -88,7 +88,7 @@ Status goes `queued` → `downloading` → `ready` or `failed`. Reading the same
 
 ### AI video analysis
 
-Also off by default, and only available with video download on: turn on **Analyze downloaded videos with AI** (`{"analyzeVideo": true}`). Once the MP4 is `ready`, Google's Gemini 3.8 Flash (`google/gemini-3.8-flash`, through OpenRouter) watches and listens to it and writes a Markdown analysis: summary, a timeline with `mm:ss` timestamps, spoken content, on-screen text and visual details, in the video's main language. Keep polling the same job until `analysis.status` is `ready` (the result is `analysis.markdown`) or `failed` (see `analysis.error`). A later read of a video whose analysis is ready includes it in the Markdown under **Video analysis (AI-generated)**.
+Also off by default. Per read, `analyzeVideo: true` (`?analyzeVideo=1`, `--analyze-video`) asks for the download and its analysis together; as a saved default, turn on **Analyze downloaded videos with AI** (`{"analyzeVideo": true}`) next to video download. Once the MP4 is `ready`, Google's Gemini 3.8 Flash (`google/gemini-3.8-flash`, through OpenRouter) watches and listens to it and writes a Markdown analysis: summary, a timeline with `mm:ss` timestamps, spoken content, on-screen text and visual details, in the video's main language. Keep polling the same job until `analysis.status` is `ready` (the result is `analysis.markdown`) or `failed` (see `analysis.error`). A later read of a video whose analysis is ready includes it in the Markdown under **Video analysis (AI-generated)**.
 
 It costs **10 credits plus 20 per started minute** of video (a 19-second clip is 30 credits, a 3.5-minute video 90), charged only when the analysis is ready. Videos longer than 60 minutes are not analyzed (`video_too_long`), and an account without enough credits for the video's length gets `quota_exceeded` before the model runs. Turning the setting on later and reading a video again adds an analysis to its existing download.
 

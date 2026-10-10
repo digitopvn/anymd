@@ -251,8 +251,19 @@ describe('run: convert', () => {
     });
   });
 
+  test('forwards per-request YouTube video download and analysis', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'POST /api/v1/convert': () => jsonResponse({ markdown: '# Video' }) },
+    });
+    assert.equal(await h.exec(['convert', 'youtu.be/abc', '--download-video', '--analyze-video']), 0);
+    assert.deepEqual(JSON.parse(h.calls[0].body), { url: 'https://youtu.be/abc', format: 'markdown', downloadVideo: true, analyzeVideo: true });
+    assert.equal(await h.exec(['convert', 'youtu.be/abc', '--no-download-video']), 0);
+    assert.deepEqual(JSON.parse(h.calls[1].body), { url: 'https://youtu.be/abc', format: 'markdown', downloadVideo: false });
+  });
+
   test('requires a key for paid enrichment before making a request', async () => {
-    for (const option of ['--include-comments', '--analyze-images']) {
+    for (const option of ['--include-comments', '--analyze-images', '--download-video', '--analyze-video']) {
       const h = harness();
       assert.equal(await h.exec(['convert', 'example.com', option]), 1);
       assert.match(h.stderr, /^not_authenticated:/);

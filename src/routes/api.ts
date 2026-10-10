@@ -186,6 +186,7 @@ api.post('/convert', requireScope('convert'), async (c) => {
     expandThread: b.expandThread, maxThreadPosts: b.maxThreadPosts,
     includeComments: b.includeComments, analyzeImages: b.analyzeImages,
     maxComments: b.maxComments, maxImages: b.maxImages, maxCredits: b.maxCredits,
+    downloadVideo: b.downloadVideo, analyzeVideo: b.analyzeVideo,
     url: b.url,
     channel: channelFor(c),
     principal: c.get('principal'),

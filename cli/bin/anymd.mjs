@@ -79,11 +79,13 @@ const LONG_BOOL = {
   'include-comments': 'includeComments', 'no-include-comments': 'noIncludeComments',
   'analyze-images': 'analyzeImages', 'no-analyze-images': 'noAnalyzeImages',
   'keep-images': 'keepImages', 'no-images': 'noImages',
+  'download-video': 'downloadVideo', 'no-download-video': 'noDownloadVideo',
+  'analyze-video': 'analyzeVideo', 'no-analyze-video': 'noAnalyzeVideo',
 };
 
 /** Bounded reading options; must match READING_LIMITS on the server (src/lib/reading-options.ts). */
 export const READING_LIMITS = { maxThreadPosts: [1, 100], maxComments: [1, 1000], maxImages: [1, 20], maxCredits: [1, 1000] };
-const READING_TOGGLES = [['expandThread', 'noExpandThread', 'expand-thread'], ['includeComments', 'noIncludeComments', 'include-comments'], ['analyzeImages', 'noAnalyzeImages', 'analyze-images']];
+const READING_TOGGLES = [['expandThread', 'noExpandThread', 'expand-thread'], ['includeComments', 'noIncludeComments', 'include-comments'], ['analyzeImages', 'noAnalyzeImages', 'analyze-images'], ['downloadVideo', 'noDownloadVideo', 'download-video'], ['analyzeVideo', 'noAnalyzeVideo', 'analyze-video']];
 
 /**
  * Reading options given explicitly on the command line. Anything omitted is left to the account's
@@ -511,7 +513,7 @@ async function cmdConvert(ctx, args) {
   const target = normalizeTargetUrl(raw);
   const { json, noSave, fresh } = ctx.flags;
   const extras = readingOptionsFromFlags(ctx.flags);
-  if (extras.expandThread || extras.includeComments || extras.analyzeImages) requireKey(ctx);
+  if (extras.expandThread || extras.includeComments || extras.analyzeImages || extras.downloadVideo || extras.analyzeVideo) requireKey(ctx);
   let res;
   if (ctx.key) {
     const body = { url: target, format: json ? 'json' : 'markdown', ...extras };
@@ -978,7 +980,7 @@ ${bold('Usage')}
   anymd mcp                            Print MCP client configuration snippets
   anymd prefs [show] | set <field>=<value>… | reset
                                        Show or change your saved reading defaults
-  anymd video <id> [--json]            Check a YouTube video download and its AI analysis (prefs set downloadVideo=on analyzeVideo=on)
+  anymd video <id> [--json]            Check a YouTube video download and its AI analysis (convert --download-video / --analyze-video)
 
 ${bold('Options')}
   --json            Print raw JSON
@@ -990,7 +992,11 @@ ${bold('Options')}
   --max-thread-posts <n>  Thread post limit, 1–100 (default 20)
   --include-comments  Read comments and replies (requires a key; extra credits)
   --analyze-images    OCR and describe article images (requires a key; extra credits)
-  --no-expand-thread, --no-include-comments, --no-analyze-images
+  --download-video    YouTube: store the lowest-quality video on the anymd CDN in the
+                      background (requires a key; 20 credits when ready)
+  --analyze-video     YouTube: also analyze that video with AI (implies --download-video;
+                      requires a key; 10 + 20 credits per started minute when ready, up to 60 min)
+  --no-expand-thread, --no-include-comments, --no-analyze-images, --no-download-video, --no-analyze-video
                       Turn an enrichment off for this conversion only
   --keep-images, --no-images  Keep or strip image/media URLs (no extra credits)
   --max-comments <n>  Comment/reply limit, 1–1000 (default 100)

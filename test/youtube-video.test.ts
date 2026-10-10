@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppBindings, Env, Principal } from '../src/env';
 import { ENRICHMENT_CREDITS, videoAnalysisCredits } from '../src/billing/plans';
-import { applyPreferencesPatch, normalizeStoredPreferences } from '../src/convert/reading-preferences';
+import { applyPreferencesPatch, normalizeStoredPreferences, resolveReadingOptions } from '../src/convert/reading-preferences';
 import { runConversion } from '../src/convert/service';
 import {
   handleVideoQueue, isYoutubeMediaUrl, MAX_ANALYSIS_SECONDS, pickLowestFormat, processVideoAnalysis, processVideoJob, startVideoDownload, videoDownloadMarkdown,
@@ -216,6 +216,32 @@ describe('conversion and status channels', () => {
     expect(on.videoDownload).toMatchObject({ status: 'queued' });
     expect(on.markdown).toMatch('## Video download');
     expect(queue.sent).toHaveLength(1);
+  });
+
+  it('lets each request turn the download and analysis on or off', async () => {
+    stubFetch();
+    t.env.OPENROUTER_API_KEY = 'or-key';
+    const user = await seedUser(t, 'user');
+    const ctx = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}) };
+    const read = (extra: { downloadVideo?: boolean; analyzeVideo?: boolean }, userId: string | null = user.id) =>
+      runConversion(t.env, ctx, { url: `https://www.youtube.com/watch?v=${VIDEO}`, channel: 'api', principal: userId ? principalOf(userId) : { ...principalOf(user.id), userId: null, kind: 'anonymous', scopes: [] } as unknown as Principal, save: false, fresh: true, ...extra });
+    const on = await read({ analyzeVideo: true });
+    expect(on.readingOptions).toMatchObject({ downloadVideo: true, analyzeVideo: true, sources: { downloadVideo: 'request', analyzeVideo: 'request' } });
+    expect(on.videoDownload).toMatchObject({ status: 'queued', analysis: { status: 'queued' } });
+    t.db.prepare('INSERT INTO reading_preferences (user_id, preferences, updated_at) VALUES (?,?,?)').run(user.id, JSON.stringify({ downloadVideo: true, analyzeVideo: true }), 1);
+    const off = await read({ downloadVideo: false });
+    expect(off.videoDownload).toBeNull();
+    expect(off.readingOptions).toMatchObject({ downloadVideo: false, analyzeVideo: false });
+    await expect(read({ downloadVideo: true }, null)).rejects.toMatchObject({ code: 'authentication_required' });
+  });
+
+  it('resolves per-request video options against saved settings', () => {
+    const saved = { ...DEFAULT_READING_PREFERENCES, downloadVideo: true, analyzeVideo: true };
+    expect(resolveReadingOptions({}, saved)).toMatchObject({ downloadVideo: true, analyzeVideo: true });
+    expect(resolveReadingOptions({ analyzeVideo: false }, saved)).toMatchObject({ downloadVideo: true, analyzeVideo: false });
+    expect(resolveReadingOptions({ downloadVideo: false }, saved)).toMatchObject({ downloadVideo: false, analyzeVideo: false });
+    expect(resolveReadingOptions({ analyzeVideo: true }, null)).toMatchObject({ downloadVideo: true, analyzeVideo: true });
+    expect(() => resolveReadingOptions({ downloadVideo: false, analyzeVideo: true }, null)).toThrowError(expect.objectContaining({ code: 'invalid_options' }));
   });
 
   it('serves the job to its owner over REST and MCP only', async () => {

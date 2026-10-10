@@ -58,7 +58,7 @@ const READ_URL_INPUT = z.object({
   fresh: z.boolean().optional().describe('Bypass the 1-hour cache'),
   removeImages: z.boolean().optional().describe('Strip image/media references (no credit effect)'),
 });
-const READ_URL_TEXT = 'Saves to the library by default (save=false to skip) when this connection holds library:write; the result reports saved and, when not saved, not_saved_reason (missing_scope means re-authorize with library:write). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free. When the account setting downloadVideo is on, a YouTube read also starts a background download of the lowest-quality video to the anymd CDN and returns video_download.id: check it with get_video_download. With analyzeVideo also on, the same job then gets an AI analysis of the video (analysis.markdown).';
+const READ_URL_TEXT = 'Saves to the library by default (save=false to skip) when this connection holds library:write; the result reports saved and, when not saved, not_saved_reason (missing_scope means re-authorize with library:write). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free. For YouTube, downloadVideo=true (or the account setting) also starts a background download of the lowest-quality video to the anymd CDN and returns video_download.id: check it with get_video_download. analyzeVideo=true (implies downloadVideo) then has the same job analyzed by AI (analysis.markdown); both cost extra credits outside maxCredits, charged only when ready.';
 const readUrl = async (a: z.infer<typeof READ_URL_INPUT>, t: ToolContext) => {
   const r = await runConversion(t.env, t.ctx, { ...a, channel: 'mcp', principal: t.principal });
   const { content: _content, ...rest } = convertPayload(r);
@@ -103,7 +103,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'get_video_download',
     title: 'Get video download',
-    description: 'Status of a background YouTube video download started by read_url when the account setting downloadVideo is on. Poll every 15-30 s until status is ready (cdn_url is the lowest-quality MP4 on the anymd CDN) or failed (see error). Credits are charged only when ready. When the account setting analyzeVideo is on, keep polling until analysis.status is ready (analysis.markdown is the AI analysis of the video) or failed.',
+    description: 'Status of a background YouTube video download started by read_url with downloadVideo (option or account setting). Poll every 15-30 s until status is ready (cdn_url is the lowest-quality MP4 on the anymd CDN) or failed (see error). Credits are charged only when ready. When analysis is not null (analyzeVideo), keep polling until analysis.status is ready (analysis.markdown is the AI analysis of the video) or failed.',
     scope: 'convert',
     input: z.object({ id: z.string().describe('Job id from read_url, e.g. vid_…') }),
     annotations: READ,

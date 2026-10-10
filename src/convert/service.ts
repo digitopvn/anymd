@@ -52,7 +52,7 @@ export interface ConvertResponse {
   cached: boolean;
   traceId: string;
   durationMs: number;
-  /** The background video download for a YouTube read, when the account's `downloadVideo` preference is on. */
+  /** The background video download for a YouTube read, when `downloadVideo` is on (request or saved setting). */
   videoDownload: VideoDownloadState | null;
 }
 
@@ -114,6 +114,7 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
     }
     if (req.removeImages && req.analyzeImages) throw new ConvertError('analyzeImages cannot be combined with removeImages', 400, 'invalid_options');
     if (!principal.userId && (req.expandThread || req.includeComments || req.analyzeImages)) throw new ConvertError('Enrichment requires an account', 401, 'authentication_required');
+    if (!principal.userId && (req.downloadVideo || req.analyzeVideo)) throw new ConvertError('Video download and analysis require an account', 401, 'authentication_required');
     const url = normalizeTargetUrl(req.url);
     targetForLog = url.href;
     const optout = await tracer.span('optout', () => findOptout(env, url.hostname));
@@ -168,7 +169,7 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
         await enforceAnonymousLimit(env, req.clientIp);
         budget.charge('base', base);
       }
-      const { sources: _sources, ...effective } = options;
+      const { sources: _sources, downloadVideo: _download, analyzeVideo: _analyze, ...effective } = options;
       const conversionContext = { env, tracer, ...effective, language: req.language, selector: req.selector, authenticated: !!principal.userId, budget };
       result = await convertUrl(url, conversionContext);
       if (budget) {
@@ -191,8 +192,8 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
     let markdown = formatMarkdown(result, { frontmatter: req.frontmatter !== false });
     // Per-account and asynchronous, so it runs after the shared cache and is never cached itself.
     let videoDownload: VideoDownloadState | null = null;
-    if (result.sourceKind === 'youtube' && principal.userId && preferences?.downloadVideo) {
-      videoDownload = await tracer.span('video.start', () => startVideoDownload(env, principal, plan, req.channel, result!.source, preferences.analyzeVideo));
+    if (result.sourceKind === 'youtube' && principal.userId && options.downloadVideo) {
+      videoDownload = await tracer.span('video.start', () => startVideoDownload(env, principal, plan, req.channel, result!.source, options.analyzeVideo));
       if (videoDownload) markdown = `${markdown.trimEnd()}\n\n${videoDownloadMarkdown(videoDownload)}\n`;
     }
     const credits = cached ? 0 : budget?.used ?? creditCost(result.sourceKind);

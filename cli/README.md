@@ -49,7 +49,7 @@ anymd search "vector databases" --mode hybrid --limit 10
 | `anymd mcp` | Print MCP config snippets for Claude Code, Cursor and Claude Desktop. |
 | `anymd prefs [show]` | Show your saved reading (deep reading) defaults. |
 | `anymd prefs set <field>=<value>…` | Change saved defaults, e.g. `anymd prefs set expandThread=on maxThreadPosts=30`. Fields: `expandThread`, `includeComments`, `keepImages`, `analyzeImages`, `downloadVideo`, `analyzeVideo` (true/false) and `maxThreadPosts`, `maxComments`, `maxImages`, `maxCredits` (integers). |
-| `anymd video <id>` | Check a background YouTube video download started by a conversion when `downloadVideo` is on: status, then the CDN URL of the MP4, and with `analyzeVideo` on the AI analysis of the video. |
+| `anymd video <id>` | Check a background YouTube video download started by a conversion with `--download-video` / `--analyze-video` or the saved `downloadVideo`: status, then the CDN URL of the MP4, and with `analyzeVideo` on the AI analysis of the video. |
 | `anymd prefs reset` | Delete saved defaults; deep reading is off again. `set` and `reset` need a key with `keys:manage` (the "Everything my role allows" preset). |
 
 `--json` prints the raw API response for every read command. `-o, --output <file>` writes
@@ -68,7 +68,9 @@ These flags are available on `anymd convert` and the bare `anymd <url>` form:
 | `--max-comments <n>` | `100`, from 1 to 1,000 | Maximum comments/replies to retain |
 | `--max-images <n>` | `10`, from 1 to 20 | Maximum images to analyze |
 | `--max-credits <n>` | `100`, from 1 to 1,000 | Hard credit limit for the request |
-| `--no-expand-thread`, `--no-include-comments`, `--no-analyze-images` | | Turn a saved default off for this conversion only |
+| `--download-video` | Off; requires a key | YouTube: store the lowest-quality video on the anymd CDN in the background; 20 credits when ready (check with `anymd video <id>`) |
+| `--analyze-video` | Off; requires a key | YouTube: also analyze that video with AI (implies `--download-video`); 10 + 20 credits per started minute when ready, videos up to 60 minutes |
+| `--no-expand-thread`, `--no-include-comments`, `--no-analyze-images`, `--no-download-video`, `--no-analyze-video` | | Turn a saved default off for this conversion only |
 | `--keep-images`, `--no-images` | Keep | Keep or strip image/media URLs (no credit effect) |
 
 Flags you leave out follow your saved reading defaults (`anymd prefs`), otherwise the safe defaults: thread expansion, comments and image analysis are off. A flag on one conversion never changes the saved defaults. X posts convert as the single requested post unless you pass `--expand-thread` or save it as a default; keys no longer expand threads automatically. Facebook, Instagram, Threads and LinkedIn post adapters require a signed-in caller. JSON responses include `credit_breakdown` and `enrichment` coverage, so provider failures and partial results remain visible; cached reads are free.

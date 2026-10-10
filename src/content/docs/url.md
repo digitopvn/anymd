@@ -90,6 +90,8 @@ Add these as query parameters.
 | `maxComments` | `maxComments=100` | Comment limit; default 100, maximum 1,000 |
 | `maxImages` | `maxImages=10` | Article-image limit; default 10, maximum 20 |
 | `maxCredits` | `maxCredits=100` | Per-request credit cap; default 100, maximum 1,000 |
+| `downloadVideo` | `downloadVideo=1` | YouTube, account required: download the lowest-quality video to the anymd CDN in the background (20 credits when ready, outside `maxCredits`); `0` switches a saved default off |
+| `analyzeVideo` | `analyzeVideo=1` | YouTube, account required: also analyze that video with AI (implies `downloadVideo`; 10 + 20 credits per started minute when ready, up to 60 minutes) |
 
 Options you leave out follow your saved [deep reading defaults](/docs/api#deep-reading-options-and-saved-defaults) when you are signed in, otherwise the safe defaults: thread expansion, comments and image analysis are **off**.
 

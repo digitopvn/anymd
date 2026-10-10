@@ -195,6 +195,8 @@ export interface RequestReadingOptions {
   maxImages?: number;
   maxCredits?: number;
   removeImages?: boolean;
+  downloadVideo?: boolean;
+  analyzeVideo?: boolean;
 }
 
 export type OptionSource = 'request' | 'preference' | 'default';
@@ -208,6 +210,9 @@ export interface ResolvedReadingOptions {
   maxImages: number;
   maxCredits: number;
   removeImages: boolean;
+  /** YouTube reads only: background video download, and AI analysis of that video. */
+  downloadVideo: boolean;
+  analyzeVideo: boolean;
   /** Where each effective value came from, recorded in traces so charges are explainable. */
   sources: Record<Exclude<keyof ResolvedReadingOptions, 'sources'>, OptionSource>;
 }
@@ -222,7 +227,7 @@ export function resolveReadingOptions(request: RequestReadingOptions, preference
   const base = preferences ?? DEFAULT_READING_PREFERENCES;
   const fallback: OptionSource = preferences ? 'preference' : 'default';
   const sources = {} as ResolvedReadingOptions['sources'];
-  const pick = <K extends 'expandThread' | 'maxThreadPosts' | 'includeComments' | 'maxComments' | 'analyzeImages' | 'maxImages' | 'maxCredits'>(key: K): ReadingPreferences[K] => {
+  const pick = <K extends 'expandThread' | 'maxThreadPosts' | 'includeComments' | 'maxComments' | 'analyzeImages' | 'maxImages' | 'maxCredits' | 'downloadVideo' | 'analyzeVideo'>(key: K): ReadingPreferences[K] => {
     const explicit = request[key];
     sources[key] = explicit !== undefined ? 'request' : fallback;
     return (explicit !== undefined ? explicit : base[key]) as ReadingPreferences[K];
@@ -236,8 +241,21 @@ export function resolveReadingOptions(request: RequestReadingOptions, preference
     maxImages: pick('maxImages'),
     maxCredits: pick('maxCredits'),
     removeImages: request.removeImages ?? !base.keepImages,
+    downloadVideo: pick('downloadVideo'),
+    analyzeVideo: pick('analyzeVideo'),
     sources,
   };
+  // Video analysis reads the downloaded video: asking for analysis implies the download, an explicit
+  // "no download" turns a saved analysis off, and both explicit and conflicting are rejected.
+  if (resolved.analyzeVideo && !resolved.downloadVideo) {
+    if (sources.analyzeVideo === 'request' && sources.downloadVideo === 'request') {
+      throw new ConvertError('analyzeVideo requires downloadVideo: video analysis reads the downloaded video', 400, 'invalid_options');
+    }
+    if (sources.analyzeVideo === 'request') {
+      resolved.downloadVideo = true;
+      sources.downloadVideo = 'request';
+    } else resolved.analyzeVideo = false;
+  }
   sources.removeImages = request.removeImages !== undefined ? 'request' : fallback;
   if (resolved.analyzeImages && resolved.removeImages) {
     if (sources.analyzeImages === 'request' && sources.removeImages === 'request') {
