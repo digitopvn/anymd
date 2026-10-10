@@ -16,7 +16,7 @@ import { clientIp, markdownResponse, originOf, renderMessage, renderPage } from 
 
 export const convertRoutes = new Hono<AppBindings>();
 
-const OPTION_PARAMS = ['format', 'lang', 'selector', 'images', 'frontmatter', 'fresh', 'save', 'expandThread', 'maxThreadPosts', 'includeComments', 'analyzeImages', 'maxComments', 'maxImages', 'maxCredits'];
+const OPTION_PARAMS = ['format', 'lang', 'selector', 'images', 'frontmatter', 'fresh', 'save', 'expandThread', 'maxThreadPosts', 'includeComments', 'analyzeImages', 'maxComments', 'maxImages', 'maxCredits', 'downloadVideo', 'analyzeVideo'];
 
 /** `1`/`0` flags; absent stays undefined so saved preferences apply, anything else fails validation. */
 function flagParam(value: string | undefined): boolean | null | undefined {
@@ -65,6 +65,8 @@ convertRoutes.get('*', async (c) => {
     maxComments: intParam(opt('maxComments')),
     maxImages: intParam(opt('maxImages')),
     maxCredits: intParam(opt('maxCredits')),
+    downloadVideo: flagParam(opt('downloadVideo')),
+    analyzeVideo: flagParam(opt('analyzeVideo')),
   };
   for (const k of OPTION_PARAMS) params.delete(k);
   const query = params.toString();

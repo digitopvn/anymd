@@ -15,6 +15,8 @@ export const enrichmentOptions = {
   maxComments: bounded('maxComments').optional().describe('Maximum comments including replies (1-1000, default 100)'),
   maxImages: bounded('maxImages').optional().describe('Maximum analyzed article images (1-20, default 10)'),
   maxCredits: bounded('maxCredits').optional().describe('Credit cap for this request (1-1000, default 100)'),
+  downloadVideo: z.boolean().optional().describe('YouTube: download the lowest-quality video to the anymd CDN in the background (20 credits when ready, account required; not part of maxCredits)'),
+  analyzeVideo: z.boolean().optional().describe('YouTube: download and analyze the video with google/gemini-3.8-flash (10 + 20 credits per started minute when ready, up to 60 minutes; implies downloadVideo, account required; not part of maxCredits)'),
 };
 export const EnrichmentOptionsSchema = z.object(enrichmentOptions);
 export type EnrichmentOptions = z.infer<typeof EnrichmentOptionsSchema>;

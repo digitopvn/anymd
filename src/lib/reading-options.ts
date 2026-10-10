@@ -28,6 +28,8 @@ export interface ReadingPreferences {
   maxCredits: number;
   /** Download the lowest-quality YouTube video to the anymd CDN in the background (extra credits, charged when ready). */
   downloadVideo: boolean;
+  /** Analyze each downloaded video with an AI model (needs downloadVideo; extra credits by length, charged when ready). */
+  analyzeVideo: boolean;
 }
 
 /**
@@ -44,6 +46,7 @@ export const DEFAULT_READING_PREFERENCES: Readonly<ReadingPreferences> = Object.
   maxImages: READING_LIMITS.maxImages.default,
   maxCredits: READING_LIMITS.maxCredits.default,
   downloadVideo: false,
+  analyzeVideo: false,
 });
 
 /** Options that spend enrichment credits when on. */

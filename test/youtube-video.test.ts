@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppBindings, Env, Principal } from '../src/env';
-import { ENRICHMENT_CREDITS } from '../src/billing/plans';
+import { ENRICHMENT_CREDITS, videoAnalysisCredits } from '../src/billing/plans';
+import { applyPreferencesPatch, normalizeStoredPreferences, resolveReadingOptions } from '../src/convert/reading-preferences';
 import { runConversion } from '../src/convert/service';
 import {
-  handleVideoQueue, isYoutubeMediaUrl, pickLowestFormat, processVideoJob, startVideoDownload, videoDownloadMarkdown, VIDEO_MAX_ATTEMPTS, type VideoJobMessage, type VideoJobRow,
+  handleVideoQueue, isYoutubeMediaUrl, MAX_ANALYSIS_SECONDS, pickLowestFormat, processVideoAnalysis, processVideoJob, startVideoDownload, videoDownloadMarkdown,
+  VIDEO_ANALYSIS_MODEL, VIDEO_MAX_ATTEMPTS, type VideoJobMessage, type VideoJobRow,
 } from '../src/convert/youtube-video';
+import { DEFAULT_READING_PREFERENCES } from '../src/lib/reading-options';
 import { api } from '../src/routes/api';
 import { callTool } from './helpers/mcp-client';
 import { createTestEnv, seedUser, type TestEnv } from './helpers/sqlite-env';
@@ -47,7 +50,7 @@ const vidcapBody = {
   status: 1,
   data: {
     videoFiles: [
-      { itag: 18, url: STREAM, mimeType: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"', qualityLabel: '240p', contentLength: '4' },
+      { itag: 18, url: STREAM, mimeType: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"', qualityLabel: '240p', contentLength: '4', approxDurationMs: '19063' },
       { itag: 160, url: 'https://rr1---sn-abc.googlevideo.com/videoplayback?itag=160', mimeType: 'video/mp4; codecs="avc1.4D400B"', qualityLabel: '144p', contentLength: '2' },
       { itag: 278, url: 'https://rr1---sn-abc.googlevideo.com/videoplayback?itag=278', mimeType: 'video/webm; codecs="vp9"', qualityLabel: '144p' },
     ],
@@ -55,9 +58,12 @@ const vidcapBody = {
   },
 };
 
-function stubFetch(provider: () => Response = () => Response.json(providerBody), vidcap: () => Response = () => Response.json(vidcapBody)) {
+const modelReply = (content = '## Summary\nA man at the zoo.', finish = 'stop') => Response.json({ choices: [{ message: { content }, finish_reason: finish }], usage: { cost: 0.0042 } });
+
+function stubFetch(provider: () => Response = () => Response.json(providerBody), vidcap: () => Response = () => Response.json(vidcapBody), model: () => Response = () => modelReply()) {
   const fetch = vi.fn(async (input: unknown, _init?: RequestInit) => {
     const url = String(input);
+    if (url === 'https://openrouter.ai/api/v1/chat/completions') return model();
     if (url.startsWith('https://vidcap.zuey.me/api/v1/youtube/media?')) return vidcap();
     if (url.startsWith('https://ytstream-download-youtube-videos.p.rapidapi.com/')) return provider();
     if (url === STREAM) return new Response(new Uint8Array([1, 2, 3, 4]), { headers: { 'content-length': '4' } });
@@ -124,7 +130,7 @@ describe('starting a download', () => {
   });
 
   it('tells the agent the job id and how to check it', () => {
-    const md = videoDownloadMarkdown({ status: 'queued', id: 'vid_x', reused: false, credits: 0, quality: null, cdn_url: null, error: null, check_url: 'https://anymd.test/api/v1/videos/vid_x' });
+    const md = videoDownloadMarkdown({ status: 'queued', id: 'vid_x', reused: false, credits: 0, quality: null, cdn_url: null, error: null, check_url: 'https://anymd.test/api/v1/videos/vid_x', analysis: null });
     expect(md).toMatch('`vid_x`');
     expect(md).toMatch('GET https://anymd.test/api/v1/videos/vid_x');
     expect(md).toMatch('get_video_download');
@@ -212,6 +218,32 @@ describe('conversion and status channels', () => {
     expect(queue.sent).toHaveLength(1);
   });
 
+  it('lets each request turn the download and analysis on or off', async () => {
+    stubFetch();
+    t.env.OPENROUTER_API_KEY = 'or-key';
+    const user = await seedUser(t, 'user');
+    const ctx = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}) };
+    const read = (extra: { downloadVideo?: boolean; analyzeVideo?: boolean }, userId: string | null = user.id) =>
+      runConversion(t.env, ctx, { url: `https://www.youtube.com/watch?v=${VIDEO}`, channel: 'api', principal: userId ? principalOf(userId) : { ...principalOf(user.id), userId: null, kind: 'anonymous', scopes: [] } as unknown as Principal, save: false, fresh: true, ...extra });
+    const on = await read({ analyzeVideo: true });
+    expect(on.readingOptions).toMatchObject({ downloadVideo: true, analyzeVideo: true, sources: { downloadVideo: 'request', analyzeVideo: 'request' } });
+    expect(on.videoDownload).toMatchObject({ status: 'queued', analysis: { status: 'queued' } });
+    t.db.prepare('INSERT INTO reading_preferences (user_id, preferences, updated_at) VALUES (?,?,?)').run(user.id, JSON.stringify({ downloadVideo: true, analyzeVideo: true }), 1);
+    const off = await read({ downloadVideo: false });
+    expect(off.videoDownload).toBeNull();
+    expect(off.readingOptions).toMatchObject({ downloadVideo: false, analyzeVideo: false });
+    await expect(read({ downloadVideo: true }, null)).rejects.toMatchObject({ code: 'authentication_required' });
+  });
+
+  it('resolves per-request video options against saved settings', () => {
+    const saved = { ...DEFAULT_READING_PREFERENCES, downloadVideo: true, analyzeVideo: true };
+    expect(resolveReadingOptions({}, saved)).toMatchObject({ downloadVideo: true, analyzeVideo: true });
+    expect(resolveReadingOptions({ analyzeVideo: false }, saved)).toMatchObject({ downloadVideo: true, analyzeVideo: false });
+    expect(resolveReadingOptions({ downloadVideo: false }, saved)).toMatchObject({ downloadVideo: false, analyzeVideo: false });
+    expect(resolveReadingOptions({ analyzeVideo: true }, null)).toMatchObject({ downloadVideo: true, analyzeVideo: true });
+    expect(() => resolveReadingOptions({ downloadVideo: false, analyzeVideo: true }, null)).toThrowError(expect.objectContaining({ code: 'invalid_options' }));
+  });
+
   it('serves the job to its owner over REST and MCP only', async () => {
     const owner = await seedUser(t, 'user');
     const other = await seedUser(t, 'user');
@@ -231,5 +263,97 @@ describe('conversion and status channels', () => {
     expect(tool.result.structuredContent).toMatchObject({ id: state.id, status: 'queued' });
     const foreign = await callTool(t.env, principalOf(other.id), 'get_video_download', { id: state.id });
     expect(foreign.result.isError).toBe(true);
+  });
+});
+
+describe('video analysis', () => {
+  const analysisCharges = (userId: string) => t.db.prepare("SELECT credits FROM usage_events WHERE user_id = ? AND kind = 'video_analysis'").all(userId) as { credits: number }[];
+  const analyzeMessages = () => queue.sent.filter((m) => m.step === 'analyze');
+
+  beforeEach(() => {
+    t.env.VIDCAP_API_KEY = 'vidcap-key';
+    t.env.OPENROUTER_API_KEY = 'or-key';
+  });
+
+  async function readyJobWithAnalysis(model?: () => Response) {
+    const fetch = stubFetch(undefined, undefined, model);
+    const user = await seedUser(t, 'user');
+    const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`, true)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    return { fetch, user, id: state.id };
+  }
+
+  it('prices by started minute of video', () => {
+    expect(videoAnalysisCredits(19)).toBe(30);
+    expect(videoAnalysisCredits(60)).toBe(30);
+    expect(videoAnalysisCredits(61)).toBe(50);
+    expect(videoAnalysisCredits(213)).toBe(90);
+  });
+
+  it('is a saved setting that needs video download', () => {
+    expect(() => applyPreferencesPatch(DEFAULT_READING_PREFERENCES, { analyzeVideo: true })).toThrow(/analyzeVideo requires downloadVideo/);
+    expect(applyPreferencesPatch(DEFAULT_READING_PREFERENCES, { downloadVideo: true, analyzeVideo: true })).toMatchObject({ downloadVideo: true, analyzeVideo: true });
+    expect(normalizeStoredPreferences(JSON.stringify({ analyzeVideo: true })).analyzeVideo).toBe(false);
+  });
+
+  it('analyzes the stored video after the download and charges each step once', async () => {
+    const { fetch, user, id } = await readyJobWithAnalysis();
+    expect(job(id)).toMatchObject({ status: 'ready', duration_seconds: 20, analysis_status: 'queued' });
+    expect(analyzeMessages()).toEqual([{ jobId: id, step: 'analyze' }]);
+    await processVideoAnalysis(t.env, id, 1);
+    await processVideoAnalysis(t.env, id, 2);
+    expect(job(id)).toMatchObject({ analysis_status: 'ready', analysis_markdown: '## Summary\nA man at the zoo.', analysis_credits: 30, analysis_cost_usd: 0.0042, analysis_error: null });
+    expect(charges(user.id)).toEqual([{ credits: ENRICHMENT_CREDITS.videoDownload }]);
+    expect(analysisCharges(user.id)).toEqual([{ credits: 30 }]);
+    const call = fetch.mock.calls.filter(([u]) => String(u).includes('openrouter.ai'));
+    expect(call).toHaveLength(1);
+    const body = JSON.parse(String(call[0][1]?.body));
+    expect(body.model).toBe(VIDEO_ANALYSIS_MODEL);
+    expect(body.messages[1].content[1]).toEqual({ type: 'video_url', video_url: { url: `https://cdn.anymd.test/videos/youtube/${VIDEO}/18.mp4` } });
+    const md = videoDownloadMarkdown((await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`, true))!);
+    expect(md).toMatch('### Video analysis (AI-generated by `google/gemini-3.8-flash`)');
+    expect(md).toMatch('A man at the zoo.');
+  });
+
+  it('retries a transient model error, then fails without charging', async () => {
+    const { user, id } = await readyJobWithAnalysis(() => new Response('busy', { status: 503 }));
+    const message = { body: { jobId: id, step: 'analyze' as const }, attempts: 1, ack: vi.fn(), retry: vi.fn() };
+    await handleVideoQueue({ messages: [message] } as unknown as MessageBatch<VideoJobMessage>, t.env);
+    expect(message.retry).toHaveBeenCalledOnce();
+    expect(job(id)).toMatchObject({ analysis_status: 'queued', analysis_error: 'analysis_failed' });
+    await processVideoAnalysis(t.env, id, VIDEO_MAX_ATTEMPTS);
+    expect(job(id)).toMatchObject({ analysis_status: 'failed', analysis_error: 'analysis_failed', analysis_credits: 0 });
+    expect(analysisCharges(user.id)).toEqual([]);
+  });
+
+  it('does not run the model for videos over the limit or accounts without the credits', async () => {
+    const { fetch, user, id } = await readyJobWithAnalysis();
+    t.db.prepare('UPDATE video_jobs SET duration_seconds = ? WHERE id = ?').run(MAX_ANALYSIS_SECONDS + 1, id);
+    await processVideoAnalysis(t.env, id, 1);
+    expect(job(id)).toMatchObject({ analysis_status: 'failed', analysis_error: 'video_too_long' });
+    t.db.prepare("UPDATE video_jobs SET duration_seconds = 3600, analysis_status = 'queued', analysis_error = NULL WHERE id = ?").run(id);
+    await processVideoAnalysis(t.env, id, 1);
+    expect(job(id)).toMatchObject({ analysis_status: 'failed', analysis_error: 'quota_exceeded' });
+    expect(fetch.mock.calls.some(([u]) => String(u).includes('openrouter.ai'))).toBe(false);
+    expect(analysisCharges(user.id)).toEqual([]);
+  });
+
+  it('adds an analysis to a ready job when a later read asks for it', async () => {
+    stubFetch();
+    const user = await seedUser(t, 'user');
+    const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    expect(job(state.id).analysis_status).toBeNull();
+    const again = await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`, true);
+    expect(again).toMatchObject({ reused: true, analysis: { status: 'queued', model: VIDEO_ANALYSIS_MODEL } });
+    expect(analyzeMessages()).toEqual([{ jobId: state.id, step: 'analyze' }]);
+  });
+
+  it('fails a requested analysis together with its download', async () => {
+    stubFetch(() => Response.json({ status: 'fail' }), () => Response.json({ status: 0 }));
+    const user = await seedUser(t, 'user');
+    const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`, true)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    expect(job(state.id)).toMatchObject({ status: 'failed', analysis_status: 'failed', analysis_error: 'download_failed' });
   });
 });

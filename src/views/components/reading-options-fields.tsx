@@ -6,7 +6,7 @@
  * off (progressive disclosure). Without JS every field stays usable. The YouTube video download is
  * a saved account setting only, so the converter's per-request panel leaves it out.
  */
-import { ENRICHMENT_CREDITS } from '../../billing/plans';
+import { ENRICHMENT_CREDITS, VIDEO_ANALYSIS_CREDITS } from '../../billing/plans';
 import { DEFAULT_READING_PREFERENCES, READING_LIMITS, creditEstimateText, type ReadingLimitKey, type ReadingPreferences } from '../../lib/reading-options';
 
 type ToggleKey = 'expandThread' | 'includeComments' | 'analyzeImages';
@@ -107,6 +107,14 @@ export function ReadingOptionsFields({ values, idPrefix, imagesName }: { values:
             checked={values.downloadVideo}
             label="Download YouTube videos to the anymd CDN"
             hint={`+${credits(ENRICHMENT_CREDITS.videoDownload)} per video, charged only when the download is ready. Runs in the background: the read returns a job id to check.`}
+            explicitOff={false}
+          />
+          <Toggle
+            id={id('analyze-video')}
+            name="analyzeVideo"
+            checked={values.analyzeVideo}
+            label="Analyze downloaded videos with AI (Gemini 3.8 Flash)"
+            hint={`+${credits(VIDEO_ANALYSIS_CREDITS.base)} plus ${credits(VIDEO_ANALYSIS_CREDITS.perMinute)} per started minute of video, charged only when the analysis is ready. Needs video download; videos up to 60 minutes.`}
             explicitOff={false}
           />
         </fieldset>

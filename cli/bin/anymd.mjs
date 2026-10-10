@@ -79,11 +79,13 @@ const LONG_BOOL = {
   'include-comments': 'includeComments', 'no-include-comments': 'noIncludeComments',
   'analyze-images': 'analyzeImages', 'no-analyze-images': 'noAnalyzeImages',
   'keep-images': 'keepImages', 'no-images': 'noImages',
+  'download-video': 'downloadVideo', 'no-download-video': 'noDownloadVideo',
+  'analyze-video': 'analyzeVideo', 'no-analyze-video': 'noAnalyzeVideo',
 };
 
 /** Bounded reading options; must match READING_LIMITS on the server (src/lib/reading-options.ts). */
 export const READING_LIMITS = { maxThreadPosts: [1, 100], maxComments: [1, 1000], maxImages: [1, 20], maxCredits: [1, 1000] };
-const READING_TOGGLES = [['expandThread', 'noExpandThread', 'expand-thread'], ['includeComments', 'noIncludeComments', 'include-comments'], ['analyzeImages', 'noAnalyzeImages', 'analyze-images']];
+const READING_TOGGLES = [['expandThread', 'noExpandThread', 'expand-thread'], ['includeComments', 'noIncludeComments', 'include-comments'], ['analyzeImages', 'noAnalyzeImages', 'analyze-images'], ['downloadVideo', 'noDownloadVideo', 'download-video'], ['analyzeVideo', 'noAnalyzeVideo', 'analyze-video']];
 
 /**
  * Reading options given explicitly on the command line. Anything omitted is left to the account's
@@ -511,7 +513,7 @@ async function cmdConvert(ctx, args) {
   const target = normalizeTargetUrl(raw);
   const { json, noSave, fresh } = ctx.flags;
   const extras = readingOptionsFromFlags(ctx.flags);
-  if (extras.expandThread || extras.includeComments || extras.analyzeImages) requireKey(ctx);
+  if (extras.expandThread || extras.includeComments || extras.analyzeImages || extras.downloadVideo || extras.analyzeVideo) requireKey(ctx);
   let res;
   if (ctx.key) {
     const body = { url: target, format: json ? 'json' : 'markdown', ...extras };
@@ -617,8 +619,12 @@ async function cmdVideo(ctx, args) {
   const job = await readJson(await request(ctx, 'GET', `/api/v1/videos/${enc(id)}`));
   if (ctx.flags.json) return ctx.out(toJson(job));
   const lines = [['id', job.id], ['status', job.status], ['quality', job.quality], ['cdn_url', job.cdn_url], ['credits', job.credits], ['error', job.error]];
-  ctx.out(lines.filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `${k.padEnd(8)}${v}\n`).join(''));
-  if (job.status === 'queued' || job.status === 'downloading') ctx.out(ctx.colors.dim('Still running: check again in 15–30 seconds.\n'));
+  const analysis = job.analysis;
+  if (analysis) lines.push(['analysis', `${analysis.status} (${analysis.model}${analysis.credits ? `, ${analysis.credits} credits` : ''}${analysis.error ? `, ${analysis.error}` : ''})`]);
+  ctx.out(lines.filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `${k.padEnd(9)}${v}\n`).join(''));
+  if (analysis?.status === 'ready' && analysis.markdown) ctx.out(`\n${analysis.markdown}\n`);
+  const running = job.status === 'queued' || job.status === 'downloading' || (job.status === 'ready' && (analysis?.status === 'queued' || analysis?.status === 'running'));
+  if (running) ctx.out(ctx.colors.dim('Still running: check again in 15–30 seconds.\n'));
 }
 
 async function cmdRemove(ctx, args) {
@@ -869,7 +875,7 @@ const PREFS_PATH = '/api/v1/account/reading-preferences';
 /** `key=value` pairs for `anymd prefs set`: booleans take true/false/on/off/1/0, limits take integers. */
 export function parsePreferenceAssignments(args) {
   if (!args.length) throw usageError('usage: anymd prefs set <field>=<value>… (e.g. expandThread=true maxThreadPosts=30)');
-  const booleans = ['expandThread', 'includeComments', 'keepImages', 'analyzeImages', 'downloadVideo'];
+  const booleans = ['expandThread', 'includeComments', 'keepImages', 'analyzeImages', 'downloadVideo', 'analyzeVideo'];
   const out = {};
   for (const arg of args) {
     const eq = arg.indexOf('=');
@@ -902,6 +908,7 @@ function formatPreferences(data, colors) {
   read images (OCR)       ${onOff(p.analyzeImages)}  max ${p.maxImages}   ${dim('extra credits')}
   max credits/conversion  ${p.maxCredits}
   YouTube video to CDN    ${onOff(p.downloadVideo)}            ${dim('extra credits, charged when ready')}
+  AI video analysis       ${onOff(p.analyzeVideo)}            ${dim('extra credits by video length, needs video download')}
 ${dim('Flags on a single conversion override these; omitted flags use them.')}
 `;
 }
@@ -973,7 +980,7 @@ ${bold('Usage')}
   anymd mcp                            Print MCP client configuration snippets
   anymd prefs [show] | set <field>=<value>… | reset
                                        Show or change your saved reading defaults
-  anymd video <id> [--json]            Check a YouTube video download (prefs set downloadVideo=on)
+  anymd video <id> [--json]            Check a YouTube video download and its AI analysis (convert --download-video / --analyze-video)
 
 ${bold('Options')}
   --json            Print raw JSON
@@ -985,7 +992,11 @@ ${bold('Options')}
   --max-thread-posts <n>  Thread post limit, 1–100 (default 20)
   --include-comments  Read comments and replies (requires a key; extra credits)
   --analyze-images    OCR and describe article images (requires a key; extra credits)
-  --no-expand-thread, --no-include-comments, --no-analyze-images
+  --download-video    YouTube: store the lowest-quality video on the anymd CDN in the
+                      background (requires a key; 20 credits when ready)
+  --analyze-video     YouTube: also analyze that video with AI (implies --download-video;
+                      requires a key; 10 + 20 credits per started minute when ready, up to 60 min)
+  --no-expand-thread, --no-include-comments, --no-analyze-images, --no-download-video, --no-analyze-video
                       Turn an enrichment off for this conversion only
   --keep-images, --no-images  Keep or strip image/media URLs (no extra credits)
   --max-comments <n>  Comment/reply limit, 1–1000 (default 100)
