@@ -69,6 +69,10 @@ describe('social search parsers', () => {
     expect(page.results[0].stats).toEqual({ likes: 4, replies: 2, reposts: 1, views: null });
     expect(page.nextCursor).toBeNull();
     expect(parseThreadsSearch(null)).toEqual({ results: [], nextCursor: null });
+    // Current provider shape: a flat `data` list, or `data: null` when a tab has nothing.
+    const flat = parseThreadsSearch({ status: 'Successful', data: [{ thread: post('CCC').node.thread, __typename: 'XDTSearchResult' }] });
+    expect(flat.results.map((r) => r.url)).toEqual(['https://www.threads.net/@dev.user/post/CCC']);
+    expect(parseThreadsSearch({ status: 'Successful', data: null })).toEqual({ results: [], nextCursor: null });
   });
 
   it('normalizes LinkedIn posts with UTC timestamps as a single page', () => {
@@ -121,7 +125,7 @@ describe('runSocialSearch', () => {
     const r = await runSocialSearch(env, ctx, { platform: 'threads', query: 'rare words', channel: 'mcp', principal });
     await flush();
     expect(r).toMatchObject({ results: [], nextCursor: null, credits: 0 });
-    expect(fetch.mock.calls.map(([u]) => new URL(String(u)).pathname)).toEqual(['/api/search/recent', '/api/search/top']);
+    expect(fetch.mock.calls.map(([u]) => new URL(String(u)).pathname)).toEqual(['/api/v1/search/recent', '/api/v1/search/top']);
     expect(await creditsUsedThisMonth(env, user.id)).toBe(0);
   });
 

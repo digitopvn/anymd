@@ -96,12 +96,14 @@ export function parseInstagramSearch(response: unknown): SocialSearchPage {
   return { results, nextCursor: results.length && data.has_more !== false ? nonEmpty(data.next_cursor) : null };
 }
 
-// ─── Threads (threads-api4) ────────────────────────────────────────────────
+// ─── Threads (threads-scraper-api2) ────────────────────────────────────────
 
 export function parseThreadsSearch(response: unknown): SocialSearchPage {
-  const search = object(object(object(response).data).searchResults);
-  const results = list(search.edges).map((edge): SocialSearchResult => {
-    const post = object(list(object(object(edge.node).thread).thread_items)[0]?.post);
+  // The provider lists `data[].thread`; the older `data.searchResults.edges[].node.thread` shape is still accepted.
+  const data = object(response).data;
+  const threads = Array.isArray(data) ? data.map((item) => object(item).thread) : list(object(object(data).searchResults).edges).map((edge) => object(edge.node).thread);
+  const results = threads.map((thread): SocialSearchResult => {
+    const post = object(list(object(thread).thread_items)[0]?.post);
     const user = object(post.user);
     const username = string(user.username);
     const code = string(post.code);
@@ -115,7 +117,7 @@ export function parseThreadsSearch(response: unknown): SocialSearchPage {
       stats: stats(post.like_count, info.direct_reply_count, info.repost_count, null), media: media([candidates[0]?.url]),
     };
   }).filter(usable);
-  // The provider answers one page per query (page_info never offers a next page).
+  // The provider answers one page per query (it never offers a next page).
   return { results, nextCursor: null };
 }
 
@@ -136,15 +138,15 @@ export function parseLinkedInSearch(response: unknown): SocialSearchPage {
 
 // ─── Dispatch ──────────────────────────────────────────────────────────────
 
-const THREADS_HOST = 'threads-api4.p.rapidapi.com';
+const THREADS_HOST = 'threads-scraper-api2.p.rapidapi.com';
 /** Providers that answer a single page per query; a cursor for them is an empty, free page. */
 const SINGLE_PAGE: ReadonlySet<SocialPlatform> = new Set(['threads', 'linkedin']);
 
 async function searchThreads(query: string, ctx: SearchContext): Promise<SocialSearchPage> {
-  const recent = parseThreadsSearch(await rapidJson(THREADS_HOST, '/api/search/recent', { query }, ctx, { allowEmpty: true }));
+  const recent = parseThreadsSearch(await rapidJson(THREADS_HOST, '/api/v1/search/recent', { query }, ctx, { allowEmpty: true }));
   // The recent tab is often empty for a query the top tab answers; fall back once.
   if (recent.results.length) return recent;
-  return parseThreadsSearch(await rapidJson(THREADS_HOST, '/api/search/top', { query }, ctx, { allowEmpty: true }));
+  return parseThreadsSearch(await rapidJson(THREADS_HOST, '/api/v1/search/top', { query }, ctx, { allowEmpty: true }));
 }
 
 export async function searchPlatform(platform: SocialPlatform, query: string, cursor: string | undefined, ctx: SearchContext): Promise<SocialSearchPage> {
