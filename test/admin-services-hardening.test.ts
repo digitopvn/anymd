@@ -142,13 +142,19 @@ describe('idempotent admin writes under concurrency', () => {
     const actor = await owner();
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
+    let started!: () => void;
+    const claimed = new Promise<void>((r) => (started = r));
     let runs = 0;
     const run = async () => {
       runs += 1;
+      started();
       await gate;
       return { value: 42 };
     };
     const first = withIdempotency(t.env, actor, 'test.op', 'k-1', { a: 1 }, run);
+    // Send the duplicate only once the first request holds the claim: two in-flight payload digests
+    // can finish in either order, and a duplicate that claims first would block on the gate forever.
+    await Promise.race([claimed, first]);
     const second = await failure(withIdempotency(t.env, actor, 'test.op', 'k-1', { a: 1 }, run));
     expect([second.status, second.code]).toEqual([409, 'idempotency_in_progress']);
     release();

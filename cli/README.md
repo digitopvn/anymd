@@ -29,6 +29,7 @@ anymd search "vector databases" --mode hybrid --limit 10
 | `anymd convert <url> [--json] [-o file] [--no-save] [--fresh] [enrichment flags]` | Without a key: the public URL API (`GET /<url>`). With a key: `POST /api/v1/convert`, saved to your library unless `--no-save`. |
 | `anymd file <path> [--json] [-o file]` | Upload a local file to `POST /api/v1/convert/file`. |
 | `anymd search <query> [--mode hybrid\|bm25\|fulltext\|semantic] [--limit 10] [--json]` | Ranked list: score, title, URL, snippet. |
+| `anymd social <all\|x\|facebook\|instagram\|threads\|linkedin> <query> [--cursor c] [--json]` | Search public social posts on one platform or all of them (`POST /api/v1/social/search`, requires a key; 10 credits per page with results, 100 on LinkedIn, `all` the sum). Failed platforms and the next-page command go to stderr. |
 | `anymd ls [--limit 20] [--domain x] [--tag a,b]` | Table of library documents. `--tag` keeps documents carrying every listed tag. |
 | `anymd get <id> [-o file]` | A library document as Markdown (`--json` for the record). |
 | `anymd rm <id>` | Delete a library document. |

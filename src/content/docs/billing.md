@@ -19,6 +19,10 @@ anymd bills in **credits**, and you pay when your agents learn something new. Pr
 | YouTube video stored on the anymd CDN (opt-in setting, charged when ready) | 20 |
 | PDF, DOCX, XLSX, CSV and other documents (per file) | 3 |
 | Image (vision description) | 5 |
+| Social search: each page of results on X, Facebook, Instagram or Threads | 10 |
+| Social search: each page of LinkedIn results | 100 |
+| Social search on all platforms | Sum of the platforms that returned results |
+| Social search page with no results | 0 |
 | Library search, reads, MCP reads | 0 |
 | Cached result | 0 |
 | Failed conversion | 0 |

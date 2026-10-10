@@ -87,6 +87,7 @@ Tools are listed only when the caller holds the scope they need.
 | `convert_url` | Same input as `read_url` | Same as `read_url`, kept under its original name for existing clients |
 | `get_video_download` | `{ id }` | `convert` |
 | `search_library` | `{ query, mode?, limit? }` | `library:read` |
+| `search_social` | `{ platform, query, cursor? }` (`platform` may be `all`) | `convert` (account required) |
 | `get_document` | `{ id }` | `library:read` |
 | `list_documents` | `{ limit?, domain?, tags?, before? }` | `library:read` |
 | `list_tags` | `{ limit? }` | `library:read` |
@@ -94,7 +95,7 @@ Tools are listed only when the caller holds the scope they need.
 | `delete_document` | `{ id }` | `library:write` |
 | `usage_summary` | `{}` | `usage:read` |
 
-`read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
+`search_social` searches public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them and returns normalized results with a per-platform status and a `next_cursor`; see [Social search](/docs/social-search). `read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
 
 `tag_document` adds and/or removes tags, or replaces them all with `set` (not combinable with `add`/`remove`; `[]` clears), and returns `{ id, tags }`. Tags are lowercased and keep only letters, digits, `-` and `_`; a document holds at most 20, and an edit past that fails with `too_many_tags` instead of dropping tags. `list_tags` returns `{ items: [{ tag, count }] }`, most used first. `list_documents` with `tags` keeps documents carrying every listed tag (whole-tag match, up to 10).
 
@@ -229,7 +230,7 @@ Things to ask an admin agent:
 
 ## Credits
 
-`read_url` (and `convert_url`) costs the same credits as any other conversion; cached reads are free. Reads such as `search_library`, `get_document` and `list_documents` are free. See [Billing & credits](/docs/billing).
+`read_url` (and `convert_url`) costs the same credits as any other conversion; cached reads are free. `search_social` costs 10 credits for each page that returns results (100 on LinkedIn; `all` costs the sum for the platforms that returned results); empty pages are free. Reads such as `search_library`, `get_document` and `list_documents` are free. See [Billing & credits](/docs/billing).
 
 ## Protocol versions
 

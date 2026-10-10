@@ -68,6 +68,7 @@ Read `code`, not `message`. Messages are for humans and may change.
 | POST | `/library/:id/tags` | `library:write` |
 | DELETE | `/library/:id` | `library:write` |
 | GET, POST | `/search` | `library:read` |
+| POST | `/social/search` | `convert` (signed-in callers) |
 | GET | `/usage` | `usage:read` |
 | GET | `/traces`, `/traces/:id` | `usage:read` |
 | GET, POST | `/keys` | `keys:manage` |
@@ -341,6 +342,16 @@ const { hits } = await res.json();
 ```
 
 How the modes, fan-out and Jev work, plus the response shape: [Library & search](/docs/library-search).
+
+## Social search
+
+`POST /social/search` with `{ "platform": "all" | "x" | "facebook" | "instagram" | "threads" | "linkedin", "query": "…", "cursor"?: "…" }`. Scope: `convert`, and the caller must have an account. Each page that returns results costs 10 credits (100 on LinkedIn); `all` searches every platform and costs the sum for the platforms that returned results. Empty pages and provider failures are free. Pass `next_cursor` back as `cursor` for the next page.
+
+```bash
+curl https://anymd.cc/api/v1/social/search \n  -H "Authorization: Bearer $ANYMD_API_KEY" \n  -H "Content-Type: application/json" \n  -d '{"platform":"linkedin","query":"ai agents"}'
+```
+
+Response shape, errors and per-platform notes: [Social search](/docs/social-search).
 
 ## Usage and traces
 

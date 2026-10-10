@@ -46,6 +46,6 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
     // No OAuth grants store in this environment: nothing to revoke.
   }
 
-  const tables = ['documents', 'api_keys', 'sessions', 'usage_events', 'traces', 'subscriptions', 'credit_grants'];
+  const tables = ['documents', 'api_keys', 'sessions', 'usage_events', 'traces', 'subscriptions', 'credit_grants', 'social_searches'];
   await env.DB.batch([...tables.map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(userId)), env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId)]);
 }

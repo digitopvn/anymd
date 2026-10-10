@@ -13,6 +13,10 @@ import { applyPageOps, createPage, getPage, listPages, OpSchema, PageError, page
 import { createPost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { runConversion } from '../convert/service';
 import { getVideoJob, videoJobPayload } from '../convert/youtube-video';
+  },
+  {
+import { runSocialSearch, SOCIAL_SEARCH_ALL_MAX, socialSearchInput, socialSearchPayload } from '../convert/social-search';
+import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError } from '../convert/types';
 import type { Env, Principal, WaitUntil } from '../env';
@@ -41,7 +45,7 @@ import { DESTRUCTIVE, IDEMPOTENT_WRITE, isMutation, READ_ONLY, ToolError, WRITE,
 const SERVER_INFO = { name: 'anymd', title: 'anymd — the web context layer for AI agents', version: '1.1.0' };
 const INSTRUCTIONS =
   'anymd is the web context layer for AI agents: it reads public web content (web pages, GitHub, YouTube, Reddit, Hacker News, X, PDFs, Office files, images) into structured Markdown and keeps a private, searchable library of everything read. ' +
-  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document for full text. Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision. ' +
+  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document for full text, search_social to find public posts on X, Facebook, Instagram, Threads or LinkedIn (read a result with read_url). Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision. ' +
   'Admin tools appear only for owner/admin credentials granted their scopes: start with system_overview, page with next_cursor, pass expected* values and an idempotencyKey with every change; every change lands in list_audit_events.';
 
 const READ = READ_ONLY;
@@ -110,6 +114,15 @@ const TOOLS: ToolDef[] = [
       if (!job) throw new ToolError('Video download not found');
       return videoJobPayload(t.env, job);
     },
+  },
+  {
+    name: 'search_social',
+    title: 'Search social media',
+    description: `Search public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them (platform "all", merged newest first) by keyword and return normalized results (platform, url, author, text, published_at, stats) plus a per-platform status. Each page that returns results costs ${SOCIAL_SEARCH_CREDITS.x} credits on X, Facebook, Instagram or Threads and ${SOCIAL_SEARCH_CREDITS.linkedin} on LinkedIn; "all" searches every platform at once and costs the sum for the platforms that returned results (at most ${SOCIAL_SEARCH_ALL_MAX}). Empty pages are free. Pass next_cursor as cursor for the next page. Searches are kept in the dashboard history, not the library; read a post with read_url.`,
+    scope: 'convert',
+    input: z.object(socialSearchInput),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    run: async (a, t) => socialSearchPayload(await runSocialSearch(t.env, t.ctx, { ...a, channel: 'mcp', principal: t.principal })),
   },
   {
     name: 'get_document',
