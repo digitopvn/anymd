@@ -104,6 +104,14 @@ anymd convert https://x.com/example/status/123 --no-expand-thread   # this conve
 anymd prefs reset                                                    # deep reading off again
 ```
 
+Download YouTube videos to the anymd CDN (off by default, 20 credits per video when ready). Conversions of YouTube URLs then print a job id; check it until it is `ready`:
+
+```bash
+anymd prefs set downloadVideo=on
+anymd convert https://www.youtube.com/watch?v=dQw4w9WgXcQ   # ends with "## Video download … Job: `vid_…`"
+anymd video vid_…                                              # status, then cdn_url
+```
+
 `anymd prefs` works with any key that has `convert`. `prefs set` and `prefs reset` change what every key and client of your account may spend, so they need a key with the `keys:manage` scope (the **Everything my role allows** preset); a **Convert only** key gets `forbidden`.
 
 Convert a local PDF:

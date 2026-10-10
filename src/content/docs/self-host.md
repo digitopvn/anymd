@@ -110,7 +110,7 @@ npm run secrets:production   # pushes every known secret found in .env, without 
 | `POLAR_WEBHOOK_SECRET` | Verifying Polar webhooks |
 | `GITHUB_TOKEN` | Higher GitHub API rate limit for the changelog |
 | `RESEND_API_KEY` | Transactional email (welcome, password reset) |
-| `RAPIDAPI_KEY`, `VIDCAP_API_KEY` | YouTube transcripts (either works; RapidAPI is tried first). `RAPIDAPI_KEY` also enables Facebook, Instagram, Threads (API4) and LinkedIn adapters and their provider-backed comments. |
+| `RAPIDAPI_KEY`, `VIDCAP_API_KEY` | YouTube transcripts (either works; RapidAPI is tried first) and the opt-in video download (either works; VidCap is tried first, with `VIDEO_QUEUE`). `RAPIDAPI_KEY` also enables Facebook, Instagram, Threads (API4) and LinkedIn adapters and their provider-backed comments. |
 | `OPENROUTER_API_KEY` | Query fan-out and Jev via OpenRouter (Workers AI is the fan-out fallback), plus article-image OCR and descriptions using `qwen/qwen3.6-35b-a3b` |
 | `TYPESAFE_API_KEY` | Jev directly from TypeSafe, when OpenRouter isn't configured |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | "Continue with GitHub" sign-in |

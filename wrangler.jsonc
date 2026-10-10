@@ -27,6 +27,10 @@
       ],
       "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "anymd" }],
       "vectorize": [{ "binding": "VECTORS", "index_name": "anymd-chunks-staging" }],
+      "queues": {
+        "producers": [{ "binding": "VIDEO_QUEUE", "queue": "anymd-video-downloads-staging" }],
+        "consumers": [{ "queue": "anymd-video-downloads-staging", "max_batch_size": 1, "max_retries": 2 }]
+      },
       "ai": { "binding": "AI" },
       "ratelimits": [
         { "name": "RL_ANON", "namespace_id": "2101", "simple": { "limit": 20, "period": 60 } },
@@ -59,6 +63,10 @@
       ],
       "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "anymd" }],
       "vectorize": [{ "binding": "VECTORS", "index_name": "anymd-chunks-production" }],
+      "queues": {
+        "producers": [{ "binding": "VIDEO_QUEUE", "queue": "anymd-video-downloads" }],
+        "consumers": [{ "queue": "anymd-video-downloads", "max_batch_size": 1, "max_retries": 2 }]
+      },
       "ai": { "binding": "AI" },
       "ratelimits": [
         { "name": "RL_ANON", "namespace_id": "1101", "simple": { "limit": 20, "period": 60 } },

@@ -33,6 +33,7 @@ const READING_PREFERENCE_PROPS: Record<string, Schema> = {
   analyzeImages: bool('Read text and details in images (extra credits); requires keepImages'),
   maxImages: bounded('maxImages', 'Maximum analyzed images'),
   maxCredits: bounded('maxCredits', 'Credit cap per conversion'),
+  downloadVideo: bool('Download the lowest-quality YouTube video to the anymd CDN in the background (extra credits, charged when ready)'),
 };
 const READING_PREFERENCES_BODY = {
   ok: ref('ReadingPreferencesState'),
@@ -143,6 +144,17 @@ const OPS: Record<string, Record<string, Op>> = {
       body: obj({ add: arr(str(), 'Tags to add'), remove: arr(str(), 'Tags to remove'), set: arr(str(), 'Replace all tags; [] clears') }),
       ok: obj({ id: str(), tags: arr(str()) }, ['id', 'tags']),
       errors: [404, 409, 422],
+    },
+  },
+  '/videos/{id}': {
+    get: {
+      summary: 'Get a YouTube video download',
+      description: 'A background download started by a YouTube conversion when the account setting `downloadVideo` is on. Poll every 15–30 s (`Retry-After` is set while it runs) until `status` is `ready` (`cdn_url` is the lowest-quality MP4 on the anymd CDN) or `failed` (see `error`). Credits are charged only when ready.',
+      tag: 'Convert',
+      scope: 'convert',
+      params: [idParam('Video download')],
+      ok: ref('VideoDownload'),
+      errors: [401, 404],
     },
   },
   '/library/{id}': {
@@ -305,6 +317,20 @@ const SCHEMAS: Record<string, Schema> = {
     trace_id: str(),
     duration_ms: int(),
     stats: obj({ likes: nullable(int()), retweets: nullable(int()), replies: nullable(int()), views: nullable(int()) }, [], 'X posts only'),
+    video_download: obj({
+      status: str(undefined, { enum: ['queued', 'downloading', 'ready', 'failed', 'skipped'] }),
+      id: str('Job id to poll at check_url (absent when skipped)'),
+      reused: bool('An earlier job for the same video was returned instead of a new one'),
+      reason: str('Why no job started: unavailable, quota_exceeded or internal (skipped only)'),
+      credits: int(), quality: nullable(str()), cdn_url: nullable(str()), error: nullable(str()), check_url: str(),
+    }, [], 'YouTube reads only, when the account setting downloadVideo is on'),
+  }),
+  VideoDownload: obj({
+    id: str(), status: str(undefined, { enum: ['queued', 'downloading', 'ready', 'failed'] }), video_id: str(), source_url: str(),
+    quality: nullable(str('e.g. 360p; "no audio" when only a video-only stream existed')), bytes: nullable(int()),
+    cdn_url: nullable(str('The MP4 on the anymd CDN, once ready')), credits: int('Charged when ready; 0 otherwise'),
+    error: nullable(str('Failure code, e.g. video_unavailable, video_too_large, provider_unavailable')), check_url: str(),
+    created_at: int(), updated_at: int(), completed_at: nullable(int()),
   }),
   DocumentSummary: obj({ id: str(), url: str(), title: str(), author: str(), description: str(), domain: str(), site: str(), image: str(), published: str(), language: str(), source_kind: str(), tags: str('Space-separated'), word_count: int(), embedded_chunks: int(), created_at: int(), updated_at: int() }),
   ReadingPreferences: obj(READING_PREFERENCE_PROPS, Object.keys(READ_DEFAULTS)),

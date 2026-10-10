@@ -93,7 +93,7 @@ export const PLANS: Plan[] = [
 export const ANONYMOUS_DAILY_LIMIT = 50;
 
 /** Fixed prices for successful enrichment units; no charge for empty/failed units. */
-export const ENRICHMENT_CREDITS = { threadPost: 1, commentBatch: 10, commentsPerBatch: 20, image: 5, socialPost: 10 } as const;
+export const ENRICHMENT_CREDITS = { threadPost: 1, commentBatch: 10, commentsPerBatch: 20, image: 5, socialPost: 10, videoDownload: 20 } as const;
 
 /**
  * One page of social search results per platform; empty or failed pages are free.
@@ -115,6 +115,7 @@ export const CREDIT_TABLE: { kind: string; label: string; credits: number }[] = 
   { kind: 'thread', label: 'Each additional X thread post', credits: ENRICHMENT_CREDITS.threadPost },
   { kind: 'comments', label: 'Each started batch of 20 retrieved comments/replies', credits: ENRICHMENT_CREDITS.commentBatch },
   { kind: 'image-analysis', label: 'Each successfully analyzed article image', credits: ENRICHMENT_CREDITS.image },
+  { kind: 'video_download', label: 'YouTube video stored on the anymd CDN (opt-in, charged when ready)', credits: ENRICHMENT_CREDITS.videoDownload },
   { kind: 'social-search', label: 'Social search: each page of X, Facebook, Instagram or Threads results', credits: SOCIAL_SEARCH_CREDITS.x },
   { kind: 'social-search-linkedin', label: 'Social search: each page of LinkedIn results', credits: SOCIAL_SEARCH_CREDITS.linkedin },
   { kind: 'search', label: 'Library search, reads, MCP reads', credits: 0 },

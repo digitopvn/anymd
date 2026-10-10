@@ -1,7 +1,7 @@
 ---
 title: "Supported sources"
 description: "What anymd converts today (web pages, social posts, X, YouTube, GitHub, Reddit, Hacker News, PDFs, Office files and images), what each returns, limits, and what's planned."
-updated: "2026-10-09"
+updated: "2026-10-10"
 ---
 
 anymd picks a converter per URL. Specialised adapters go first; everything else goes through the general web pipeline. The `kind` field in the frontmatter (and the `X-Anymd-Kind` header) tells you which one ran.
@@ -69,6 +69,22 @@ Watch, `youtu.be`, Shorts and Live URLs. Title, channel and thumbnail come from 
 ```
 
 Pass `lang=vi` (or any language code) to prefer a transcript language. When no transcript is available, the output says so and still includes the video's metadata. That conversion is still charged.
+
+### Video download to the anymd CDN
+
+Off by default. Turn on **Download YouTube videos to the anymd CDN** in [Account → Deep reading defaults](/dashboard/account#reading-defaults) (or `PUT /api/v1/account/reading-preferences` with `{"downloadVideo": true}`). Every YouTube read from your account then also downloads the lowest-quality MP4 of the video (the smallest stream that has sound; a video-only stream only when no other exists, up to 500 MB) to `cdn.anymd.cc`, in the background. The read does not wait for it: the Markdown ends with a section like this, and the JSON response carries the same data in `video_download`:
+
+```markdown
+## Video download
+
+The lowest-quality MP4 of this video is being downloaded to the anymd CDN in the background.
+
+- Job: `vid_…` (status: `queued`)
+- Check: `GET https://anymd.cc/api/v1/videos/vid_…` with your API key, or the MCP tool `get_video_download` with `{"id": "vid_…"}`.
+- Poll every 15 to 30 seconds until `status` is `ready` (the MP4 is at `cdn_url`) or `failed` (see `error`). 20 credits are charged only when it is ready.
+```
+
+Status goes `queued` → `downloading` → `ready` or `failed`. Reading the same video again returns the running or finished job instead of starting a new one. When the account cannot pay for a download or the feature is unavailable, the section says why and no job starts.
 
 ## Hacker News
 

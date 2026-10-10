@@ -26,6 +26,8 @@ export interface Env {
   /** Stricter bucket for MCP tools that change state. Optional: falls back to RL_MCP / RL_AUTH. */
   RL_MCP_MUTATION?: RateLimit;
   OAUTH_PROVIDER: OAuthHelpers;
+  /** Background YouTube video downloads. Optional: without it (or both VIDCAP_API_KEY and RAPIDAPI_KEY) video download is unavailable. */
+  VIDEO_QUEUE?: Queue<import('./convert/youtube-video').VideoJobMessage>;
 
   // Secrets (all optional; features degrade gracefully when absent)
   ADMIN_EMAILS?: string;
