@@ -328,7 +328,7 @@ How the modes, fan-out and Jev work, plus the response shape: [Library & search]
 
 ## Social search
 
-`POST /social/search` with `{ "platform": "x" | "facebook" | "instagram" | "threads" | "linkedin", "query": "…", "cursor"?: "…" }`. Scope: `convert`, and the caller must have an account. Costs 10 credits for each page that returns results; empty pages and provider failures are free. Pass `next_cursor` back as `cursor` for the next page.
+`POST /social/search` with `{ "platform": "all" | "x" | "facebook" | "instagram" | "threads" | "linkedin", "query": "…", "cursor"?: "…" }`. Scope: `convert`, and the caller must have an account. Each page that returns results costs 10 credits (100 on LinkedIn); `all` searches every platform and costs the sum for the platforms that returned results. Empty pages and provider failures are free. Pass `next_cursor` back as `cursor` for the next page.
 
 ```bash
 curl https://anymd.cc/api/v1/social/search \n  -H "Authorization: Bearer $ANYMD_API_KEY" \n  -H "Content-Type: application/json" \n  -d '{"platform":"linkedin","query":"ai agents"}'

@@ -43,7 +43,7 @@ Without a key the CLI works anonymously, with the same 50-per-day limit as the [
 | `anymd convert <url> [--json] [-o file] [--no-save] [--fresh] [enrichment flags]` | Convert with options |
 | `anymd file <path>` | Convert a local file (PDF, DOCX, XLSX, CSV, images…) |
 | `anymd search <query> [--mode hybrid] [--limit 10] [--json]` | Search your library |
-| `anymd social <x\|facebook\|instagram\|threads\|linkedin> <query> [--cursor c] [--json]` | Search public social posts (10 credits per page with results; see [Social search](/docs/social-search)) |
+| `anymd social <all\|x\|facebook\|instagram\|threads\|linkedin> <query> [--cursor c] [--json]` | Search public social posts on one platform or all of them (10 credits per page with results, 100 on LinkedIn, `all` the sum; see [Social search](/docs/social-search)) |
 | `anymd ls [--limit 20] [--domain x] [--tag a,b]` | List library documents (`--tag`: every tag must match) |
 | `anymd get <id>` | Print a saved document |
 | `anymd rm <id>` | Delete a saved document |

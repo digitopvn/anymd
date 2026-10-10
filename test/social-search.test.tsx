@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOCIAL_SEARCH_CREDITS } from '../src/billing/plans';
-import { runSocialSearch, socialSearchPayload } from '../src/convert/social-search';
+import { getSocialSearch, listSocialSearches, runSocialSearch, SOCIAL_SEARCH_ALL_MAX, socialSearchPayload } from '../src/convert/social-search';
 import {
   parseFacebookSearch,
   parseInstagramSearch,
@@ -103,15 +103,15 @@ describe('runSocialSearch', () => {
     const fetch = providerReturns(200, { timeline: [tweet('1'), tweet('2')], next_cursor: 'next' });
     const r = await runSocialSearch(env, ctx, { platform: 'x', query: ' cloudflare ', channel: 'api', principal });
     await flush();
-    expect(r).toMatchObject({ platform: 'x', query: 'cloudflare', nextCursor: 'next', credits: SOCIAL_SEARCH_CREDITS });
+    expect(r).toMatchObject({ platform: 'x', query: 'cloudflare', nextCursor: 'next', credits: SOCIAL_SEARCH_CREDITS.x });
     expect(r.results).toHaveLength(2);
     const [url, init] = fetch.mock.calls[0];
     expect(String(url)).toBe('https://twitter-api45.p.rapidapi.com/search.php?query=cloudflare&search_type=Latest');
     expect(init?.headers).toMatchObject({ 'X-RapidAPI-Host': 'twitter-api45.p.rapidapi.com' });
-    expect(await creditsUsedThisMonth(env, user.id)).toBe(SOCIAL_SEARCH_CREDITS);
-    expect(t!.db.prepare("SELECT kind, target, credits, status FROM usage_events").all()).toEqual([{ kind: 'social_search', target: 'x:cloudflare', credits: SOCIAL_SEARCH_CREDITS, status: 'ok' }]);
+    expect(await creditsUsedThisMonth(env, user.id)).toBe(SOCIAL_SEARCH_CREDITS.x);
+    expect(t!.db.prepare("SELECT kind, target, credits, status FROM usage_events").all()).toEqual([{ kind: 'social_search', target: 'x:cloudflare', credits: SOCIAL_SEARCH_CREDITS.x, status: 'ok' }]);
     expect(t!.db.prepare('SELECT COUNT(*) AS n FROM traces').get()).toEqual({ n: 1 });
-    expect(socialSearchPayload(r)).toMatchObject({ count: 2, next_cursor: 'next', credits: SOCIAL_SEARCH_CREDITS, });
+    expect(socialSearchPayload(r)).toMatchObject({ count: 2, next_cursor: 'next', credits: SOCIAL_SEARCH_CREDITS.x, platforms: [{ platform: 'x', count: 2, credits: SOCIAL_SEARCH_CREDITS.x, error: null }] });
     expect(socialSearchPayload(r).results[0]).toMatchObject({ published_at: '2026-10-10T08:18:31.000Z' });
   });
 
@@ -136,7 +136,9 @@ describe('runSocialSearch', () => {
     expect(body).toMatchObject({ search_keywords: 'agents', sort_by: 'Latest' });
     // The provider rejects the old `page` field.
     expect('page' in body).toBe(false);
-    expect(r).toMatchObject({ nextCursor: null, credits: SOCIAL_SEARCH_CREDITS });
+    // LinkedIn pages cost more: its provider is about ten times pricier per search.
+    expect(r).toMatchObject({ nextCursor: null, credits: SOCIAL_SEARCH_CREDITS.linkedin });
+    expect(SOCIAL_SEARCH_CREDITS.linkedin).toBe(100);
     const paged = await runSocialSearch(env, ctx, { platform: 'threads', query: 'agents', cursor: 'x', channel: 'cli', principal });
     expect(paged).toMatchObject({ results: [], nextCursor: null, credits: 0 });
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -167,6 +169,90 @@ describe('runSocialSearch', () => {
     expect(await creditsUsedThisMonth(env, user.id)).toBe(495);
   });
 
+  /** Answers each provider host with its own response; unknown hosts have nothing (204). */
+  const providersAnswer = (answers: Record<string, (url: URL) => Response>) => {
+    const fetch = vi.fn(async (input: unknown, _init?: RequestInit) => {
+      const url = new URL(String(input));
+      return answers[url.hostname]?.(url) ?? new Response(null, { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetch);
+    return fetch;
+  };
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+  it('searches every platform for "all", merges newest first and charges only platforms with results', async () => {
+    const { env, user, principal } = await setup('pro');
+    const fetch = providersAnswer({
+      'twitter-api45.p.rapidapi.com': (u) => json(u.searchParams.get('cursor') === 'x2'
+        ? { timeline: [tweet('3', { created_at: 'Sat Oct 10 07:00:00 +0000 2026' })], next_cursor: 'x3' }
+        : { timeline: [tweet('1', { created_at: 'Sat Oct 10 06:00:00 +0000 2026' })], next_cursor: 'x2' }),
+      'instagram-pro-and-cheap-api.p.rapidapi.com': () => json({ items: [{ shortcode: 'IG1', url: 'https://www.instagram.com/p/IG1/', caption: 'c', owner: { username: 'u' }, taken_at: Date.parse('2026-10-10T09:00:00Z') / 1000 }], next_cursor: 'i2', has_more: true }),
+      'facebook-scraper3.p.rapidapi.com': () => json({ message: 'boom' }, 500),
+    });
+    const r = await runSocialSearch(env, ctx, { platform: 'all', query: 'cats', channel: 'api', principal });
+    await flush();
+    expect(r.results.map((x) => x.id)).toEqual(['IG1', '1']);
+    expect(r.platforms).toEqual([
+      { platform: 'x', count: 1, credits: SOCIAL_SEARCH_CREDITS.x, error: null },
+      { platform: 'facebook', count: 0, credits: 0, error: expect.stringMatching(/^upstream_error: /) },
+      { platform: 'instagram', count: 1, credits: SOCIAL_SEARCH_CREDITS.instagram, error: null },
+      { platform: 'threads', count: 0, credits: 0, error: null },
+      { platform: 'linkedin', count: 0, credits: 0, error: null },
+    ]);
+    expect(r.credits).toBe(SOCIAL_SEARCH_CREDITS.x + SOCIAL_SEARCH_CREDITS.instagram);
+    expect(await creditsUsedThisMonth(env, user.id)).toBe(r.credits);
+    expect(t!.db.prepare("SELECT target, credits FROM usage_events").all()).toEqual([{ target: 'all:cats', credits: r.credits }]);
+
+    // The next page only asks the platforms that had one, each with its own cursor.
+    fetch.mockClear();
+    const next = await runSocialSearch(env, ctx, { platform: 'all', query: 'cats', cursor: r.nextCursor!, channel: 'api', principal });
+    await flush();
+    const asked = fetch.mock.calls.map(([u]) => new URL(String(u)));
+    expect(asked.map((u) => u.hostname).sort()).toEqual(['instagram-pro-and-cheap-api.p.rapidapi.com', 'twitter-api45.p.rapidapi.com']);
+    expect(asked.find((u) => u.hostname.startsWith('twitter'))!.searchParams.get('cursor')).toBe('x2');
+    expect(asked.find((u) => u.hostname.startsWith('instagram'))!.searchParams.get('cursor')).toBe('i2');
+    expect(next.platforms.map((p) => p.platform)).toEqual(['x', 'instagram']);
+    expect(next.results.map((x) => x.id)).toEqual(['IG1', '3']);
+  });
+
+  it('rejects a foreign "all" cursor, fails when every platform fails, and refuses "all" without enough credits', async () => {
+    const { env, user, principal } = await setup();
+    const fetch = providersAnswer({});
+    await expect(runSocialSearch(env, ctx, { platform: 'all', query: 'cats', cursor: 'not-a-cursor', channel: 'api', principal })).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+    expect(fetch).not.toHaveBeenCalled();
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+    await expect(runSocialSearch(env, ctx, { platform: 'all', query: 'cats', channel: 'api', principal })).rejects.toMatchObject({ status: 502 });
+    await flush();
+    expect(await creditsUsedThisMonth(env, user.id)).toBe(0);
+
+    // "all" reserves every platform's page price up front.
+    t!.db.prepare("INSERT INTO usage_events (id,user_id,channel,kind,target,status,http_status,credits,duration_ms,created_at) VALUES ('e1',?,'api','convert','t','ok',200,?,1,?)").run(user.id, 500 - SOCIAL_SEARCH_ALL_MAX + 1, Date.now());
+    await expect(runSocialSearch(env, ctx, { platform: 'all', query: 'cats', channel: 'api', principal })).rejects.toMatchObject({ status: 402, message: expect.stringContaining(`${SOCIAL_SEARCH_ALL_MAX} credits`) });
+    await flush();
+  });
+
+  it('saves each search to the history, newest first, readable only by its owner', async () => {
+    const { env, user, principal } = await setup();
+    providerReturns(200, { timeline: [tweet('1')], next_cursor: 'n2' });
+    const first = await runSocialSearch(env, ctx, { platform: 'x', query: 'first', channel: 'cli', principal });
+    const second = await runSocialSearch(env, ctx, { platform: 'x', query: 'second', cursor: 'n1', channel: 'web', principal });
+    await flush();
+    const history = await listSocialSearches(env, user.id);
+    expect(history.map((h) => [h.query, h.channel, h.paged, h.resultCount, h.credits])).toEqual([
+      ['second', 'web', true, 1, SOCIAL_SEARCH_CREDITS.x],
+      ['first', 'cli', false, 1, SOCIAL_SEARCH_CREDITS.x],
+    ]);
+    expect(history[1].id).toBe(first.traceId);
+    const saved = await getSocialSearch(env, user.id, first.traceId);
+    expect(saved).toMatchObject({ platform: 'x', query: 'first', nextCursor: 'n2', credits: SOCIAL_SEARCH_CREDITS.x, channel: 'cli', paged: false });
+    expect(saved!.results).toEqual(first.results);
+    expect(saved!.platforms).toEqual(first.platforms);
+    const other = await seedUser(t!, 'user');
+    expect(await getSocialSearch(env, other.id, second.traceId)).toBeNull();
+    expect(await listSocialSearches(env, other.id)).toEqual([]);
+  });
+
   it('is served over REST and MCP with the same payload', async () => {
     const { env, principal } = await setup();
     providerReturns(200, { items: [{ shortcode: 'DX1', url: 'https://www.instagram.com/p/DX1/', caption: 'c', owner: { username: 'u' } }], has_more: false });
@@ -176,7 +262,7 @@ describe('runSocialSearch', () => {
     const execution = { waitUntil: ctx.waitUntil, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext;
     const res = await app.fetch(new Request('https://anymd.test/api/v1/social/search', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ platform: 'instagram', query: 'cats' }) }), env, execution);
     expect(res.status).toBe(200);
-    expect(res.headers.get('X-Anymd-Credits')).toBe(String(SOCIAL_SEARCH_CREDITS));
+    expect(res.headers.get('X-Anymd-Credits')).toBe(String(SOCIAL_SEARCH_CREDITS.instagram));
     expect(await res.json()).toMatchObject({ platform: 'instagram', count: 1, next_cursor: null, results: [{ id: 'DX1', author: { handle: 'u' } }] });
 
     const bad = await app.fetch(new Request('https://anymd.test/api/v1/social/search', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ platform: 'myspace', query: 'x' }) }), env, execution);
@@ -187,19 +273,40 @@ describe('runSocialSearch', () => {
     expect((await toolNames(env, mcpPrincipal)).includes('search_social')).toBe(true);
     const call = await callTool(env, mcpPrincipal, 'search_social', { platform: 'instagram', query: 'cats' });
     expect(call.result.isError).toBeFalsy();
-    expect(call.result.structuredContent).toMatchObject({ platform: 'instagram', count: 1, credits: SOCIAL_SEARCH_CREDITS });
+    expect(call.result.structuredContent).toMatchObject({ platform: 'instagram', count: 1, credits: SOCIAL_SEARCH_CREDITS.instagram });
     await flush();
   });
 });
 
 describe('dashboard social search page', () => {
   it('renders results with escaped text, safe links and a next-page form', () => {
-    const result = { platform: 'x' as const, query: 'cats', credits: 10, traceId: 't', durationMs: 5, nextCursor: 'c"2',
+    const result = { platform: 'x' as const, query: 'cats', credits: 10, traceId: 't', durationMs: 5, nextCursor: 'c"2', platforms: [{ platform: 'x' as const, count: 1, credits: 10, error: null }],
       results: [{ platform: 'x' as const, id: '1', url: 'https://x.com/a/status/1', author: { name: 'A', handle: 'a', url: 'https://x.com/a' }, text: '<script>alert(1)</script>', publishedAt: null, stats: { likes: 2, replies: null, reposts: null, views: null }, media: [] }] };
     const html = String(<SocialSearchPage platform="x" q="cats" result={result} />);
     expect(html.includes('<script>alert')).toBe(false);
     expect(html.includes('/convert?url=https%3A%2F%2Fx.com%2Fa%2Fstatus%2F1')).toBe(true);
     expect(html.includes('name="cursor"')).toBe(true);
     expect(html.includes('method="post"')).toBe(true);
+    expect(html.includes(`More results (${SOCIAL_SEARCH_CREDITS.x} credits)`)).toBe(true);
+  });
+
+  it('labels each result and platform for "all", and links past searches from the history', () => {
+    const post = (platform: 'x' | 'linkedin', id: string) => ({ platform, id, url: `https://example.com/${id}`, author: { name: 'A', handle: null, url: null }, text: 't', publishedAt: null, stats: { likes: null, replies: null, reposts: null, views: null }, media: [] });
+    const nextCursor = btoa(JSON.stringify({ x: 'c2' })).replace(/=+$/, '');
+    const result = { platform: 'all' as const, query: 'cats', credits: 110, traceId: 'trc_1', durationMs: 5, nextCursor, results: [post('linkedin', 'L1'), post('x', 'X1')],
+      platforms: [{ platform: 'x' as const, count: 1, credits: 10, error: null }, { platform: 'facebook' as const, count: 0, credits: 0, error: 'upstream_error: down' }, { platform: 'linkedin' as const, count: 1, credits: 100, error: null }] };
+    const history = [
+      { id: 'trc_1', platform: 'all' as const, query: 'cats', channel: 'web', paged: false, resultCount: 2, credits: 110, createdAt: Date.now() },
+      { id: 'trc_0', platform: 'x' as const, query: 'older <b>', channel: 'cli', paged: true, resultCount: 0, credits: 0, createdAt: Date.now() - 60_000 },
+    ];
+    const html = String(<SocialSearchPage platform="all" q="cats" result={result} history={history} saved={{ channel: 'web', createdAt: Date.now() }} />);
+    expect(html.includes('value="all" checked')).toBe(true);
+    expect(html.includes('LinkedIn</span>')).toBe(true);
+    expect(html.includes('Facebook: unavailable')).toBe(true);
+    expect(html.includes(`More results (up to ${SOCIAL_SEARCH_CREDITS.x} credits)`)).toBe(true);
+    expect(html.includes('href="/dashboard/social/trc_0"')).toBe(true);
+    expect(html.includes('aria-current="page"')).toBe(true);
+    expect(html.includes('older <b>')).toBe(false);
+    expect(html.includes('Saved search from')).toBe(true);
   });
 });

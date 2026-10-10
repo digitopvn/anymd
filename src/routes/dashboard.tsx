@@ -14,7 +14,7 @@ import { quotaState, monthStart } from '../lib/usage';
 import type { ReadingFormValues } from '../views/components/reading-options-fields';
 import { getDocument, librarySummary, listDocuments, listTags, normalizeTag } from '../library/store';
 import { searchForPrincipal, parseMode, usageSummary } from '../services';
-import { runSocialSearch, SOCIAL_PLATFORMS, type SocialPlatform } from '../convert/social-search';
+import { getSocialSearch, listSocialSearches, runSocialSearch, SOCIAL_SEARCH_TARGETS, type SocialSearchTarget } from '../convert/social-search';
 import { ConvertError } from '../convert/types';
 import {
   AccountPage,
@@ -123,22 +123,32 @@ dashboardRoutes.get('/search', async (c) => {
   return shell(c, '/dashboard/search', 'Search', <SearchPage q={q} mode={mode} fanout={fanout} decide={decide} result={result} error={error} />);
 });
 
-dashboardRoutes.get('/social', (c) => shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform="x" q="" result={null} />));
+const socialHistory = (c: AppContext) => listSocialSearches(c.env, c.get('principal').userId!);
+
+dashboardRoutes.get('/social', async (c) =>
+  shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform="x" q="" result={null} history={await socialHistory(c)} />));
+
+/** A saved search, shown again for free from the history. */
+dashboardRoutes.get('/social/:id', async (c) => {
+  const saved = await getSocialSearch(c.env, c.get('principal').userId!, c.req.param('id'));
+  if (!saved) return renderMessage(c, 404, 'Search not found', 'Only your most recent searches are kept.', <a class="btn btn-dark" href="/dashboard/social">Social search</a>);
+  return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={saved.platform} q={saved.query} result={saved} saved={saved} history={await socialHistory(c)} />);
+});
 
 dashboardRoutes.post('/social', async (c) => {
   const form = await formData(c);
-  const platform: SocialPlatform = (SOCIAL_PLATFORMS as readonly string[]).includes(form.platform) ? (form.platform as SocialPlatform) : 'x';
+  const platform: SocialSearchTarget = (SOCIAL_SEARCH_TARGETS as readonly string[]).includes(form.platform) ? (form.platform as SocialSearchTarget) : 'x';
   const q = (form.q ?? '').trim().slice(0, 200);
   try {
     const result = await runSocialSearch(c.env, c.executionCtx, { platform, query: q, cursor: form.cursor, channel: 'web', principal: c.get('principal') });
-    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} result={result} />);
+    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} result={result} history={await socialHistory(c)} />);
   } catch (e) {
     const known = e instanceof ConvertError;
     const error = known && e.status < 500 ? e.message
       : known && e.code === 'provider_unavailable' ? 'The search provider for this platform is unavailable right now. Try again later or pick another platform.'
       : 'Search failed. Try again in a moment.';
     if (!known) console.error('dashboard social search', e);
-    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} result={null} error={error} />, { status: known ? e.status : 500 });
+    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} result={null} error={error} history={await socialHistory(c)} />, { status: known ? e.status : 500 });
   }
 });
 
