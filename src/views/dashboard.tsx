@@ -10,7 +10,7 @@ import { formatNumber, humanDate, safeJson, timeAgo } from '../lib/util';
 import type { DocumentRow, DocumentSummary } from '../library/store';
 import type { SearchMode, SearchResponse } from '../library/search';
 import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
-import type { SocialPlatform, SocialSearchResponse } from '../convert/social-search';
+import { nextPageCredits, SOCIAL_SEARCH_ALL_MAX, type SocialSearchHistoryItem, type SocialSearchResponse, type SocialSearchTarget } from '../convert/social-search';
 import { Icon, Logo } from './components/icons';
 import { Converter } from './components/marketing';
 import type { StoredReadingPreferences } from '../convert/reading-preferences';
@@ -477,27 +477,70 @@ export function SearchPage({ q, mode, fanout, decide, result, error }: { q: stri
   );
 }
 
-const SOCIAL_LABELS: { id: SocialPlatform; label: string }[] = [
+const SOCIAL_LABELS: { id: SocialSearchTarget; label: string }[] = [
+  { id: 'all', label: 'All' },
   { id: 'x', label: 'X' },
   { id: 'facebook', label: 'Facebook' },
   { id: 'instagram', label: 'Instagram' },
   { id: 'threads', label: 'Threads' },
   { id: 'linkedin', label: 'LinkedIn' },
 ];
+const socialLabel = (id: SocialSearchTarget) => SOCIAL_LABELS.find((p) => p.id === id)?.label ?? id;
 
 const authorLabel = (a: SocialSearchResponse['results'][number]['author']) => a.name || (a.handle ? `@${a.handle}` : 'Unknown author');
 const statLine = (s: SocialSearchResponse['results'][number]['stats']) =>
   ([['likes', s.likes], ['replies', s.replies], ['reposts', s.reposts], ['views', s.views]] as const).filter(([, n]) => n !== null).map(([label, n]) => `${formatNumber(n!)} ${label}`);
 
-/** Posted form: every search can spend credits, so it is never a bookmarkable GET. */
-export function SocialSearchPage({ platform, q, result, error }: { platform: SocialPlatform; q: string; result: SocialSearchResponse | null; error?: string }) {
+/** Past searches; each link reopens the saved results without spending credits. */
+function SocialHistory({ history, current }: { history: SocialSearchHistoryItem[]; current?: string }) {
+  if (!history.length) return null;
+  return (
+    <section class="mt-8">
+      <h2 class="flex items-center gap-2 text-sm font-semibold">
+        <Icon name="clock" size={16} class="text-muted" /> Recent searches
+      </h2>
+      <ul class="card mt-3 divide-y divide-line">
+        {history.map((h) => (
+          <li>
+            <a
+              href={`/dashboard/social/${h.id}`}
+              class={`flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-4 py-3 text-sm hover:bg-paper ${h.id === current ? 'bg-paper' : ''}`}
+              aria-current={h.id === current ? 'page' : undefined}
+            >
+              <span class="min-w-0 max-w-full truncate font-medium">{h.query}</span>
+              <span class="chip !py-0 !text-[11px]">{socialLabel(h.platform)}</span>
+              {h.paged ? <span class="chip !py-0 !text-[11px]">next page</span> : null}
+              {h.channel !== 'web' ? <span class="chip !py-0 !text-[11px]">{h.channel.toUpperCase()}</span> : null}
+              <span class="flex-1" />
+              <span class="text-muted">
+                {h.resultCount} results · {h.credits} credits · <span title={new Date(h.createdAt).toISOString()}>{timeAgo(h.createdAt)}</span>
+              </span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Posted form: every search can spend credits, so it is never a bookmarkable GET. Saved searches reopen from the history for free. */
+export function SocialSearchPage({ platform, q, result, error, history = [], saved }: {
+  platform: SocialSearchTarget;
+  q: string;
+  result: SocialSearchResponse | null;
+  error?: string;
+  history?: SocialSearchHistoryItem[];
+  saved?: { channel: string; createdAt: number };
+}) {
+  const all = result?.platform === 'all';
+  const more = result ? nextPageCredits(result) : 0;
   return (
     <>
       <form class="card p-3 sm:p-4" method="post" action="/dashboard/social">
         <div class="flex flex-col gap-2 sm:flex-row">
           <div class="flex min-w-0 flex-1 items-center rounded-xl bg-paper px-3">
             <Icon name="search" size={18} class="shrink-0 text-muted" />
-            <input name="q" value={q} required maxlength={200} class="min-w-0 flex-1 bg-transparent px-2 py-3 outline-none" placeholder="Keywords, #hashtag or a phrase" aria-label="Query" autofocus />
+            <input name="q" value={q} required maxlength={200} class="min-w-0 flex-1 bg-transparent px-2 py-3 outline-none" placeholder="Keywords, #hashtag or a phrase" aria-label="Query" autofocus={!saved} />
           </div>
           <button class="btn btn-primary h-12" type="submit">
             Search
@@ -510,20 +553,39 @@ export function SocialSearchPage({ platform, q, result, error }: { platform: Soc
               {p.label}
             </label>
           ))}
-          <span class="text-muted">{SOCIAL_SEARCH_CREDITS} credits per page with results · empty pages are free</span>
         </div>
+        <p class="mt-2 text-xs text-muted">
+          Per page with results: {SOCIAL_SEARCH_CREDITS.x} credits for X, Facebook, Instagram or Threads, {SOCIAL_SEARCH_CREDITS.linkedin} for LinkedIn. All adds up the platforms that
+          return results (at most {SOCIAL_SEARCH_ALL_MAX}). Empty pages are free.
+        </p>
       </form>
       {error ? <p class="mt-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">{error}</p> : null}
       {result ? (
         <div class="mt-4">
+          {saved ? (
+            <p class="mb-2 text-sm text-muted">
+              Saved search from {humanDate(saved.createdAt)}
+              {saved.channel !== 'web' ? ` via ${saved.channel.toUpperCase()}` : ''}. Reopening it is free; search again for fresh posts.
+            </p>
+          ) : null}
           <p class="text-sm text-muted">
             {result.results.length} results · {result.credits} credits · {result.durationMs} ms
           </p>
+          {all ? (
+            <p class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+              {result.platforms.map((p) => (
+                <span class={p.error ? 'text-danger' : ''} title={p.error ?? undefined}>
+                  {socialLabel(p.platform)}: {p.error ? 'unavailable' : String(p.count)}
+                </span>
+              ))}
+            </p>
+          ) : null}
           {result.results.length ? (
             <ol class="mt-3 space-y-3">
               {result.results.map((r) => (
                 <li class="card p-4 sm:p-5">
                   <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
+                    {all ? <span class="chip !py-0 !text-[11px]">{socialLabel(r.platform)}</span> : null}
                     {r.author.url ? (
                       <a href={r.author.url} target="_blank" rel="noopener noreferrer nofollow" class="font-semibold hover:underline">
                         {authorLabel(r.author)}
@@ -561,16 +623,18 @@ export function SocialSearchPage({ platform, q, result, error }: { platform: Soc
               <input type="hidden" name="platform" value={result.platform} />
               <input type="hidden" name="cursor" value={result.nextCursor} />
               <button class="btn btn-ghost" type="submit">
-                More results ({SOCIAL_SEARCH_CREDITS} credits)
+                More results ({all ? 'up to ' : ''}
+                {more} credits)
               </button>
             </form>
           ) : null}
         </div>
-      ) : !error ? (
+      ) : !error && !history.length ? (
         <div class="mt-4">
           <Empty icon="globe" title="Search public social posts" body="Find posts on X, Facebook, Instagram, Threads and LinkedIn, then convert the ones you need into your library." />
         </div>
       ) : null}
+      <SocialHistory history={history} current={result?.traceId} />
     </>
   );
 }
