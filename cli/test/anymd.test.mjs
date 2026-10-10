@@ -187,7 +187,7 @@ describe('run: meta commands', () => {
     const h = harness();
     assert.equal(await h.exec(['--version']), 0);
     assert.equal(h.stdout, `${VERSION}\n`);
-    assert.equal(VERSION, '0.1.2');
+    assert.equal(VERSION, '0.1.3');
   });
 
   test('unknown command fails with a usage error', async () => {
@@ -689,5 +689,49 @@ describe('run: pages and mcp', () => {
     assert.match(h.stdout, /current: amd_live…WXYZ/);
     assert.ok(!h.stdout.includes(KEY));
     assert.equal(h.calls.length, 0);
+  });
+});
+
+describe('run: social search', () => {
+  const post = { platform: 'x', id: '1', url: 'https://x.com/a/status/1', author: { name: 'A', handle: 'a', url: 'https://x.com/a' }, text: 'Hello\nworld', published_at: '2026-10-10T08:00:00.000Z', stats: { likes: 3, replies: null, reposts: 1, views: null }, media: [] };
+
+  test('posts platform, query and cursor, prints posts and the next-page hint', async () => {
+    let body;
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: {
+        'POST /api/v1/social/search': (call) => {
+          body = JSON.parse(call.body);
+          return jsonResponse({ platform: 'x', query: 'cloudflare workers', count: 1, results: [post], next_cursor: 'c2', credits: 10 });
+        },
+      },
+    });
+    assert.equal(await h.exec(['social', 'x', 'cloudflare', 'workers', '--cursor', 'c1']), 0);
+    assert.deepEqual(body, { platform: 'x', query: 'cloudflare workers', cursor: 'c1' });
+    assert.match(h.stdout, /1\. @a {2}2026-10-10 {2}3 likes · 1 reposts\n {3}Hello world\n {3}https:\/\/x\.com\/a\/status\/1\n/);
+    assert.equal(h.stderr, `10 credits · more: anymd social x "cloudflare workers" --cursor 'c2'\n`);
+  });
+
+  test('--json prints the raw payload and empty pages say so', async () => {
+    const payload = { platform: 'threads', query: 'q', count: 0, results: [], next_cursor: null, credits: 0 };
+    const h = harness({ env: { ANYMD_API_KEY: KEY }, routes: { 'POST /api/v1/social/search': () => jsonResponse(payload) } });
+    assert.equal(await h.exec(['social', 'threads', 'q', '--json']), 0);
+    assert.deepEqual(JSON.parse(h.stdout), payload);
+    const h2 = harness({ env: { ANYMD_API_KEY: KEY }, routes: { 'POST /api/v1/social/search': () => jsonResponse(payload) } });
+    assert.equal(await h2.exec(['social', 'threads', 'q']), 0);
+    assert.equal(h2.stdout, 'No results.\n');
+  });
+
+  test('validates the platform and requires a key before calling the API', async () => {
+    const bad = harness({ env: { ANYMD_API_KEY: KEY } });
+    assert.equal(await bad.exec(['social', 'myspace', 'q']), 1);
+    assert.match(bad.stderr, /platform must be one of x, facebook, instagram, threads, linkedin/);
+    const missing = harness({ env: { ANYMD_API_KEY: KEY } });
+    assert.equal(await missing.exec(['social', 'x']), 1);
+    assert.match(missing.stderr, /^usage:/);
+    const anon = harness();
+    assert.equal(await anon.exec(['social', 'x', 'q']), 1);
+    assert.match(anon.stderr, /^not_authenticated:/);
+    assert.equal(bad.calls.length + missing.calls.length + anon.calls.length, 0);
   });
 });

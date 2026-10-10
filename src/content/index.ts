@@ -26,6 +26,7 @@ import docsCli from './docs/cli.md';
 import docsMcp from './docs/mcp.md';
 import docsWebmcp from './docs/webmcp.md';
 import docsLibrary from './docs/library-search.md';
+import docsSocialSearch from './docs/social-search.md';
 import docsSources from './docs/sources.md';
 import docsKeys from './docs/api-keys-roles.md';
 import docsPages from './docs/page-builder.md';
@@ -107,6 +108,7 @@ export const DOCS_PAGES: ContentPage[] = [
   contentPage('mcp', docsMcp),
   contentPage('webmcp', docsWebmcp),
   contentPage('library-search', docsLibrary),
+  contentPage('social-search', docsSocialSearch),
   contentPage('sources', docsSources),
   contentPage('api-keys-roles', docsKeys),
   contentPage('billing', docsBilling),

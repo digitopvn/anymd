@@ -27,6 +27,7 @@ import {
 import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { convertBlobToMarkdown, documentCreditCost, mimeFor } from '../convert/document';
 import { runConversion, type NotSavedReason } from '../convert/service';
+import { runSocialSearch, socialSearchPayload } from '../convert/social-search';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { applyPreferencesPatch, canWriteReadingPreferences, getReadingPreferences, PREFERENCES_WRITE_SCOPE, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences, type StoredReadingPreferences } from '../convert/reading-preferences';
 import { DEFAULT_READING_PREFERENCES, READING_LIMITS } from '../lib/reading-options';
@@ -240,6 +241,17 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
     );
     throw e;
   }
+});
+
+// ─── Social search ──────────────────────────────────────────────────────────
+
+/** Search public posts on X, Facebook, Instagram, Threads or LinkedIn. Each non-empty page costs credits. */
+api.post('/social/search', requireScope('convert'), async (c) => {
+  const b = await body(c, z.object({ platform: z.unknown(), query: z.unknown().optional(), q: z.unknown().optional(), cursor: z.unknown().optional() }));
+  const r = await runSocialSearch(c.env, c.executionCtx, { platform: b.platform, query: b.query ?? b.q, cursor: b.cursor, channel: channelFor(c), principal: c.get('principal') });
+  c.header('X-Anymd-Credits', String(r.credits));
+  c.header('X-Anymd-Trace', r.traceId);
+  return c.json(socialSearchPayload(r));
 });
 
 // ─── Library & search ───────────────────────────────────────────────────────

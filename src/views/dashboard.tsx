@@ -1,4 +1,4 @@
-/** Signed-in dashboard: overview, library, document, search, usage, traces, keys, billing. */
+/** Signed-in dashboard: overview, library, document, search, social search, usage, traces, keys, billing. */
 import type { Child } from 'hono/jsx';
 import type { ApiKeyRow, UserRow } from '../auth/identity';
 import { KEY_PRESETS, roleAtLeast, ROLE_TEMPLATES } from '../auth/roles';
@@ -9,6 +9,8 @@ import type { QuotaState } from '../lib/usage';
 import { formatNumber, humanDate, safeJson, timeAgo } from '../lib/util';
 import type { DocumentRow, DocumentSummary } from '../library/store';
 import type { SearchMode, SearchResponse } from '../library/search';
+import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
+import type { SocialPlatform, SocialSearchResponse } from '../convert/social-search';
 import { Icon, Logo } from './components/icons';
 import { Converter } from './components/marketing';
 import type { StoredReadingPreferences } from '../convert/reading-preferences';
@@ -19,6 +21,7 @@ const NAV: { href: string; label: string; icon: string; min?: RoleName }[] = [
   { href: '/dashboard', label: 'Overview', icon: 'home' },
   { href: '/dashboard/library', label: 'Library', icon: 'book' },
   { href: '/dashboard/search', label: 'Search', icon: 'search' },
+  { href: '/dashboard/social', label: 'Social search', icon: 'globe' },
   { href: '/dashboard/usage', label: 'Usage logs', icon: 'chart' },
   { href: '/dashboard/traces', label: 'Traces', icon: 'activity' },
   { href: '/dashboard/keys', label: 'API keys', icon: 'key' },
@@ -470,6 +473,104 @@ export function SearchPage({ q, mode, fanout, decide, result, error }: { q: stri
           ))}
         </div>
       )}
+    </>
+  );
+}
+
+const SOCIAL_LABELS: { id: SocialPlatform; label: string }[] = [
+  { id: 'x', label: 'X' },
+  { id: 'facebook', label: 'Facebook' },
+  { id: 'instagram', label: 'Instagram' },
+  { id: 'threads', label: 'Threads' },
+  { id: 'linkedin', label: 'LinkedIn' },
+];
+
+const authorLabel = (a: SocialSearchResponse['results'][number]['author']) => a.name || (a.handle ? `@${a.handle}` : 'Unknown author');
+const statLine = (s: SocialSearchResponse['results'][number]['stats']) =>
+  ([['likes', s.likes], ['replies', s.replies], ['reposts', s.reposts], ['views', s.views]] as const).filter(([, n]) => n !== null).map(([label, n]) => `${formatNumber(n!)} ${label}`);
+
+/** Posted form: every search can spend credits, so it is never a bookmarkable GET. */
+export function SocialSearchPage({ platform, q, result, error }: { platform: SocialPlatform; q: string; result: SocialSearchResponse | null; error?: string }) {
+  return (
+    <>
+      <form class="card p-3 sm:p-4" method="post" action="/dashboard/social">
+        <div class="flex flex-col gap-2 sm:flex-row">
+          <div class="flex min-w-0 flex-1 items-center rounded-xl bg-paper px-3">
+            <Icon name="search" size={18} class="shrink-0 text-muted" />
+            <input name="q" value={q} required maxlength={200} class="min-w-0 flex-1 bg-transparent px-2 py-3 outline-none" placeholder="Keywords, #hashtag or a phrase" aria-label="Query" autofocus />
+          </div>
+          <button class="btn btn-primary h-12" type="submit">
+            Search
+          </button>
+        </div>
+        <div class="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          {SOCIAL_LABELS.map((p) => (
+            <label class="chip cursor-pointer has-[:checked]:!border-ink has-[:checked]:!bg-ink has-[:checked]:!text-paper">
+              <input type="radio" name="platform" value={p.id} checked={p.id === platform} class="sr-only" />
+              {p.label}
+            </label>
+          ))}
+          <span class="text-muted">{SOCIAL_SEARCH_CREDITS} credits per page with results · empty pages are free</span>
+        </div>
+      </form>
+      {error ? <p class="mt-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">{error}</p> : null}
+      {result ? (
+        <div class="mt-4">
+          <p class="text-sm text-muted">
+            {result.results.length} results · {result.credits} credits · {result.durationMs} ms
+          </p>
+          {result.results.length ? (
+            <ol class="mt-3 space-y-3">
+              {result.results.map((r) => (
+                <li class="card p-4 sm:p-5">
+                  <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
+                    {r.author.url ? (
+                      <a href={r.author.url} target="_blank" rel="noopener noreferrer nofollow" class="font-semibold hover:underline">
+                        {authorLabel(r.author)}
+                      </a>
+                    ) : (
+                      <span class="font-semibold">{authorLabel(r.author)}</span>
+                    )}
+                    {r.author.handle && r.author.name ? <span class="text-muted">@{r.author.handle}</span> : null}
+                    {r.publishedAt ? <span class="text-muted">· {humanDate(Date.parse(r.publishedAt))}</span> : null}
+                  </div>
+                  {r.text ? <p class="mt-2 whitespace-pre-line break-words text-[14px] leading-relaxed text-ink-2">{r.text.length > 600 ? `${r.text.slice(0, 600)}…` : r.text}</p> : null}
+                  <div class="mt-3 flex flex-wrap items-center gap-2">
+                    {statLine(r.stats).map((s) => (
+                      <span class="chip !py-0 !text-[11px]">{s}</span>
+                    ))}
+                    <span class="flex-1" />
+                    <a href={r.url} target="_blank" rel="noopener noreferrer nofollow" class="btn btn-ghost !min-h-8 !px-3 !py-1 text-sm">
+                      Open <Icon name="external" size={14} />
+                    </a>
+                    <a href={`/convert?url=${encodeURIComponent(r.url)}`} class="btn btn-dark !min-h-8 !px-3 !py-1 text-sm" title="Convert this post to Markdown and save it to your library">
+                      Convert
+                    </a>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <div class="mt-3">
+              <Empty icon="search" title="No posts found" body="Try other keywords or another platform. Empty searches are free." />
+            </div>
+          )}
+          {result.nextCursor ? (
+            <form method="post" action="/dashboard/social" class="mt-4 flex justify-center">
+              <input type="hidden" name="q" value={result.query} />
+              <input type="hidden" name="platform" value={result.platform} />
+              <input type="hidden" name="cursor" value={result.nextCursor} />
+              <button class="btn btn-ghost" type="submit">
+                More results ({SOCIAL_SEARCH_CREDITS} credits)
+              </button>
+            </form>
+          ) : null}
+        </div>
+      ) : !error ? (
+        <div class="mt-4">
+          <Empty icon="globe" title="Search public social posts" body="Find posts on X, Facebook, Instagram, Threads and LinkedIn, then convert the ones you need into your library." />
+        </div>
+      ) : null}
     </>
   );
 }
