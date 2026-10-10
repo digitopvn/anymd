@@ -42,9 +42,23 @@ const providerBody = {
   adaptiveFormats: [{ itag: 160, url: 'https://rr1---sn-abc.googlevideo.com/videoplayback?itag=160', mimeType: 'video/mp4', qualityLabel: '144p', height: 144 }],
 };
 
-function stubFetch(provider: () => Response = () => Response.json(providerBody)) {
-  const fetch = vi.fn(async (input: unknown) => {
+// VidCap lists muxed and video-only streams together and labels quality without a height.
+const vidcapBody = {
+  status: 1,
+  data: {
+    videoFiles: [
+      { itag: 18, url: STREAM, mimeType: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"', qualityLabel: '240p', contentLength: '4' },
+      { itag: 160, url: 'https://rr1---sn-abc.googlevideo.com/videoplayback?itag=160', mimeType: 'video/mp4; codecs="avc1.4D400B"', qualityLabel: '144p', contentLength: '2' },
+      { itag: 278, url: 'https://rr1---sn-abc.googlevideo.com/videoplayback?itag=278', mimeType: 'video/webm; codecs="vp9"', qualityLabel: '144p' },
+    ],
+    audioFiles: [],
+  },
+};
+
+function stubFetch(provider: () => Response = () => Response.json(providerBody), vidcap: () => Response = () => Response.json(vidcapBody)) {
+  const fetch = vi.fn(async (input: unknown, _init?: RequestInit) => {
     const url = String(input);
+    if (url.startsWith('https://vidcap.zuey.me/api/v1/youtube/media?')) return vidcap();
     if (url.startsWith('https://ytstream-download-youtube-videos.p.rapidapi.com/')) return provider();
     if (url === STREAM) return new Response(new Uint8Array([1, 2, 3, 4]), { headers: { 'content-length': '4' } });
     if (url.startsWith('https://www.youtube.com/oembed')) return Response.json({ title: 'A video', author_name: 'Channel', author_url: 'https://www.youtube.com/@c', thumbnail_url: '' });
@@ -77,9 +91,11 @@ const charges = (userId: string) => t.db.prepare("SELECT credits FROM usage_even
 
 describe('format choice', () => {
   it('picks the lowest muxed MP4 (with sound) and falls back to video-only adaptive streams', () => {
-    expect(pickLowestFormat(providerBody)).toMatchObject({ format: { itag: 18 }, audio: true });
-    expect(pickLowestFormat({ formats: [], adaptiveFormats: providerBody.adaptiveFormats })).toMatchObject({ format: { itag: 160 }, audio: false });
-    expect(pickLowestFormat({ formats: [{ itag: 1, mimeType: 'video/mp4' }] })).toBeNull();
+    expect(pickLowestFormat([...providerBody.formats, ...providerBody.adaptiveFormats])).toMatchObject({ format: { itag: 18 }, audio: true });
+    expect(pickLowestFormat(providerBody.adaptiveFormats)).toMatchObject({ format: { itag: 160 }, audio: false });
+    expect(pickLowestFormat(vidcapBody.data.videoFiles)).toMatchObject({ format: { itag: 18 }, audio: true });
+    expect(pickLowestFormat(vidcapBody.data.videoFiles.slice(1))).toMatchObject({ format: { itag: 160 }, audio: false });
+    expect(pickLowestFormat([{ itag: 1, mimeType: 'video/mp4' }])).toBeNull();
   });
 
   it('only fetches YouTube media hosts over https', () => {
@@ -125,6 +141,37 @@ describe('queue consumer', () => {
     expect(job(state.id)).toMatchObject({ status: 'ready', quality: '360p', bytes: 4, r2_key: `videos/youtube/${VIDEO}/18.mp4`, cdn_url: `https://cdn.anymd.test/videos/youtube/${VIDEO}/18.mp4`, credits: ENRICHMENT_CREDITS.videoDownload });
     expect(media.objects.get(`videos/youtube/${VIDEO}/18.mp4`)).toBe(4);
     expect(charges(user.id)).toEqual([{ credits: ENRICHMENT_CREDITS.videoDownload }]);
+  });
+
+  it('uses VidCap first when its key is set', async () => {
+    const fetch = stubFetch(() => new Response('should not be called', { status: 500 }));
+    t.env.VIDCAP_API_KEY = 'vidcap-key';
+    const user = await seedUser(t, 'user');
+    const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    expect(job(state.id)).toMatchObject({ status: 'ready', quality: '240p', r2_key: `videos/youtube/${VIDEO}/18.mp4` });
+    const called = fetch.mock.calls.map(([u]) => String(u));
+    expect(called.some((u) => u.includes('vidcap.zuey.me'))).toBe(true);
+    expect(called.some((u) => u.includes('ytstream'))).toBe(false);
+    const vidcapCall = fetch.mock.calls.find(([u]) => String(u).includes('vidcap.zuey.me'))!;
+    expect(vidcapCall[1]?.headers).toMatchObject({ 'X-API-Key': 'vidcap-key' });
+  });
+
+  it('falls back to ytstream when VidCap fails', async () => {
+    stubFetch(undefined, () => new Response('down', { status: 502 }));
+    t.env.VIDCAP_API_KEY = 'vidcap-key';
+    const user = await seedUser(t, 'user');
+    const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    expect(job(state.id)).toMatchObject({ status: 'ready', quality: '360p', r2_key: `videos/youtube/${VIDEO}/18.mp4` });
+    expect(charges(user.id)).toEqual([{ credits: ENRICHMENT_CREDITS.videoDownload }]);
+  });
+
+  it('is available with only the VidCap key', async () => {
+    t.env.RAPIDAPI_KEY = undefined;
+    t.env.VIDCAP_API_KEY = 'vidcap-key';
+    const user = await seedUser(t, 'user');
+    expect(await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`)).toMatchObject({ status: 'queued' });
   });
 
   it('fails without charging when the video cannot be downloaded', async () => {

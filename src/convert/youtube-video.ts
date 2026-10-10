@@ -1,8 +1,8 @@
 /**
  * Background YouTube video download to the anymd CDN. Opt-in through the `downloadVideo` reading
  * preference (off by default). A conversion only creates a job and enqueues it; the queue consumer
- * resolves the lowest-quality MP4 through RapidAPI, streams it into R2 and charges credits only
- * when the file is stored. Callers poll the job by id (REST, MCP).
+ * resolves the lowest-quality MP4 through VidCap (falling back to RapidAPI ytstream), streams it into
+ * R2 and charges credits only when the file is stored. Callers poll the job by id (REST, MCP).
  */
 import type { Env, Principal } from '../env';
 import { ENRICHMENT_CREDITS } from '../billing/plans';
@@ -43,7 +43,8 @@ export type VideoDownloadState =
   | { status: 'skipped'; reason: VideoSkipReason; credits: number }
   | { status: VideoJobStatus; id: string; reused: boolean; credits: number; quality: string | null; cdn_url: string | null; error: string | null; check_url: string };
 
-export const VIDEO_PROVIDER_HOST = 'ytstream-download-youtube-videos.p.rapidapi.com';
+export const VIDCAP_API_BASE = 'https://vidcap.zuey.me/api/v1';
+export const YTSTREAM_HOST = 'ytstream-download-youtube-videos.p.rapidapi.com';
 /** Larger files fail with `video_too_large` instead of filling R2. */
 export const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
 /** A queued or downloading job older than this is treated as lost and a new one may start. */
@@ -52,7 +53,7 @@ const STALE_JOB_MS = 60 * 60 * 1000;
 export const VIDEO_MAX_ATTEMPTS = 3;
 
 export function videoDownloadAvailable(env: Env): boolean {
-  return Boolean(env.VIDEO_QUEUE && env.RAPIDAPI_KEY);
+  return Boolean(env.VIDEO_QUEUE && (env.VIDCAP_API_KEY || env.RAPIDAPI_KEY));
 }
 
 export function videoCheckUrl(env: Env, id: string): string {
@@ -174,17 +175,23 @@ export interface StreamFormat {
   contentLength?: string | number;
 }
 
+/** Height in pixels: providers give `height`, or only a label such as `240p`. */
+function heightOf(f: StreamFormat): number {
+  return f.height ?? (Number.parseInt(f.qualityLabel ?? '', 10) || Infinity);
+}
+
 /**
- * The smallest MP4 that still has sound: muxed (`formats`) streams carry audio, so the lowest of
- * them wins; adaptive video-only streams are the fallback when no muxed MP4 exists.
+ * The smallest MP4 that still has sound: streams whose codecs include audio (`mp4a`) win, lowest
+ * height first; video-only MP4 streams are the fallback when no muxed MP4 exists.
  */
-export function pickLowestFormat(data: { formats?: StreamFormat[]; adaptiveFormats?: StreamFormat[] }): { format: StreamFormat; audio: boolean } | null {
-  const usable = (f: StreamFormat) => typeof f?.url === 'string' && /^video\/mp4/i.test(f.mimeType ?? '');
-  const order = (a: StreamFormat, b: StreamFormat) => (a.height ?? Infinity) - (b.height ?? Infinity) || (a.bitrate ?? Infinity) - (b.bitrate ?? Infinity);
-  const muxed = (data.formats ?? []).filter(usable).sort(order);
+export function pickLowestFormat(formats: StreamFormat[]): { format: StreamFormat; audio: boolean } | null {
+  const mp4 = formats.filter((f) => typeof f?.url === 'string' && /^video\/mp4/i.test(f.mimeType ?? ''));
+  const size = (f: StreamFormat) => Number(f.contentLength) || Infinity;
+  const order = (a: StreamFormat, b: StreamFormat) => heightOf(a) - heightOf(b) || size(a) - size(b) || (a.bitrate ?? Infinity) - (b.bitrate ?? Infinity);
+  const muxed = mp4.filter((f) => /mp4a/i.test(f.mimeType ?? '')).sort(order);
   if (muxed.length) return { format: muxed[0], audio: true };
-  const adaptive = (data.adaptiveFormats ?? []).filter(usable).sort(order);
-  return adaptive.length ? { format: adaptive[0], audio: false } : null;
+  const videoOnly = mp4.sort(order);
+  return videoOnly.length ? { format: videoOnly[0], audio: false } : null;
 }
 
 /** Stream URLs come from the provider, not the caller; only YouTube's media hosts are fetched. */
@@ -197,27 +204,82 @@ export function isYoutubeMediaUrl(raw: string): boolean {
   }
 }
 
-async function resolveFormat(env: Env, videoId: string): Promise<{ format: StreamFormat; audio: boolean }> {
-  if (!env.RAPIDAPI_KEY) throw new VideoJobError('provider_unavailable');
+/** Calls a format provider and maps transport failures to job errors. */
+async function providerJson(url: string, headers: Record<string, string>): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(`https://${VIDEO_PROVIDER_HOST}/dl?${new URLSearchParams({ id: videoId })}`, {
-      headers: { 'X-RapidAPI-Key': env.RAPIDAPI_KEY, 'X-RapidAPI-Host': VIDEO_PROVIDER_HOST },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(20_000),
-    });
+    response = await fetch(url, { headers: { Accept: 'application/json', ...headers }, redirect: 'manual', signal: AbortSignal.timeout(30_000) });
   } catch {
     throw new VideoJobError('provider_timeout', true);
   }
   if (response.status === 401 || response.status === 403) throw new VideoJobError('provider_unavailable');
   if (response.status === 404) throw new VideoJobError('video_not_found');
   if (!response.ok) throw new VideoJobError('provider_error', true);
-  const data = (await response.json().catch(() => null)) as { status?: string; formats?: StreamFormat[]; adaptiveFormats?: StreamFormat[] } | null;
-  if (!data || (data.status && data.status !== 'OK')) throw new VideoJobError('video_unavailable');
-  const picked = pickLowestFormat(data);
+  return response.json().catch(() => null);
+}
+
+interface VideoProvider {
+  name: string;
+  formats(videoId: string): Promise<StreamFormat[]>;
+}
+
+/** Configured providers in order: VidCap first, RapidAPI ytstream as the fallback. */
+function videoProviders(env: Env): VideoProvider[] {
+  const providers: VideoProvider[] = [];
+  const vidcapKey = env.VIDCAP_API_KEY;
+  if (vidcapKey) {
+    providers.push({
+      name: 'vidcap',
+      async formats(videoId) {
+        const url = `${VIDCAP_API_BASE}/youtube/media?${new URLSearchParams({ url: `https://www.youtube.com/watch?v=${videoId}` })}`;
+        const data = (await providerJson(url, { 'X-API-Key': vidcapKey })) as { status?: number; data?: { videoFiles?: StreamFormat[] } } | null;
+        if (!data || data.status !== 1) throw new VideoJobError('video_unavailable');
+        return data.data?.videoFiles ?? [];
+      },
+    });
+  }
+  const rapidKey = env.RAPIDAPI_KEY;
+  if (rapidKey) {
+    providers.push({
+      name: 'ytstream',
+      async formats(videoId) {
+        const url = `https://${YTSTREAM_HOST}/dl?${new URLSearchParams({ id: videoId })}`;
+        const data = (await providerJson(url, { 'X-RapidAPI-Key': rapidKey, 'X-RapidAPI-Host': YTSTREAM_HOST })) as { status?: string; formats?: StreamFormat[]; adaptiveFormats?: StreamFormat[] } | null;
+        if (!data || (data.status && data.status !== 'OK')) throw new VideoJobError('video_unavailable');
+        return [...(data.formats ?? []), ...(data.adaptiveFormats ?? [])];
+      },
+    });
+  }
+  return providers;
+}
+
+async function resolveFormat(provider: VideoProvider, videoId: string): Promise<{ format: StreamFormat; audio: boolean }> {
+  const picked = pickLowestFormat(await provider.formats(videoId));
   if (!picked) throw new VideoJobError('no_downloadable_format');
   if (!isYoutubeMediaUrl(picked.format.url!)) throw new VideoJobError('invalid_stream_url');
   return picked;
+}
+
+/**
+ * Tries each provider until one stream is stored. A stream URL is signed for the provider that
+ * issued it, so a failed download also moves on to the next provider. When all fail, the error is
+ * retryable if any provider failed transiently.
+ */
+async function downloadVideo(env: Env, videoId: string) {
+  const providers = videoProviders(env);
+  if (!providers.length) throw new VideoJobError('provider_unavailable');
+  const errors: VideoJobError[] = [];
+  for (const provider of providers) {
+    try {
+      const picked = await resolveFormat(provider, videoId);
+      return { picked, ...(await storeVideo(env, videoId, picked)) };
+    } catch (err) {
+      if (!(err instanceof VideoJobError)) throw err;
+      console.warn('video provider failed', provider.name, err.code);
+      errors.push(err);
+    }
+  }
+  throw errors.find((e) => e.retryable) ?? errors[0];
 }
 
 function failJob(env: Env, id: string, code: string) {
@@ -264,8 +326,7 @@ export async function processVideoJob(env: Env, jobId: string, attempt: number):
   const started = now();
   await env.DB.prepare("UPDATE video_jobs SET status = 'downloading', updated_at = ? WHERE id = ?").bind(started, jobId).run();
   try {
-    const picked = await resolveFormat(env, job.video_id);
-    const { key, bytes } = await storeVideo(env, job.video_id, picked);
+    const { picked, key, bytes } = await downloadVideo(env, job.video_id);
     const label = picked.format.qualityLabel || picked.format.quality || (picked.format.height ? `${picked.format.height}p` : 'lowest');
     const quality = picked.audio ? label : `${label}, no audio`;
     const cost = ENRICHMENT_CREDITS.videoDownload;
