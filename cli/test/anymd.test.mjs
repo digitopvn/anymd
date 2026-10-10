@@ -348,6 +348,21 @@ describe('run: convert', () => {
     assert.equal(h.calls[2].method, 'DELETE');
   });
 
+  test('video shows a background download and saves downloadVideo as a preference', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: {
+        'GET /api/v1/videos/vid_1': () => jsonResponse({ id: 'vid_1', status: 'downloading', quality: null, cdn_url: null, credits: 0, error: null }),
+        'PUT /api/v1/account/reading-preferences': (call) => jsonResponse({ preferences: JSON.parse(call.body), saved: true }),
+      },
+    });
+    assert.equal(await h.exec(['video', 'vid_1']), 0);
+    assert.match(h.stdout, /status\s+downloading/);
+    assert.match(h.stdout, /check again/);
+    assert.equal(await h.exec(['prefs', 'set', 'downloadVideo=on', '--json']), 0);
+    assert.deepEqual(JSON.parse(h.calls[1].body), { downloadVideo: true });
+  });
+
   test('prefs set and reset explain the keys:manage scope on 403', async () => {
     const forbidden = () => jsonResponse({ error: { code: 'forbidden', message: 'Missing scope: keys:manage' } }, 403);
     for (const args of [['prefs', 'set', 'expandThread=on'], ['prefs', 'reset']]) {

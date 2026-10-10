@@ -569,6 +569,16 @@ async function cmdGet(ctx, args) {
   await emit(ctx, await conversionText(res, ctx.flags.json), res);
 }
 
+/** A background YouTube video download started by a conversion (account setting downloadVideo). */
+async function cmdVideo(ctx, args) {
+  const [id] = expectArgs(args, 1, 'anymd video <id> [--json]');
+  const job = await readJson(await request(ctx, 'GET', `/api/v1/videos/${enc(id)}`));
+  if (ctx.flags.json) return ctx.out(toJson(job));
+  const lines = [['id', job.id], ['status', job.status], ['quality', job.quality], ['cdn_url', job.cdn_url], ['credits', job.credits], ['error', job.error]];
+  ctx.out(lines.filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `${k.padEnd(8)}${v}\n`).join(''));
+  if (job.status === 'queued' || job.status === 'downloading') ctx.out(ctx.colors.dim('Still running: check again in 15–30 seconds.\n'));
+}
+
 async function cmdRemove(ctx, args) {
   const [id] = expectArgs(args, 1, 'anymd rm <id>');
   await request(ctx, 'DELETE', `/api/v1/library/${enc(id)}`);
@@ -817,7 +827,7 @@ const PREFS_PATH = '/api/v1/account/reading-preferences';
 /** `key=value` pairs for `anymd prefs set`: booleans take true/false/on/off/1/0, limits take integers. */
 export function parsePreferenceAssignments(args) {
   if (!args.length) throw usageError('usage: anymd prefs set <field>=<value>… (e.g. expandThread=true maxThreadPosts=30)');
-  const booleans = ['expandThread', 'includeComments', 'keepImages', 'analyzeImages'];
+  const booleans = ['expandThread', 'includeComments', 'keepImages', 'analyzeImages', 'downloadVideo'];
   const out = {};
   for (const arg of args) {
     const eq = arg.indexOf('=');
@@ -849,6 +859,7 @@ function formatPreferences(data, colors) {
   comments & replies      ${onOff(p.includeComments)}  max ${p.maxComments}   ${dim('extra credits')}
   read images (OCR)       ${onOff(p.analyzeImages)}  max ${p.maxImages}   ${dim('extra credits')}
   max credits/conversion  ${p.maxCredits}
+  YouTube video to CDN    ${onOff(p.downloadVideo)}            ${dim('extra credits, charged when ready')}
 ${dim('Flags on a single conversion override these; omitted flags use them.')}
 `;
 }
@@ -888,7 +899,7 @@ const COMMANDS = {
   convert: cmdConvert, file: cmdFile, search: cmdSearch, ls: cmdList, get: cmdGet, rm: cmdRemove,
   tag: cmdTag, tags: cmdTags,
   usage: cmdUsage, login: cmdLogin, logout: cmdLogout, whoami: cmdWhoami, pages: cmdPages, mcp: cmdMcp,
-  prefs: cmdPrefs,
+  prefs: cmdPrefs, video: cmdVideo,
 };
 
 export function helpText(colors = makeColors(false)) {
@@ -916,6 +927,7 @@ ${bold('Usage')}
   anymd mcp                            Print MCP client configuration snippets
   anymd prefs [show] | set <field>=<value>… | reset
                                        Show or change your saved reading defaults
+  anymd video <id> [--json]            Check a YouTube video download (prefs set downloadVideo=on)
 
 ${bold('Options')}
   --json            Print raw JSON

@@ -15,6 +15,7 @@ import { normalizeStoredPreferences, resolveReadingOptions, wantsEnrichment, typ
 import { enrichImages, renderEnrichment } from './image-enrichment';
 import { reserveConversion, settleConversion } from '../lib/conversion-budget';
 import { findOptout } from './optouts';
+import { startVideoDownload, videoDownloadMarkdown, type VideoDownloadState } from './youtube-video';
 import { ConvertError, countWords, type ConvertResult } from './types';
 
 export interface ConvertRequest extends EnrichmentOptions {
@@ -51,6 +52,8 @@ export interface ConvertResponse {
   cached: boolean;
   traceId: string;
   durationMs: number;
+  /** The background video download for a YouTube read, when the account's `downloadVideo` preference is on. */
+  videoDownload: VideoDownloadState | null;
 }
 
 const CACHE_TTL = 3600;
@@ -127,7 +130,8 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
       savedPreferences = user?.preferences ?? null;
     }
     // Saved preferences apply only to the signed-in owner; they never widen plan or reservation limits.
-    readingOptions = resolveReadingOptions({ ...validated.data, removeImages: req.removeImages }, savedPreferences === null ? null : normalizeStoredPreferences(savedPreferences));
+    const preferences = savedPreferences === null ? null : normalizeStoredPreferences(savedPreferences);
+    readingOptions = resolveReadingOptions({ ...validated.data, removeImages: req.removeImages }, preferences);
     const options = readingOptions;
     const key = await cacheKey(url.href, req, options);
 
@@ -184,7 +188,13 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
       if (!Object.values(result.enrichment ?? {}).some((part) => !part.complete)) cacheValue = JSON.stringify(toCache);
     }
 
-    const markdown = formatMarkdown(result, { frontmatter: req.frontmatter !== false });
+    let markdown = formatMarkdown(result, { frontmatter: req.frontmatter !== false });
+    // Per-account and asynchronous, so it runs after the shared cache and is never cached itself.
+    let videoDownload: VideoDownloadState | null = null;
+    if (result.sourceKind === 'youtube' && principal.userId && preferences?.downloadVideo) {
+      videoDownload = await tracer.span('video.start', () => startVideoDownload(env, principal, plan, req.channel, result!.source));
+      if (videoDownload) markdown = `${markdown.trimEnd()}\n\n${videoDownloadMarkdown(videoDownload)}\n`;
+    }
     const credits = cached ? 0 : budget?.used ?? creditCost(result.sourceKind);
     const creditBreakdown: CreditBreakdown | undefined = cached ? { base: 0, thread: 0, comments: 0, images: 0 } : budget?.breakdown;
 
@@ -205,13 +215,13 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
       recordUsage(
         env,
         { principal, channel: req.channel, kind: 'convert', target: url.href, status: cached ? 'cached' : 'ok', httpStatus: 200, credits, durationMs, bytesOut: markdown.length, traceId: tracer.id,
-          meta: { credit_breakdown: creditBreakdown, reading_options: options } },
+          meta: { credit_breakdown: creditBreakdown, reading_options: options, ...(videoDownload ? { video_download: videoDownload } : {}) } },
         tracer,
       ).catch(() => undefined),
     );
     if (principal.userId && credits > 0) ctx.waitUntil(ingestPolarUsage(env, principal.userId, credits, result.sourceKind, reserved ? tracer.id : undefined).catch(() => undefined));
 
-    return { result, markdown, documentId, notSavedReason, credits, cached, traceId: tracer.id, durationMs, creditBreakdown, readingOptions: options };
+    return { result, markdown, documentId, notSavedReason, credits, cached, traceId: tracer.id, durationMs, creditBreakdown, readingOptions: options, videoDownload };
   } catch (err) {
     if (reserved && !settled) await settleConversion(env, tracer.id, 0).catch(() => undefined);
     const e = err instanceof ConvertError ? err : new ConvertError(err instanceof Error ? err.message : 'Conversion failed', 500, 'internal');

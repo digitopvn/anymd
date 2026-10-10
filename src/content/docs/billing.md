@@ -1,7 +1,7 @@
 ---
 title: "Billing & credits"
 description: "How anymd credits work, what each source costs, plans, overage, offers, and how checkout and the customer portal work."
-updated: "2026-10-09"
+updated: "2026-10-10"
 ---
 
 anymd bills in **credits**, and you pay when your agents learn something new. Processing a new source uses credits by its complexity (one credit is one web page); reusing what your agents already know is free: cached reads, library search and MCP recall cost nothing.
@@ -16,6 +16,7 @@ anymd bills in **credits**, and you pay when your agents learn something new. Pr
 | Each started batch of 20 comments or replies | 10 |
 | Each successfully analyzed article image | 5 |
 | YouTube video with transcript | 3 |
+| YouTube video stored on the anymd CDN (opt-in setting, charged when ready) | 20 |
 | PDF, DOCX, XLSX, CSV and other documents (per file) | 3 |
 | Image (vision description) | 5 |
 | Library search, reads, MCP reads | 0 |
@@ -35,6 +36,9 @@ Thread expansion, comments and article-image analysis can spend credits beyond t
 | Comments & replies (`includeComments`) | Off | `maxComments` 1–1,000, default 100 | 10 per started batch of 20 |
 | Read text & details in images (`analyzeImages`) | Off | `maxImages` 1–20, default 10 | 5 per analyzed image |
 | Max credits per conversion (`maxCredits`) | 100 | 1–1,000 | Cap including the base price |
+| Download YouTube videos to the anymd CDN (`downloadVideo`) | Off | Saved setting only | 20 per video, charged when the download is ready |
+
+`downloadVideo` is a saved setting, not a per-request option, and runs outside the conversion: it is not part of `maxCredits` or `credit_breakdown`. Each finished download is a separate `video_download` row in your usage log. A failed download costs nothing, and reading the same video again while its download is running or ready reuses that job instead of charging twice.
 
 The worst case is bounded before you convert: for example, threads up to 20 posts add at most 19 credits, and 10 analyzed images add at most 50, always capped by `maxCredits`. Saved defaults never raise your plan's allowance, and a request's own `maxCredits` wins over the saved one. Each response's `credit_breakdown` (`base`, `thread`, `comments`, `images`) and the trace in **Dashboard → Traces** show which enrichment produced a charge and whether it came from the request, your saved default or the safe default.
 

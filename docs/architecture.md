@@ -18,6 +18,7 @@ Why one Worker: every channel (URL, web, REST, CLI, MCP, WebMCP) must return byt
 | Workers AI | `AI` | Embeddings, query fan-out fallback, `toMarkdown` for files |
 | Rate limiting | `RL_ANON`, `RL_AUTH`, `RL_DOMAIN` | Per-minute limits per caller, and per fetched site |
 | Static assets | `ASSETS` | `public/` (built CSS/JS, icons, brand) |
+| Queue | `VIDEO_QUEUE` | Background YouTube video downloads; the same Worker's `queue` handler consumes it |
 
 Bindings and secrets are typed in `src/env.ts`; per-environment values are in `wrangler.jsonc`.
 
@@ -56,6 +57,8 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 5. Credits come from the adapter's resulting `sourceKind`. The quota pre-check uses the cheapest cost because the kind is unknown until the adapter runs.
 6. Save to the library when signed in, `save !== false` and the principal has `library:write`. Embedding, usage recording and (when Polar is the provider) Polar usage ingest run in `waitUntil` so they never add latency or fail the request.
 
+YouTube video download is a saved account setting (`downloadVideo`, off by default), not a request option. When it is on, a YouTube read creates (or reuses) a `video_jobs` row and enqueues it after the cache step, so the job id is per account and never cached; the response and Markdown carry the job id and how to poll it (`GET /api/v1/videos/:id`, MCP `get_video_download`). The queue consumer in `src/convert/youtube-video.ts` resolves the lowest-quality MP4 through RapidAPI, accepts only YouTube media hosts, streams it into R2 and charges credits once, when the job reaches `ready`.
+
 X thread expansion (bounded by `maxThreadPosts`), comments and article-image analysis are explicit opt-ins (per request or saved preference); authentication alone never enables them. Base-only conversions reserve only the base price, and Facebook, Instagram, Threads and LinkedIn adapters require an account. Enrichment coverage is returned with the conversion so provider failures, limits and timeouts remain visible instead of looking complete; the executable bounds and unit prices live in `src/convert/enrichment-types.ts` and `src/billing/plans.ts`.
 
 Why a caller-independent cache: identical URLs are converted once per hour for everyone, and cached hits are free, which is the pricing promise.
@@ -78,6 +81,7 @@ The schema is owned by `migrations/`. Tables group as:
 |---|---|---|
 | Identity | `users`, `sessions`, `api_keys`, `reading_preferences` | Sessions and keys store SHA-256 hashes, never raw tokens. Key `scopes` is a JSON array. `users.status` (`active`/`suspended`) gates every credential. `reading_preferences` holds one zod-validated JSON object per user; no row means the safe defaults. |
 | Library | `documents`, `documents_fts` | Unique per `(user_id, url_hash)`. FTS5 is an external-content table kept in sync by triggers. `embedded_chunks` tracks vectors `<doc_id>#<n>` in Vectorize. |
+| Video | `video_jobs` | One row per background YouTube download: status, CDN URL, credits charged at `ready`. |
 | Metering | `usage_events`, `traces` | Monthly credit use is summed from `usage_events` since the UTC month start. |
 | Billing | `subscriptions`, `credit_grants`, `webhook_events` | `webhook_events` makes Creem and Polar webhook handling idempotent and records the provider and outcome. `users.creem_customer_id` opens the Creem portal. Credit grants carry reason, actor, idempotency key and revocation; only active grants raise the allowance. Plans are owned by the billing provider. |
 | Content | `posts`, `pages`, `page_revisions`, `idempotency_keys` | Page `draft`/`published` are JSON page documents. |

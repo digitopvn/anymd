@@ -27,6 +27,7 @@ import {
 import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { convertBlobToMarkdown, documentCreditCost, mimeFor } from '../convert/document';
 import { runConversion, type NotSavedReason } from '../convert/service';
+import { getVideoJob, videoJobPayload } from '../convert/youtube-video';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { applyPreferencesPatch, canWriteReadingPreferences, getReadingPreferences, PREFERENCES_WRITE_SCOPE, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences, type StoredReadingPreferences } from '../convert/reading-preferences';
 import { DEFAULT_READING_PREFERENCES, READING_LIMITS } from '../lib/reading-options';
@@ -198,6 +199,17 @@ api.post('/convert', requireScope('convert'), async (c) => {
   convertHeaders(c, r);
   if (b.format === 'markdown') return c.body(r.markdown, 200, { 'Content-Type': 'text/markdown; charset=utf-8' });
   return c.json(convertPayload(r));
+});
+
+/** A background YouTube video download started by a conversion. Poll until `ready` or `failed`. */
+api.get('/videos/:id', requireScope('convert'), async (c) => {
+  const userId = c.get('principal').userId;
+  if (!userId) return apiError(c, 401, 'unauthorized', 'Video downloads belong to an account. Send an API key: Authorization: Bearer amd_…');
+  const job = await getVideoJob(c.env, userId, c.req.param('id'));
+  if (!job) return apiError(c, 404, 'not_found', 'Video download not found');
+  c.header('Cache-Control', 'no-store');
+  if (job.status === 'queued' || job.status === 'downloading') c.header('Retry-After', '15');
+  return c.json(videoJobPayload(c.env, job));
 });
 
 api.post('/convert/file', requireScope('convert'), async (c) => {

@@ -1,7 +1,7 @@
 ---
 title: "REST API"
 description: "The anymd REST API v1: authentication, errors, conversion, library, search, usage, keys and admin endpoints with curl, JavaScript and Python examples."
-updated: "2026-10-09"
+updated: "2026-10-10"
 ---
 
 Base URL: `https://anymd.cc/api/v1`. Everything is JSON unless noted.
@@ -60,6 +60,7 @@ Read `code`, not `message`. Messages are for humans and may change.
 |---|---|---|
 | POST | `/convert` | `convert` |
 | POST | `/convert/file` | `convert` |
+| GET | `/videos/:id` | `convert` (signed-in callers) |
 | GET | `/library` | `library:read` |
 | GET | `/library/tags` | `library:read` |
 | GET | `/library/:id` | `library:read` |
@@ -194,6 +195,7 @@ A partial update: send only the fields to change; the rest keep their saved valu
 | `analyzeImages` | boolean | `false` | Extra credits; needs `keepImages` |
 | `maxImages` | integer | `10` | 1–20 |
 | `maxCredits` | integer | `100` | 1–1,000; cap per conversion including the base price |
+| `downloadVideo` | boolean | `false` | Saved setting only: YouTube reads also download the lowest-quality video to the anymd CDN in the background; 20 credits per video, charged when ready. See [GET /videos/:id](#get-videosid) |
 
 ```bash
 curl -X PUT https://anymd.cc/api/v1/account/reading-preferences \
@@ -204,6 +206,21 @@ curl -X PUT https://anymd.cc/api/v1/account/reading-preferences \
 #### DELETE /account/reading-preferences
 
 Removes the saved defaults; the safe defaults apply again. Same rule as PUT (any signed-in session, or `keys:manage` for keys and OAuth clients); audited. The same settings live in the dashboard under [Account → Deep reading defaults](/dashboard/account#reading-defaults).
+
+### GET /videos/:id
+
+With the saved setting `downloadVideo` on, a YouTube read returns at once and downloads the lowest-quality MP4 to the anymd CDN in the background. The convert response then carries `video_download` (`{ id, status, check_url, … }`, or `{ status: "skipped", reason }` with `unavailable` or `quota_exceeded`), and the Markdown ends with a **Video download** section naming the job id and this endpoint. Poll the job every 15–30 seconds (`Retry-After` is set while it runs):
+
+```bash
+curl https://anymd.cc/api/v1/videos/vid_… -H "Authorization: Bearer amd_…"
+```
+
+```json
+{ "id": "vid_…", "status": "ready", "video_id": "dQw4w9WgXcQ", "quality": "360p", "bytes": 11534336,
+  "cdn_url": "https://cdn.anymd.cc/videos/youtube/dQw4w9WgXcQ/18.mp4", "credits": 20, "error": null, "check_url": "…" }
+```
+
+`status` is `queued`, `downloading`, `ready` or `failed`; `error` names the failure (for example `video_unavailable`, `video_too_large`, `provider_unavailable`) and a failed job costs nothing. Jobs belong to the account that started them: another account gets `404 not_found`. Scope: `convert`; signed-in callers only. MCP: `get_video_download`.
 
 ### POST /convert/file
 
