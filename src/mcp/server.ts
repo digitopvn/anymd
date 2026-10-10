@@ -12,6 +12,7 @@ import { blockCatalog } from '../cms/blocks';
 import { applyPageOps, createPage, getPage, listPages, OpSchema, PageError, pageView, publishPage, TEMPLATES, unpublishPage } from '../cms/pages';
 import { createPost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { runConversion } from '../convert/service';
+import { getVideoJob, videoJobPayload } from '../convert/youtube-video';
 import { runSocialSearch, SOCIAL_SEARCH_ALL_MAX, socialSearchInput, socialSearchPayload } from '../convert/social-search';
 import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
 import { enrichmentOptions } from '../convert/enrichment-types';
@@ -57,7 +58,7 @@ const READ_URL_INPUT = z.object({
   fresh: z.boolean().optional().describe('Bypass the 1-hour cache'),
   removeImages: z.boolean().optional().describe('Strip image/media references (no credit effect)'),
 });
-const READ_URL_TEXT = 'Saves to the library by default (save=false to skip) when this connection holds library:write; the result reports saved and, when not saved, not_saved_reason (missing_scope means re-authorize with library:write). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free.';
+const READ_URL_TEXT = 'Saves to the library by default (save=false to skip) when this connection holds library:write; the result reports saved and, when not saved, not_saved_reason (missing_scope means re-authorize with library:write). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free. When the account setting downloadVideo is on, a YouTube read also starts a background download of the lowest-quality video to the anymd CDN and returns video_download.id: check it with get_video_download.';
 const readUrl = async (a: z.infer<typeof READ_URL_INPUT>, t: ToolContext) => {
   const r = await runConversion(t.env, t.ctx, { ...a, channel: 'mcp', principal: t.principal });
   const { content: _content, ...rest } = convertPayload(r);
@@ -98,6 +99,19 @@ const TOOLS: ToolDef[] = [
     }),
     annotations: READ,
     run: (a, t) => searchForPrincipal(t.env, t.principal, 'mcp', a.query, a),
+  },
+  {
+    name: 'get_video_download',
+    title: 'Get video download',
+    description: 'Status of a background YouTube video download started by read_url when the account setting downloadVideo is on. Poll every 15-30 s until status is ready (cdn_url is the lowest-quality MP4 on the anymd CDN) or failed (see error). Credits are charged only when ready.',
+    scope: 'convert',
+    input: z.object({ id: z.string().describe('Job id from read_url, e.g. vid_…') }),
+    annotations: READ,
+    run: async (a, t) => {
+      const job = t.principal.userId ? await getVideoJob(t.env, t.principal.userId, a.id) : null;
+      if (!job) throw new ToolError('Video download not found');
+      return videoJobPayload(t.env, job);
+    },
   },
   {
     name: 'search_social',

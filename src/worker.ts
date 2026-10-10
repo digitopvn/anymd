@@ -14,6 +14,7 @@ import { resolvePrincipal } from './auth/middleware';
 import { ALL_SCOPES, isRole, OAUTH_DEFAULT_SCOPES, oauthPrincipalScopes } from './auth/roles';
 import { type CreemEvent, creemEnabled, handleCreemEvent, verifyCreemWebhook } from './billing/creem';
 import { handlePolarEvent, polarEnabled, verifyPolarWebhook } from './billing/polar';
+import { handleVideoQueue, type VideoJobMessage } from './convert/youtube-video';
 import type { AppBindings, Env, Principal } from './env';
 import { resourceMetadataUrl } from './mcp/protocol';
 import { handleMcp } from './mcp/server';
@@ -213,4 +214,8 @@ export default {
     }
     return oauthProvider(env).fetch(request, env, ctx);
   },
-} satisfies ExportedHandler<Env>;
+  /** Background YouTube video downloads (see `src/convert/youtube-video.ts`). */
+  async queue(batch: MessageBatch<VideoJobMessage>, env: Env): Promise<void> {
+    await handleVideoQueue(batch, env);
+  },
+} satisfies ExportedHandler<Env, VideoJobMessage>;

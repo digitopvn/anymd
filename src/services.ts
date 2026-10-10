@@ -39,6 +39,8 @@ export function convertPayload(r: ConvertResponse) {
     cached: r.cached,
     trace_id: r.traceId,
     duration_ms: r.durationMs,
+    // Present only for YouTube reads with the downloadVideo preference on: poll check_url until ready or failed.
+    ...(r.videoDownload ? { video_download: r.videoDownload } : {}),
     ...(x.sourceKind === 'x' ? { stats: { likes: x.likes ?? null, retweets: x.retweets ?? null, replies: x.replies ?? null, views: x.views ?? null } } : {}),
   };
 }

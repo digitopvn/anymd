@@ -286,6 +286,7 @@ dashboardRoutes.post('/account/reading', async (c) => {
     includeComments: f.includeComments === '1',
     keepImages: f.keepImages === '1',
     analyzeImages: f.analyzeImages === '1',
+    downloadVideo: f.downloadVideo === '1',
   };
   const patch: Record<string, unknown> = { ...toggles };
   const submittedNumbers: Partial<Record<ReadingLimitKey, string>> = {};

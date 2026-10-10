@@ -3,7 +3,8 @@
  * defaults. Base conversion and extra-credit enrichment are separate fieldsets; every option that
  * may spend credits carries its price next to it (from `ENRICHMENT_CREDITS`). Bounded numbers
  * are tied to their toggle with `data-requires`; the client disables them while the toggle is
- * off (progressive disclosure). Without JS every field stays usable.
+ * off (progressive disclosure). Without JS every field stays usable. The YouTube video download is
+ * a saved account setting only, so the converter's per-request panel leaves it out.
  */
 import { ENRICHMENT_CREDITS } from '../../billing/plans';
 import { DEFAULT_READING_PREFERENCES, READING_LIMITS, creditEstimateText, type ReadingLimitKey, type ReadingPreferences } from '../../lib/reading-options';
@@ -97,6 +98,19 @@ export function ReadingOptionsFields({ values, idPrefix, imagesName }: { values:
           <Bounded id={id('max-credits')} name="maxCredits" value={values.maxCredits} label="Max credits per conversion" />
         </div>
       </fieldset>
+      {explicitOff ? null : (
+        <fieldset class="grid gap-3 rounded-xl border border-line p-3">
+          <legend class="px-1 text-sm font-semibold">YouTube video · extra credits, off by default</legend>
+          <Toggle
+            id={id('download-video')}
+            name="downloadVideo"
+            checked={values.downloadVideo}
+            label="Download YouTube videos to the anymd CDN"
+            hint={`+${credits(ENRICHMENT_CREDITS.videoDownload)} per video, charged only when the download is ready. Runs in the background: the read returns a job id to check.`}
+            explicitOff={false}
+          />
+        </fieldset>
+      )}
       <p class="text-sm" data-credit-estimate aria-live="polite">
         {creditEstimateText(estimateValues(values))}
       </p>

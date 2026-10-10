@@ -24,6 +24,7 @@ const fields = {
   analyzeImages: flag('analyzeImages'),
   maxImages: boundedInt('maxImages'),
   maxCredits: boundedInt('maxCredits'),
+  downloadVideo: flag('downloadVideo'),
 };
 
 const IMAGE_CONFLICT = 'analyzeImages requires keepImages: image analysis reads the images the conversion keeps';
@@ -68,7 +69,7 @@ export function normalizeStoredPreferences(raw: string | null | undefined): Read
     // Corrupt rows read as the safe default rather than failing every conversion.
   }
   const out: ReadingPreferences = { ...DEFAULT_READING_PREFERENCES };
-  for (const key of ['expandThread', 'includeComments', 'keepImages', 'analyzeImages'] as const) {
+  for (const key of ['expandThread', 'includeComments', 'keepImages', 'analyzeImages', 'downloadVideo'] as const) {
     if (typeof data[key] === 'boolean') out[key] = data[key];
   }
   for (const key of Object.keys(READING_LIMITS) as ReadingLimitKey[]) {

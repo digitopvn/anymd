@@ -14,7 +14,7 @@ export function ReadingPreferencesSection({ stored, notice, error, submitted }: 
         <p class="text-xs text-muted">{stored.saved && stored.updatedAt ? `Saved ${humanDate(stored.updatedAt)}` : 'Using the safe defaults'}</p>
       </div>
       <p class="mt-1 max-w-3xl text-sm text-muted">
-        Deep reading can fetch thread posts, comments and image content. These options may use additional credits. They are off by default and only run when you enable them. Your
+        Deep reading can fetch thread posts, comments and image content, and download YouTube videos to the anymd CDN. These options may use additional credits. They are off by default and only run when you enable them. Your
         defaults apply to the web converter, URL API, REST, CLI, MCP and WebMCP whenever a request leaves an option out; an option set on the request always wins.{' '}
         <a class="text-link" href="/docs/billing#deep-reading">How deep reading is billed</a>
       </p>
