@@ -13,8 +13,6 @@ import { applyPageOps, createPage, getPage, listPages, OpSchema, PageError, page
 import { createPost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { runConversion } from '../convert/service';
 import { getVideoJob, videoJobPayload } from '../convert/youtube-video';
-  },
-  {
 import { runSocialSearch, SOCIAL_SEARCH_ALL_MAX, socialSearchInput, socialSearchPayload } from '../convert/social-search';
 import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
 import { enrichmentOptions } from '../convert/enrichment-types';
