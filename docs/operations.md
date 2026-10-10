@@ -15,6 +15,14 @@ Bindings, resource names and vars per environment: `wrangler.jsonc`. `BILLING_PR
 
 CI in `.github/workflows/` deploys on push: `dev` → staging, `main` → production. It needs the GitHub repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
+`wrangler.jsonc` sets no `account_id`. When a local Wrangler login can see more than one Cloudflare account, every remote command (`deploy`, `d1`, `r2`, `secret`) fails with "More than one account available but unable to select one in non-interactive mode". Find the Digitop account ID with `npx wrangler whoami` and set it for the shell before running remote commands:
+
+```bash
+export CLOUDFLARE_ACCOUNT_ID=<digitop-account-id>
+```
+
+On PowerShell: `$env:CLOUDFLARE_ACCOUNT_ID = '<digitop-account-id>'`.
+
 Manual deploy uses the `package.json` scripts:
 
 ```bash
@@ -30,7 +38,7 @@ Promote to production only after the change is verified on staging, including th
 
 ## CLI artifact release
 
-The CLI is distributed from the R2-backed CDN URL `https://cdn.anymd.cc/cli/anymd-cli-latest.tgz`; it is not published to the npm registry. After the CLI version and flags are verified, run `npm pack ./cli` and identify the generated tarball. Before replacing the mutable `latest` object, back it up with a remote GET:
+The CLI is distributed from the R2-backed CDN URL `https://cdn.anymd.cc/cli/anymd-cli-latest.tgz`; it is not published to the npm registry, and CI does not upload it, so a merged CLI change reaches users only after this manual release. The `wrangler r2` commands below need the account selection described under Deploy. After the CLI version and flags are verified, run `npm pack ./cli` and identify the generated tarball. Before replacing the mutable `latest` object, back it up with a remote GET:
 
 ```bash
 npx wrangler r2 object get anymd/cli/anymd-cli-latest.tgz --file ./backups/anymd-cli-latest-<timestamp>.tgz --remote
