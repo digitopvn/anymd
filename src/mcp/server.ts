@@ -1,44 +1,51 @@
 /**
- * MCP server over Streamable HTTP, stateless: every POST carries one JSON-RPC message (or a
- * batch) and gets a JSON response. Tools are filtered by the caller's scopes, so a read-only key
- * never even sees write tools. Auth is resolved before this runs (API key or OAuth token).
+ * MCP server over Streamable HTTP, stateless: every POST carries one JSON-RPC message (or, for
+ * pre-2025-06-18 clients, a batch) and gets a JSON response. Both protocol eras are served (see
+ * ./protocol). Tools are filtered by the caller's scopes, so a read-only key never even sees write
+ * tools; calling a hidden tool asks OAuth clients to step up their scopes. Auth is resolved before
+ * this runs (API key or OAuth token); requests are rate limited per user and credential.
  */
 import { z } from 'zod';
 import { getUser } from '../auth/identity';
+import { scopesForRole } from '../auth/roles';
 import { blockCatalog } from '../cms/blocks';
 import { applyPageOps, createPage, getPage, listPages, OpSchema, PageError, pageView, publishPage, TEMPLATES, unpublishPage } from '../cms/pages';
 import { createPost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { runConversion } from '../convert/service';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError } from '../convert/types';
-import type { Env, Principal, Scope, WaitUntil } from '../env';
-import { deleteDocument, getDocument, listDocuments } from '../library/store';
+import type { Env, Principal, WaitUntil } from '../env';
+import { deleteDocument, editTags, getDocument, listDocuments, listTags, MAX_TAG_FILTERS, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags, parseTagFilter } from '../library/store';
 import { convertPayload, searchForPrincipal, usageSummary } from '../services';
+import { AdminError } from '../services/admin/shared';
+import { ACCOUNT_TOOLS } from './account-tools';
+import { ADMIN_TOOLS } from './admin-tools';
+import { CMS_PARITY_TOOLS } from './cms-parity-tools';
+import {
+  isModernRequest,
+  LEGACY_VERSIONS,
+  LIST_TTL_MS,
+  META_SERVER_INFO,
+  RPC,
+  resourceMetadataUrl,
+  rpcError,
+  SUPPORTED_VERSIONS,
+  validateModern,
+  type JsonRpcId,
+  type JsonRpcMessage,
+} from './protocol';
+import { checkMcpRate, type RateLimited } from './rate-limit';
+import { DESTRUCTIVE, IDEMPOTENT_WRITE, isMutation, READ_ONLY, ToolError, WRITE, type ToolContext, type ToolDef } from './tool-types';
 
-const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
-const SERVER_INFO = { name: 'anymd', title: 'anymd — the web context layer for AI agents', version: '1.0.0' };
+const SERVER_INFO = { name: 'anymd', title: 'anymd — the web context layer for AI agents', version: '1.1.0' };
 const INSTRUCTIONS =
   'anymd is the web context layer for AI agents: it reads public web content (web pages, GitHub, YouTube, Reddit, Hacker News, X, PDFs, Office files, images) into structured Markdown and keeps a private, searchable library of everything read. ' +
-  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document for full text. Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision.';
+  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document for full text. Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision. ' +
+  'Admin tools appear only for owner/admin credentials granted their scopes: start with system_overview, page with next_cursor, pass expected* values and an idempotencyKey with every change; every change lands in list_audit_events.';
 
-interface ToolContext {
-  env: Env;
-  ctx: WaitUntil;
-  principal: Principal & { userId: string };
-  origin: string;
-}
-
-interface ToolDef {
-  name: string;
-  title: string;
-  description: string;
-  scope: Scope;
-  input: z.ZodObject<z.ZodRawShape>;
-  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
-  run: (args: any, t: ToolContext) => Promise<unknown>;
-}
-
-const READ = { readOnlyHint: true, openWorldHint: false };
+const READ = READ_ONLY;
+const TAG_LIST_INPUT = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAGS).optional();
+const TAG_FILTER_INPUT = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAG_FILTERS).optional().describe('Only documents carrying every one of these tags ([] means no filter)');
 
 /** Reading a URL. Exposed as `read_url`, and as `convert_url` for clients built before the rename. */
 const READ_URL_INPUT = z.object({
@@ -46,8 +53,9 @@ const READ_URL_INPUT = z.object({
   url: z.string().describe('The public URL to read, e.g. https://example.com/post'),
   save: z.boolean().optional().describe('Save to the library (default true)'),
   fresh: z.boolean().optional().describe('Bypass the 1-hour cache'),
+  removeImages: z.boolean().optional().describe('Strip image/media references (no credit effect)'),
 });
-const READ_URL_TEXT = 'Saves to the library by default (save=false to skip). X expands same-author threads automatically. Comments and image OCR are opt-in and cost extra credits. maxCredits defaults to 100; partial results explain missing content. Cached reads are free.';
+const READ_URL_TEXT = 'Saves to the library by default (save=false to skip) when this connection holds library:write; the result reports saved and, when not saved, not_saved_reason (missing_scope means re-authorize with library:write). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free.';
 const readUrl = async (a: z.infer<typeof READ_URL_INPUT>, t: ToolContext) => {
   const r = await runConversion(t.env, t.ctx, { ...a, channel: 'mcp', principal: t.principal });
   const { content: _content, ...rest } = convertPayload(r);
@@ -62,7 +70,7 @@ const TOOLS: ToolDef[] = [
     description: `Read a public URL and return its content as structured Markdown with metadata. ${READ_URL_TEXT}`,
     scope: 'convert',
     input: READ_URL_INPUT,
-    annotations: { readOnlyHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     run: readUrl,
   },
   {
@@ -71,7 +79,7 @@ const TOOLS: ToolDef[] = [
     description: `Same as read_url, kept under its original name for existing clients. Fetch a URL and return clean Markdown with metadata. ${READ_URL_TEXT}`,
     scope: 'convert',
     input: READ_URL_INPUT,
-    annotations: { readOnlyHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     run: readUrl,
   },
   {
@@ -99,18 +107,23 @@ const TOOLS: ToolDef[] = [
     run: async (a, t) => {
       const doc = await getDocument(t.env, t.principal.userId, a.id);
       if (!doc) throw new ToolError('Document not found');
-      return { ...doc, tags: doc.tags.split(' ').filter(Boolean) };
+      return { ...doc, tags: parseStoredTags(doc.tags) };
     },
   },
   {
     name: 'list_documents',
     title: 'List documents',
-    description: 'Most recent library documents (metadata only). Filter by domain.',
+    description: 'Most recent library documents (metadata only). Filter by domain and/or tags (documents must carry every tag).',
     scope: 'library:read',
-    input: z.object({ limit: z.number().int().min(1).max(100).optional(), domain: z.string().optional(), before: z.number().optional().describe('Cursor: created_at of the last item') }),
+    input: z.object({
+      limit: z.number().int().min(1).max(100).optional(),
+      domain: z.string().optional(),
+      tags: TAG_FILTER_INPUT,
+      before: z.number().optional().describe('Cursor: created_at of the last item'),
+    }),
     annotations: READ,
     run: async (a, t) => {
-      const items = await listDocuments(t.env, t.principal.userId, { limit: a.limit ?? 20, domain: a.domain, before: a.before });
+      const items = await listDocuments(t.env, t.principal.userId, { limit: a.limit ?? 20, domain: a.domain, tags: parseTagFilter(a.tags), before: a.before });
       return { items, next_cursor: items.length === (a.limit ?? 20) ? items[items.length - 1].created_at : null };
     },
   },
@@ -120,11 +133,41 @@ const TOOLS: ToolDef[] = [
     description: 'Permanently delete a library document and its embeddings.',
     scope: 'library:write',
     input: z.object({ id: z.string() }),
-    annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    annotations: DESTRUCTIVE,
     run: async (a, t) => {
       if (!(await deleteDocument(t.env, t.principal.userId, a.id))) throw new ToolError('Document not found');
       return { ok: true };
     },
+  },
+  // ─── Library tags ─────────────────────────────────────────────────────────
+  {
+    name: 'tag_document',
+    title: 'Tag document',
+    description: `Add and/or remove tags on a library document, or replace them all with set. Tags are lowercased and keep only a-z, 0-9, - and _. At most ${MAX_TAGS} tags per document; an add that would exceed it fails. Returns the resulting tags.`,
+    scope: 'library:write',
+    input: z.object({
+      id: z.string().min(1).describe('Document id'),
+      add: TAG_LIST_INPUT.describe('Tags to add'),
+      remove: TAG_LIST_INPUT.describe('Tags to remove'),
+      set: TAG_LIST_INPUT.describe('Replace all tags with these (cannot be combined with add/remove; [] clears)'),
+    }),
+    annotations: IDEMPOTENT_WRITE,
+    run: async (a, t) => {
+      if (a.set && (a.add || a.remove)) throw new ToolError('Use either set, or add and/or remove, not both.');
+      if (!a.set && !a.add && !a.remove) throw new ToolError('Pass add, remove or set.');
+      const tags = await editTags(t.env, t.principal.userId, a.id, { add: a.add, remove: a.remove, set: a.set });
+      if (!tags) throw new ToolError('Document not found');
+      return { id: a.id, tags };
+    },
+  },
+  {
+    name: 'list_tags',
+    title: 'List tags',
+    description: 'Tags used in this library with the number of documents carrying each, most used first. Use with list_documents tags filter.',
+    scope: 'library:read',
+    input: z.object({ limit: z.number().int().min(1).max(500).optional().describe('Max tags (default 100)') }),
+    annotations: READ,
+    run: async (a, t) => ({ items: await listTags(t.env, t.principal.userId, a.limit ?? 100) }),
   },
   {
     name: 'usage_summary',
@@ -185,7 +228,7 @@ const TOOLS: ToolDef[] = [
     description: 'Create a draft landing page from a template (blank, ads-landing, seo-article, product-launch). Published later with publish_page at /p/<slug>.',
     scope: 'pages:write',
     input: z.object({ slug: z.string().min(1).max(80), title: z.string().min(1).max(140), description: z.string().max(300).optional(), template: z.string().optional(), layout: z.enum(['default', 'landing', 'article']).optional() }),
-    annotations: { readOnlyHint: false, openWorldHint: false },
+    annotations: WRITE,
     run: async (a, t) => pageView(await createPage(t.env, t.principal, a), t.origin),
   },
   {
@@ -195,7 +238,7 @@ const TOOLS: ToolDef[] = [
       'Apply a batch of edits to a page draft atomically. baseRevision must equal the page revision (else revision_conflict: re-read with get_page and retry). Ops: insert {block:{type,props,size}, index?, parentId?, slot?}, update {id, props?, size?}, replace_props {id, props}, move {id, index, parentId?, slot?}, remove {id}, duplicate {id}, set_seo {seo}, set_layout {layout}, set_meta {title?, description?, slug?}.',
     scope: 'pages:write',
     input: z.object({ pageId: z.string(), baseRevision: z.number().int().min(1), ops: z.array(OpSchema).min(1).max(100), idempotencyKey: z.string().min(8).max(100).optional(), note: z.string().max(200).optional() }),
-    annotations: { readOnlyHint: false, openWorldHint: false },
+    annotations: WRITE,
     run: async (a, t) => {
       const page = await getPage(t.env, a.pageId);
       if (!page) throw new ToolError('Page not found');
@@ -210,7 +253,7 @@ const TOOLS: ToolDef[] = [
     description: 'Publish the current draft (or a given revision) to /p/<slug>.',
     scope: 'pages:publish',
     input: z.object({ pageId: z.string(), revision: z.number().int().optional() }),
-    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: IDEMPOTENT_WRITE,
     run: async (a, t) => {
       const page = await getPage(t.env, a.pageId);
       if (!page) throw new ToolError('Page not found');
@@ -224,7 +267,7 @@ const TOOLS: ToolDef[] = [
     description: 'Take a page offline; the draft is kept.',
     scope: 'pages:publish',
     input: z.object({ pageId: z.string() }),
-    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: IDEMPOTENT_WRITE,
     run: async (a, t) => {
       const page = await getPage(t.env, a.pageId);
       if (!page) throw new ToolError('Page not found');
@@ -246,7 +289,7 @@ const TOOLS: ToolDef[] = [
     description: 'Create a draft post, or update one by id. Markdown body. Publish with publish_post.',
     scope: 'content:write',
     input: PostInputSchema.extend({ id: z.string().optional().describe('Post id to update; omit to create') }),
-    annotations: { readOnlyHint: false, openWorldHint: false },
+    annotations: WRITE,
     run: async (a, t) => {
       const { id, ...input } = a;
       if (id) {
@@ -263,7 +306,7 @@ const TOOLS: ToolDef[] = [
     description: 'Publish (publish=true) or unpublish a post.',
     scope: 'content:publish',
     input: z.object({ id: z.string(), publish: z.boolean().default(true) }),
-    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: IDEMPOTENT_WRITE,
     run: async (a, t) => {
       if (!(await getPostRow(t.env, a.id))) throw new ToolError('Post not found');
       const row = await setPostPublished(t.env, t.principal, a.id, a.publish);
@@ -272,37 +315,65 @@ const TOOLS: ToolDef[] = [
   },
 ];
 
-class ToolError extends Error {}
+// ─── Admin control plane, account and CMS parity tools ──────────────────────
+// Defined in their own modules; appended after the core tools so existing tool order is unchanged.
 
-type JsonRpcId = string | number | null;
-interface JsonRpcMessage {
-  jsonrpc?: string;
-  id?: JsonRpcId;
-  method?: string;
-  params?: Record<string, unknown>;
-}
-
-const inputSchemas = new Map(TOOLS.map((t) => [t.name, z.toJSONSchema(t.input, { io: 'input' })]));
+const ALL_TOOLS: ToolDef[] = [...TOOLS, ...CMS_PARITY_TOOLS, ...ACCOUNT_TOOLS, ...ADMIN_TOOLS];
+const TOOL_BY_NAME = new Map(ALL_TOOLS.map((t) => [t.name, t]));
+const inputSchemas = new Map(ALL_TOOLS.map((t) => [t.name, z.toJSONSchema(t.input, { io: 'input' })]));
 
 function visibleTools(p: Principal) {
-  return TOOLS.filter((t) => p.scopes.includes(t.scope));
+  return ALL_TOOLS.filter((t) => p.scopes.includes(t.scope));
 }
 
-function rpcError(id: JsonRpcId, code: number, message: string, data?: unknown) {
-  return { jsonrpc: '2.0', id, error: { code, message, ...(data ? { data } : {}) } };
+function toolListing(p: Principal) {
+  return visibleTools(p).map((x) => ({ name: x.name, title: x.title, description: x.description, inputSchema: inputSchemas.get(x.name), annotations: { title: x.title, ...x.annotations } }));
+}
+
+/** A tool the caller cannot use because of scope. `stepUp` when an OAuth client could request it. */
+interface ScopeDenial {
+  tool: ToolDef;
+  stepUp: boolean;
+  roleAllows: boolean;
+}
+
+function scopeDenial(name: string, p: Principal): ScopeDenial | null {
+  const tool = TOOL_BY_NAME.get(name);
+  if (!tool || p.scopes.includes(tool.scope)) return null;
+  const roleAllows = scopesForRole(p.role).includes(tool.scope);
+  return { tool, roleAllows, stepUp: roleAllows && p.kind === 'oauth' };
+}
+
+function denialToolResult(d: ScopeDenial, p: Principal) {
+  const code = d.roleAllows ? 'insufficient_scope' : 'forbidden';
+  const message = !d.roleAllows
+    ? `Your role (${p.role}) does not allow ${d.tool.name} (needs ${d.tool.scope}).`
+    : p.kind === 'api_key'
+      ? `This API key lacks the ${d.tool.scope} scope needed for ${d.tool.name}. Create a key that includes it (see list_roles for presets).`
+      : `This connection lacks the ${d.tool.scope} scope needed for ${d.tool.name}. Reconnect and approve it.`;
+  return { isError: true, content: [{ type: 'text', text: `${code}: ${message}` }], structuredContent: { error: { code, message, required: [d.tool.scope], tool: d.tool.name } } };
+}
+
+function errorToolResult(code: string | undefined, message: string, details?: unknown, status?: number) {
+  const text = `${code ? `${code}: ` : ''}${message}${details ? `\n${JSON.stringify(details, null, 2)}` : ''}`;
+  return { isError: true, content: [{ type: 'text', text }], structuredContent: { error: { code: code ?? 'error', message, ...(status ? { status } : {}), ...(details !== undefined ? { details } : {}) } } };
 }
 
 async function callTool(params: Record<string, unknown> | undefined, t: ToolContext) {
   const name = String(params?.name ?? '');
+  const denied = scopeDenial(name, t.principal);
+  if (denied) return denialToolResult(denied, t.principal);
   const tool = visibleTools(t.principal).find((x) => x.name === name);
-  if (!tool) return { isError: true, content: [{ type: 'text', text: `Unknown tool or missing scope: ${name}` }] };
+  if (!tool) return { isError: true, content: [{ type: 'text', text: `Unknown tool: ${name}` }] };
   const parsed = tool.input.safeParse(params?.arguments ?? {});
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
     return { isError: true, content: [{ type: 'text', text: `Invalid arguments: ${issues}` }] };
   }
+  // Audit rows name the tool that acted.
+  const principal = { ...t.principal, via: `mcp:${tool.name}` };
   try {
-    const out = await tool.run(parsed.data, t);
+    const out = await tool.run(parsed.data, { ...t, principal });
     const text = typeof out === 'string' ? out : JSON.stringify(out, null, 2);
     // read_url / convert_url: lead with the Markdown so the model reads the page, not escaped JSON.
     if (READ_URL_TOOLS.has(tool.name) && out && typeof out === 'object' && 'markdown' in out) {
@@ -311,76 +382,181 @@ async function callTool(params: Record<string, unknown> | undefined, t: ToolCont
     }
     return { content: [{ type: 'text', text }], ...(out && typeof out === 'object' && !Array.isArray(out) ? { structuredContent: out } : {}) };
   } catch (err) {
-    const e = err as { code?: string; message?: string; details?: unknown };
-    const known = err instanceof ToolError || err instanceof PageError || err instanceof ConvertError || (e as { status?: number }).status;
-    const text = known ? `${e.code ? `${e.code}: ` : ''}${e.message}${e.details ? `\n${JSON.stringify(e.details, null, 2)}` : ''}` : 'Internal error while running the tool.';
-    if (!known) console.error('mcp tool error', name, err);
-    return { isError: true, content: [{ type: 'text', text }] };
+    if (err instanceof AdminError) return errorToolResult(err.code, err.message, err.details, err.status);
+    const e = err as { code?: string; message?: string; details?: unknown; status?: number };
+    const known = err instanceof ToolError || err instanceof PageError || err instanceof ConvertError || e.status;
+    if (!known) {
+      console.error('mcp tool error', name, err);
+      return errorToolResult('internal', 'Internal error while running the tool.');
+    }
+    return errorToolResult(e.code, e.message ?? 'Tool failed', e.details, e.status);
   }
 }
 
-async function handleMessage(msg: JsonRpcMessage, t: ToolContext): Promise<object | null> {
+type Era = 'modern' | 'legacy';
+
+/** A JSON-RPC message must be an object; `null`, arrays and scalars are invalid requests. */
+function isMessageObject(msg: unknown): msg is JsonRpcMessage {
+  return typeof msg === 'object' && msg !== null && !Array.isArray(msg);
+}
+
+async function handleMessage(msg: JsonRpcMessage, t: ToolContext, era: Era): Promise<object | null> {
+  if (!isMessageObject(msg)) return rpcError(null, RPC.INVALID_REQUEST, 'Invalid Request: a JSON-RPC message must be an object');
   const id = msg.id ?? null;
   const isNotification = msg.id === undefined;
-  if (msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') return isNotification ? null : rpcError(id, -32600, 'Invalid Request');
+  if (msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') return isNotification ? null : rpcError(id, RPC.INVALID_REQUEST, 'Invalid Request');
   if (isNotification) return null;
+  const ok = (result: Record<string, unknown>) => ({ jsonrpc: '2.0', id, result: era === 'modern' ? { resultType: 'complete', ...result } : result });
+  const listCache = era === 'modern' ? { ttlMs: LIST_TTL_MS, cacheScope: 'private' } : {};
   switch (msg.method) {
-    case 'initialize': {
-      const requested = String(msg.params?.protocolVersion ?? '');
-      return {
-        jsonrpc: '2.0',
-        id,
-        result: {
-          protocolVersion: PROTOCOL_VERSIONS.includes(requested) ? requested : PROTOCOL_VERSIONS[0],
+    case 'server/discover':
+      return ok({
+        supportedVersions: SUPPORTED_VERSIONS,
+        capabilities: { tools: { listChanged: false } },
+        instructions: INSTRUCTIONS,
+        ttlMs: LIST_TTL_MS,
+        cacheScope: 'private',
+        _meta: { [META_SERVER_INFO]: SERVER_INFO },
+      });
+    case 'tools/list':
+      return ok({ tools: toolListing(t.principal), ...listCache });
+    case 'tools/call':
+      return ok(await callTool(msg.params, t));
+  }
+  if (era === 'legacy') {
+    switch (msg.method) {
+      case 'initialize': {
+        const requested = String(msg.params?.protocolVersion ?? '');
+        return ok({
+          protocolVersion: LEGACY_VERSIONS.includes(requested) ? requested : LEGACY_VERSIONS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: SERVER_INFO,
           instructions: INSTRUCTIONS,
-        },
-      };
+        });
+      }
+      case 'ping':
+        return ok({});
+      case 'resources/list':
+        return ok({ resources: [] });
+      case 'prompts/list':
+        return ok({ prompts: [] });
     }
-    case 'ping':
-      return { jsonrpc: '2.0', id, result: {} };
-    case 'tools/list':
-      return {
-        jsonrpc: '2.0',
-        id,
-        result: { tools: visibleTools(t.principal).map((x) => ({ name: x.name, title: x.title, description: x.description, inputSchema: inputSchemas.get(x.name), annotations: { title: x.title, ...x.annotations } })) },
-      };
-    case 'tools/call':
-      return { jsonrpc: '2.0', id, result: await callTool(msg.params, t) };
-    case 'resources/list':
-      return { jsonrpc: '2.0', id, result: { resources: [] } };
-    case 'prompts/list':
-      return { jsonrpc: '2.0', id, result: { prompts: [] } };
-    default:
-      return rpcError(id, -32601, `Method not found: ${msg.method}`);
   }
+  return rpcError(id, RPC.METHOD_NOT_FOUND, `Method not found: ${msg.method}`);
 }
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Mcp-Method, Mcp-Name, Last-Event-ID',
   'Access-Control-Allow-Methods': 'POST, GET, DELETE, OPTIONS',
-  'Access-Control-Expose-Headers': 'Mcp-Session-Id, WWW-Authenticate',
+  'Access-Control-Expose-Headers': 'Mcp-Session-Id, WWW-Authenticate, Retry-After',
 };
+
+function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return Response.json(body, { status, headers: { ...CORS, ...headers } });
+}
+
+/** A batch is answered with an array (one error per request in it), a single message with one error. */
+function rateLimitedResponse(messages: JsonRpcMessage[], batch: boolean, limited: RateLimited): Response {
+  const message = limited.bucket === 'mutation' ? 'Too many changes. Slow down and retry later.' : 'Too many requests. Slow down and retry later.';
+  const error = (id: JsonRpcId) => rpcError(id, RPC.RATE_LIMITED, message, { code: 'rate_limited', bucket: limited.bucket, retryAfter: limited.retryAfter });
+  const ids = messages.filter((m) => isMessageObject(m) && m.id !== undefined).map((m) => m.id ?? null);
+  const body = batch ? (ids.length ? ids : [null]).map(error) : error(isMessageObject(messages[0]) ? (messages[0].id ?? null) : null);
+  return json(body, 429, { 'Retry-After': String(limited.retryAfter) });
+}
+
+/**
+ * OAuth step-up (RFC 6750 insufficient_scope): the client can re-authorize with the listed scope
+ * set, which keeps what it has and adds what the tool needs.
+ */
+function stepUpResponse(env: Env, id: JsonRpcId, d: ScopeDenial, p: Principal): Response {
+  const scope = [...new Set([...p.scopes, d.tool.scope])].join(' ');
+  const message = `${d.tool.name} needs the ${d.tool.scope} scope. Re-authorize to grant it.`;
+  return json(rpcError(id, RPC.INSUFFICIENT_SCOPE, message, { code: 'insufficient_scope', required: [d.tool.scope], scope, tool: d.tool.name }), 403, {
+    'WWW-Authenticate': `Bearer error="insufficient_scope", scope="${scope}", resource_metadata="${resourceMetadataUrl(env)}", error_description="${message}"`,
+  });
+}
+
+/** Legacy batches are bounded so one HTTP request cannot fan out into an unbounded number of calls. */
+const MAX_BATCH = 20;
+
+/**
+ * JSON-RPC batching exists in 2025-03-26 and earlier; 2025-06-18 dropped it. A client that names a
+ * later version in its header gets a batch rejected; older clients (which send no version header,
+ * or name one of these) keep batching.
+ */
+const BATCH_VERSIONS = new Set(['2025-03-26', '2024-11-05']);
+
+function batchAllowed(versionHeader: string | null): boolean {
+  return !versionHeader || BATCH_VERSIONS.has(versionHeader.trim());
+}
+
+function callsMutation(m: JsonRpcMessage, p: Principal): boolean {
+  if (!isMessageObject(m) || m.method !== 'tools/call') return false;
+  const tool = TOOL_BY_NAME.get(String(m.params?.name ?? ''));
+  return Boolean(tool && p.scopes.includes(tool.scope) && isMutation(tool));
+}
+
+/**
+ * Every valid message counts against the request bucket, and every mutating call against the
+ * credential's and the account's mutation buckets, batched or not. Invalid messages are answered
+ * with -32600 without spending the budget.
+ */
+async function rateLimit(env: Env, p: Principal, messages: JsonRpcMessage[]): Promise<RateLimited | null> {
+  for (const m of messages) {
+    if (!isMessageObject(m)) continue;
+    const limited =
+      (await checkMcpRate(env, p, 'request')) ??
+      (callsMutation(m, p) ? ((await checkMcpRate(env, p, 'mutation')) ?? (await checkMcpRate(env, p, 'mutation', 'user'))) : null);
+    if (limited) return limited;
+  }
+  return null;
+}
 
 export async function handleMcp(request: Request, env: Env, ctx: WaitUntil, principal: Principal): Promise<Response> {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-  if (request.method !== 'POST') return new Response(JSON.stringify(rpcError(null, -32000, 'This server is stateless: POST JSON-RPC messages; no SSE stream.')), { status: 405, headers: { ...CORS, Allow: 'POST, OPTIONS', 'Content-Type': 'application/json' } });
-  if (!principal.userId) return new Response(JSON.stringify(rpcError(null, -32001, 'Unauthorized')), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } });
+  if (request.method !== 'POST') return json(rpcError(null, RPC.SERVER_ERROR, 'This server is stateless: POST JSON-RPC messages; no SSE stream.'), 405, { Allow: 'POST, OPTIONS' });
+  if (!principal.userId) return json(rpcError(null, RPC.UNAUTHORIZED, 'Unauthorized', { code: 'unauthorized' }), 401);
   let payload: unknown;
   try {
     payload = await request.json();
   } catch {
-    return Response.json(rpcError(null, -32700, 'Parse error'), { status: 400, headers: CORS });
+    return json(rpcError(null, RPC.PARSE_ERROR, 'Parse error'), 400);
   }
-  const t: ToolContext = { env, ctx, principal: principal as Principal & { userId: string }, origin: env.PUBLIC_URL };
+  const era: Era = isModernRequest(request.headers.get('mcp-protocol-version'), payload) ? 'modern' : 'legacy';
+  if (era === 'modern') {
+    if (Array.isArray(payload) || !payload || typeof payload !== 'object') return json(rpcError(null, RPC.INVALID_REQUEST, 'Send one JSON-RPC message per request; batching is not supported.'), 400);
+    const failure = validateModern(request.headers, payload as JsonRpcMessage);
+    if (failure) return json(rpcError((payload as JsonRpcMessage).id ?? null, failure.code, failure.message, failure.data), failure.status);
+  }
   const batch = Array.isArray(payload);
+  if (!batch && !isMessageObject(payload)) return json(rpcError(null, RPC.INVALID_REQUEST, 'Invalid Request: a JSON-RPC message must be an object'), 400);
   const messages = (batch ? payload : [payload]) as JsonRpcMessage[];
-  const responses = (await Promise.all(messages.map((m) => handleMessage(m, t)))).filter(Boolean);
+  if (batch && !batchAllowed(request.headers.get('mcp-protocol-version'))) {
+    return json(rpcError(null, RPC.INVALID_REQUEST, 'JSON-RPC batching was removed in protocol version 2025-06-18. Send one message per request.'), 400);
+  }
+  if (batch && (messages.length === 0 || messages.length > MAX_BATCH)) return json(rpcError(null, RPC.INVALID_REQUEST, `A batch must hold between 1 and ${MAX_BATCH} messages.`), 400);
+
+  const limited = await rateLimit(env, principal, messages);
+  if (limited) return rateLimitedResponse(messages, batch, limited);
+
+  // A single call to a tool the OAuth grant lacks (but the role allows) asks the client to step up.
+  if (!batch) {
+    const msg = messages[0];
+    const denied = msg?.method === 'tools/call' ? scopeDenial(String(msg.params?.name ?? ''), principal) : null;
+    if (denied?.stepUp) return stepUpResponse(env, msg.id ?? null, denied, principal);
+  }
+
+  const requestId = principal.requestId ?? crypto.randomUUID();
+  const t: ToolContext = { env, ctx, principal: { ...principal, userId: principal.userId, requestId }, origin: env.PUBLIC_URL };
+  const responses = (await Promise.all(messages.map((m) => handleMessage(m, t, era)))).filter(Boolean);
   if (!responses.length) return new Response(null, { status: 202, headers: CORS });
-  return Response.json(batch ? responses : responses[0], { headers: CORS });
+  const status = era === 'modern' && (responses[0] as { error?: { code: number } }).error?.code === RPC.METHOD_NOT_FOUND ? 404 : 200;
+  return json(batch ? responses : responses[0], status);
 }
 
-/** Tool names by scope, for docs and the OpenAPI description. */
-export const MCP_TOOL_NAMES = TOOLS.map((t) => t.name);
+/** Tool names, for docs and the OpenAPI description. */
+export const MCP_TOOL_NAMES = ALL_TOOLS.map((t) => t.name);
+
+/** Every tool with the scope it needs and its annotations, for docs and authorization tests. */
+export const MCP_TOOL_CATALOG = ALL_TOOLS.map((t) => ({ name: t.name, scope: t.scope, annotations: t.annotations ?? {} }));

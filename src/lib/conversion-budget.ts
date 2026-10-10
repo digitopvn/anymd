@@ -15,7 +15,7 @@ export async function reserveConversion(env: Env, id: string, userId: string, pl
   const reserved = state.overage ? requested : Math.min(requested, state.remaining);
   if (reserved < 1) throw new ConvertError('Monthly credits used up', 402, 'quota_exceeded');
   const ts = Date.now();
-  const limit = getPlan(planId).credits + await extraCredits(env, userId);
+  const limit = getPlan(planId).credits + await extraCredits(env, userId, getPlan(planId).credits);
   // A single SQLite statement rechecks the allowance atomically against competing reservations.
   const out = await env.DB.prepare(`INSERT INTO conversion_charges (id,user_id,reserved,created_at,expires_at)
     SELECT ?,?,?,?,? WHERE ? = 1 OR ? - (${UNRESERVED_USAGE_SQL}) - (${CHARGES_SQL}) >= ?`)

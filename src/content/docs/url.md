@@ -1,7 +1,7 @@
 ---
 title: "URL API"
 description: "Prefix any link with anymd.cc/ to get clean Markdown back. Formats, options, headers, limits and Markdown twins."
-updated: "2026-10-04"
+updated: "2026-10-09"
 ---
 
 The simplest API there is: put `https://anymd.cc/` in front of a URL.
@@ -79,15 +79,19 @@ Add these as query parameters.
 | `format` | `format=json` | `json` or `html` instead of Markdown |
 | `lang` | `lang=vi` | Preferred language, sent upstream as `Accept-Language` (also picks YouTube transcript language when available) |
 | `selector` | `selector=.post` | CSS selector for the main content, when automatic detection picks the wrong block |
-| `images` | `images=0` | Strip images from the output |
+| `images` | `images=0` | `0` strips image/media references, `1` keeps them; omitted follows your saved default (keep). No credit effect |
 | `frontmatter` | `frontmatter=0` | Return the body only, no YAML block |
 | `fresh` | `fresh=1` | Skip the shared cache and fetch the page again |
 | `save` | `save=0` | Don't save to your library (signed-in callers only) |
-| `includeComments` | `includeComments=1` | Retrieve comments and replies (signed-in callers; extra credits) |
-| `analyzeImages` | `analyzeImages=1` | OCR and describe article images (signed-in callers; extra credits) |
+| `expandThread` | `expandThread=1` | Expand the rooted same-author X thread (signed-in callers; extra credits). `0` turns a saved default off |
+| `maxThreadPosts` | `maxThreadPosts=20` | Thread posts including the requested one; default 20, maximum 100 |
+| `includeComments` | `includeComments=1` | Retrieve comments and replies (signed-in callers; extra credits). `0` turns a saved default off |
+| `analyzeImages` | `analyzeImages=1` | OCR and describe article images (signed-in callers; extra credits). `0` turns a saved default off |
 | `maxComments` | `maxComments=100` | Comment limit; default 100, maximum 1,000 |
 | `maxImages` | `maxImages=10` | Article-image limit; default 10, maximum 20 |
-| `maxCredits` | `maxCredits=100` | Per-request enrichment budget; default 100, maximum 1,000 |
+| `maxCredits` | `maxCredits=100` | Per-request credit cap; default 100, maximum 1,000 |
+
+Options you leave out follow your saved [deep reading defaults](/docs/api#deep-reading-options-and-saved-defaults) when you are signed in, otherwise the safe defaults: thread expansion, comments and image analysis are **off**.
 
 ```bash
 curl "https://anymd.cc/example.com/blog/post?selector=article&images=0&frontmatter=0"
@@ -95,13 +99,17 @@ curl "https://anymd.cc/example.com/blog/post?selector=article&images=0&frontmatt
 
 ### Social enrichment
 
-Anonymous URL reads keep the existing basic X behavior. A signed-in read of an X status can expand its rooted same-author thread automatically. Facebook, Instagram, Threads and LinkedIn post adapters require an account. `includeComments=1` and `analyzeImages=1` are signed-in opt-ins; comments use batches of 20 and image analysis describes eligible images embedded in the converted Markdown.
+An X status converts as the single requested post unless you opt in with `expandThread=1` (or a saved default), which adds the rooted same-author thread up to `maxThreadPosts`. Signed-in reads no longer expand threads automatically. Facebook, Instagram, Threads and LinkedIn post adapters require an account. `expandThread=1`, `includeComments=1` and `analyzeImages=1` are signed-in opt-ins; each additional thread post costs 1 credit, comments use batches of 20 and image analysis describes eligible images embedded in the converted Markdown.
+
+```bash
+curl -H "Authorization: Bearer amd_…" "https://anymd.cc/x.com/user/status/123?expandThread=1&maxThreadPosts=10&format=json"
+```
 
 The JSON form reports `credit_breakdown` (`base`, `thread`, `comments`, `images`) and `enrichment` coverage for each section. A section can be partial when a provider, the request budget, the item limit or the processing deadline stops traversal; inspect its `complete`, `count` and `reason` fields. Public source rules still apply: anymd reads requested public URLs and does not bypass logins, paywalls or CAPTCHAs.
 
 Cached results cost 0 credits. A signed-in save for the same URL keeps previously saved complete or richer enrichment when a later plain or partial read is saved.
 
-> **Target URLs with their own query string** (for example `news.ycombinator.com/item?id=…`): anymd removes only its own options (`format`, `lang`, `selector`, `images`, `frontmatter`, `fresh`, `save`, `includeComments`, `analyzeImages`, `maxComments`, `maxImages`, `maxCredits`) and passes every other parameter through to the target. So `anymd.cc/example.com/search?q=cats&format=json` converts `example.com/search?q=cats` and returns JSON. If the target itself uses one of those names, use [`POST /api/v1/convert`](/docs/api) with the URL in the JSON body.
+> **Target URLs with their own query string** (for example `news.ycombinator.com/item?id=…`): anymd removes only its own options (`format`, `lang`, `selector`, `images`, `frontmatter`, `fresh`, `save`, `expandThread`, `maxThreadPosts`, `includeComments`, `analyzeImages`, `maxComments`, `maxImages`, `maxCredits`) and passes every other parameter through to the target. So `anymd.cc/example.com/search?q=cats&format=json` converts `example.com/search?q=cats` and returns JSON. If the target itself uses one of those names, use [`POST /api/v1/convert`](/docs/api) with the URL in the JSON body.
 
 ## Response headers
 

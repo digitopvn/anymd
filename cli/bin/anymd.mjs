@@ -69,9 +69,43 @@ const usageError = (message) =>
 const LONG_VALUE = {
   key: 'key', base: 'base', output: 'output', mode: 'mode', limit: 'limit',
   domain: 'domain', slug: 'slug', title: 'title', template: 'template', file: 'file',
-  'max-comments': 'maxComments', 'max-images': 'maxImages', 'max-credits': 'maxCredits',
+  tag: 'tag', add: 'add', remove: 'remove', set: 'set',
+  'max-comments': 'maxComments', 'max-images': 'maxImages', 'max-credits': 'maxCredits', 'max-thread-posts': 'maxThreadPosts',
 };
-const LONG_BOOL = { json: 'json', 'no-save': 'noSave', fresh: 'fresh', help: 'help', version: 'version', 'include-comments': 'includeComments', 'analyze-images': 'analyzeImages' };
+const LONG_BOOL = {
+  json: 'json', 'no-save': 'noSave', fresh: 'fresh', help: 'help', version: 'version',
+  'expand-thread': 'expandThread', 'no-expand-thread': 'noExpandThread',
+  'include-comments': 'includeComments', 'no-include-comments': 'noIncludeComments',
+  'analyze-images': 'analyzeImages', 'no-analyze-images': 'noAnalyzeImages',
+  'keep-images': 'keepImages', 'no-images': 'noImages',
+};
+
+/** Bounded reading options; must match READING_LIMITS on the server (src/lib/reading-options.ts). */
+export const READING_LIMITS = { maxThreadPosts: [1, 100], maxComments: [1, 1000], maxImages: [1, 20], maxCredits: [1, 1000] };
+const READING_TOGGLES = [['expandThread', 'noExpandThread', 'expand-thread'], ['includeComments', 'noIncludeComments', 'include-comments'], ['analyzeImages', 'noAnalyzeImages', 'analyze-images']];
+
+/**
+ * Reading options given explicitly on the command line. Anything omitted is left to the account's
+ * saved reading defaults on the server (and those default to off).
+ */
+export function readingOptionsFromFlags(flags) {
+  const out = {};
+  for (const [name, [min, max]] of Object.entries(READING_LIMITS)) {
+    if (flags[name] === undefined) continue;
+    const value = Number(flags[name]);
+    if (!Number.isInteger(value) || value < min || value > max) throw usageError(`${name} must be an integer between ${min} and ${max}`);
+    out[name] = value;
+  }
+  for (const [on, off, flag] of READING_TOGGLES) {
+    if (flags[on] && flags[off]) throw usageError(`--${flag} and --no-${flag} cannot be combined`);
+    if (flags[on]) out[on] = true;
+    if (flags[off]) out[on] = false;
+  }
+  if (flags.keepImages && flags.noImages) throw usageError('--keep-images and --no-images cannot be combined');
+  if (flags.keepImages) out.removeImages = false;
+  if (flags.noImages) out.removeImages = true;
+  return out;
+}
 const SHORT = { h: 'help', v: 'version', o: 'output' };
 
 /** Parse argv into `{ flags, positionals }`. Supports `--name value`, `--name=value`, `-o value` and `--`. */
@@ -450,17 +484,8 @@ async function cmdConvert(ctx, args) {
   const [raw] = expectArgs(args, 1, 'anymd convert <url> [--json] [-o file] [--no-save] [--fresh]');
   const target = normalizeTargetUrl(raw);
   const { json, noSave, fresh } = ctx.flags;
-  const extras = {};
-  for (const [name, max] of [['maxComments', 1000], ['maxImages', 20], ['maxCredits', 1000]]) {
-    if (ctx.flags[name] !== undefined) {
-      const value = Number(ctx.flags[name]);
-      if (!Number.isInteger(value) || value < 1 || value > max) throw usageError(`${name} must be an integer between 1 and ${max}`);
-      extras[name] = value;
-    }
-  }
-  if (ctx.flags.includeComments) extras.includeComments = true;
-  if (ctx.flags.analyzeImages) extras.analyzeImages = true;
-  if (extras.includeComments || extras.analyzeImages) requireKey(ctx);
+  const extras = readingOptionsFromFlags(ctx.flags);
+  if (extras.expandThread || extras.includeComments || extras.analyzeImages) requireKey(ctx);
   let res;
   if (ctx.key) {
     const body = { url: target, format: json ? 'json' : 'markdown', ...extras };
@@ -471,9 +496,11 @@ async function cmdConvert(ctx, args) {
       accept: json ? 'application/json' : 'text/markdown, application/json;q=0.9',
     });
   } else {
+    const { removeImages, ...rest } = extras;
+    const urlOptions = Object.fromEntries(Object.entries(rest).map(([k, v]) => [k, typeof v === 'boolean' ? (v ? '1' : '0') : v]));
     res = await request(ctx, 'GET', `/${target}`, {
       auth: false,
-      query: { format: json ? 'json' : undefined, fresh: fresh ? '1' : undefined, save: noSave ? '0' : undefined, ...extras },
+      query: { format: json ? 'json' : undefined, fresh: fresh ? '1' : undefined, save: noSave ? '0' : undefined, images: removeImages === undefined ? undefined : removeImages ? '0' : '1', ...urlOptions },
       accept: json ? 'application/json' : 'text/markdown',
     });
   }
@@ -513,10 +540,11 @@ async function cmdSearch(ctx, args) {
 }
 
 async function cmdList(ctx, args) {
-  expectArgs(args, 0, 'anymd ls [--limit 20] [--domain x]');
+  expectArgs(args, 0, 'anymd ls [--limit 20] [--domain x] [--tag a,b]');
   const limit = parseLimit(ctx.flags.limit, 20);
+  const tag = ctx.flags.tag === undefined ? undefined : parseTagList(ctx.flags.tag, '--tag').join(',') || undefined;
   const data = await readJson(
-    await request(ctx, 'GET', '/api/v1/library', { query: { limit, domain: ctx.flags.domain } }),
+    await request(ctx, 'GET', '/api/v1/library', { query: { limit, domain: ctx.flags.domain, tag } }),
   );
   if (ctx.flags.json) return ctx.out(toJson(data));
   const items = pickArray(data, 'items', 'documents');
@@ -545,6 +573,39 @@ async function cmdRemove(ctx, args) {
   const [id] = expectArgs(args, 1, 'anymd rm <id>');
   await request(ctx, 'DELETE', `/api/v1/library/${enc(id)}`);
   ctx.out(`Deleted ${id}\n`);
+}
+
+/** Split a comma-separated flag value into trimmed, non-empty tags. */
+export function parseTagList(value, flag) {
+  const tags = String(value).split(',').map((t) => t.trim()).filter(Boolean);
+  if (tags.some((t) => t.length > 40)) throw usageError(`${flag}: tags can be at most 40 characters`);
+  return tags;
+}
+
+async function cmdTag(ctx, args) {
+  const usage = 'anymd tag <id> [--add a,b] [--remove c] | --set a,b';
+  const [id] = expectArgs(args, 1, usage);
+  const body = {};
+  if (ctx.flags.add !== undefined) body.add = parseTagList(ctx.flags.add, '--add');
+  if (ctx.flags.remove !== undefined) body.remove = parseTagList(ctx.flags.remove, '--remove');
+  if (ctx.flags.set !== undefined) body.set = parseTagList(ctx.flags.set, '--set');
+  if (body.set && (body.add || body.remove)) throw usageError('use either --set, or --add and/or --remove, not both');
+  for (const flag of ['add', 'remove']) if (body[flag]?.length === 0) throw usageError(`--${flag} needs at least one tag (use --set "" to clear all tags)`);
+  if (!body.set && !body.add && !body.remove) throw usageError(`usage: ${usage}`);
+  const data = await readJson(await request(ctx, 'POST', `/api/v1/library/${enc(id)}/tags`, { json: body }));
+  if (ctx.flags.json) return ctx.out(toJson(data));
+  const tags = pickArray(data, 'tags');
+  ctx.out(tags.length ? `${tags.map((t) => `#${t}`).join(' ')}\n` : 'No tags.\n');
+}
+
+async function cmdTags(ctx, args) {
+  expectArgs(args, 0, 'anymd tags [--limit 100] [--json]');
+  const limit = parseLimit(ctx.flags.limit, 100, 500);
+  const data = await readJson(await request(ctx, 'GET', '/api/v1/library/tags', { query: { limit } }));
+  if (ctx.flags.json) return ctx.out(toJson(data));
+  const items = pickArray(data, 'items');
+  if (!items.length) return ctx.out('No tags.\n');
+  ctx.out(formatTable(['TAG', 'DOCS'], items.map((t) => [pick(t, 'tag') ?? '-', String(pick(t, 'count') ?? 0)]), ctx.colors));
 }
 
 async function cmdUsage(ctx, args) {
@@ -751,9 +812,83 @@ async function cmdMcp(ctx, args) {
   ctx.out(out);
 }
 
+const PREFS_PATH = '/api/v1/account/reading-preferences';
+
+/** `key=value` pairs for `anymd prefs set`: booleans take true/false/on/off/1/0, limits take integers. */
+export function parsePreferenceAssignments(args) {
+  if (!args.length) throw usageError('usage: anymd prefs set <field>=<value>… (e.g. expandThread=true maxThreadPosts=30)');
+  const booleans = ['expandThread', 'includeComments', 'keepImages', 'analyzeImages'];
+  const out = {};
+  for (const arg of args) {
+    const eq = arg.indexOf('=');
+    const key = eq > 0 ? arg.slice(0, eq) : '';
+    const raw = eq > 0 ? arg.slice(eq + 1).trim().toLowerCase() : '';
+    if (booleans.includes(key)) {
+      if (['true', 'on', '1', 'yes'].includes(raw)) out[key] = true;
+      else if (['false', 'off', '0', 'no'].includes(raw)) out[key] = false;
+      else throw usageError(`${key} must be true or false`);
+    } else if (Object.hasOwn(READING_LIMITS, key)) {
+      const [min, max] = READING_LIMITS[key];
+      const value = Number(raw);
+      if (!raw || !Number.isInteger(value) || value < min || value > max) throw usageError(`${key} must be an integer between ${min} and ${max}`);
+      out[key] = value;
+    } else {
+      throw usageError(`unknown preference "${arg}"; fields: ${[...booleans, ...Object.keys(READING_LIMITS)].join(', ')}`);
+    }
+  }
+  return out;
+}
+
+function formatPreferences(data, colors) {
+  const p = data.preferences ?? {};
+  const { bold, dim } = colors;
+  const onOff = (v) => (v ? 'on' : 'off');
+  return `${bold('Reading defaults')} ${dim(data.saved ? '(saved)' : '(safe defaults: deep reading off)')}
+  keep image/media URLs   ${onOff(p.keepImages)}            ${dim('no extra credits')}
+  expand X threads        ${onOff(p.expandThread)}  max ${p.maxThreadPosts} posts   ${dim('extra credits')}
+  comments & replies      ${onOff(p.includeComments)}  max ${p.maxComments}   ${dim('extra credits')}
+  read images (OCR)       ${onOff(p.analyzeImages)}  max ${p.maxImages}   ${dim('extra credits')}
+  max credits/conversion  ${p.maxCredits}
+${dim('Flags on a single conversion override these; omitted flags use them.')}
+`;
+}
+
+/** Saved defaults apply to every credential of the account, so changing them needs `keys:manage`. */
+async function prefsWrite(ctx, method, options) {
+  try {
+    return await request(ctx, method, PREFS_PATH, options);
+  } catch (err) {
+    if (err instanceof CliError && err.status === 403) {
+      err.hint = 'Changing saved defaults needs a key with the keys:manage scope, e.g. the "Everything my role allows" preset (anymd.cc/dashboard/keys), or use the dashboard.';
+    }
+    throw err;
+  }
+}
+
+async function cmdPrefs(ctx, args) {
+  const [sub = 'show', ...rest] = args;
+  let res;
+  if (sub === 'show') {
+    expectArgs(rest, 0, 'anymd prefs [show]');
+    res = await request(ctx, 'GET', PREFS_PATH);
+  } else if (sub === 'set') {
+    res = await prefsWrite(ctx, 'PUT', { json: parsePreferenceAssignments(rest) });
+  } else if (sub === 'reset') {
+    expectArgs(rest, 0, 'anymd prefs reset');
+    res = await prefsWrite(ctx, 'DELETE');
+  } else {
+    throw usageError('usage: anymd prefs [show] | set <field>=<value>… | reset');
+  }
+  const data = await readJson(res);
+  if (ctx.flags.json) return ctx.out(toJson(data));
+  ctx.out(formatPreferences(data, ctx.colors));
+}
+
 const COMMANDS = {
   convert: cmdConvert, file: cmdFile, search: cmdSearch, ls: cmdList, get: cmdGet, rm: cmdRemove,
+  tag: cmdTag, tags: cmdTags,
   usage: cmdUsage, login: cmdLogin, logout: cmdLogout, whoami: cmdWhoami, pages: cmdPages, mcp: cmdMcp,
+  prefs: cmdPrefs,
 };
 
 export function helpText(colors = makeColors(false)) {
@@ -765,9 +900,13 @@ ${bold('Usage')}
   anymd convert <url> [--json] [-o file] [--no-save] [--fresh]
   anymd file <path> [--json] [-o file] Convert a local file (PDF, DOCX, XLSX, CSV, images…; max 20 MB)
   anymd search <query> [--mode hybrid] [--limit 10] [--json]
-  anymd ls [--limit 20] [--domain x]   List documents in your library
+  anymd ls [--limit 20] [--domain x] [--tag a,b]
+                                       List documents in your library (--tag: all tags must match)
   anymd get <id> [-o file]             Print a library document as Markdown
   anymd rm <id>                        Delete a library document
+  anymd tag <id> [--add a,b] [--remove c] | --set a,b
+                                       Edit a document's tags (--set "" clears; max 20 per document)
+  anymd tags [--limit 100]             List your tags with document counts
   anymd usage                          Show plan, quota and usage
   anymd login [--key amd_…]            Save an API key (validated against the server)
   anymd logout                         Remove the saved API key
@@ -775,14 +914,22 @@ ${bold('Usage')}
   anymd pages ls | get <id> | create --slug <s> --title <t> [--template <t>]
               | ops <id> --file ops.json | publish <id> | blocks
   anymd mcp                            Print MCP client configuration snippets
+  anymd prefs [show] | set <field>=<value>… | reset
+                                       Show or change your saved reading defaults
 
 ${bold('Options')}
   --json            Print raw JSON
   -o, --output <f>  Write the result to a file instead of stdout
   --no-save         Do not save the conversion to your library
   --fresh           Bypass the cache
+  Reading options (omitted ones follow your saved defaults; deep reading is off unless enabled):
+  --expand-thread     Expand the same-author X thread (requires a key; extra credits)
+  --max-thread-posts <n>  Thread post limit, 1–100 (default 20)
   --include-comments  Read comments and replies (requires a key; extra credits)
   --analyze-images    OCR and describe article images (requires a key; extra credits)
+  --no-expand-thread, --no-include-comments, --no-analyze-images
+                      Turn an enrichment off for this conversion only
+  --keep-images, --no-images  Keep or strip image/media URLs (no extra credits)
   --max-comments <n>  Comment/reply limit, 1–1000 (default 100)
   --max-images <n>    Image limit, 1–20 (default 10)
   --max-credits <n>   Hard request credit limit, 1–1000 (default 100)

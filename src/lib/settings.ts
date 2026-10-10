@@ -1,6 +1,5 @@
-/** Key/value site settings edited in Admin → Settings. Cached in KV for a minute. */
+/** Key/value site settings read by public pages. Cached in KV for a minute; writes go through `services/admin/settings`. */
 import type { Env } from '../env';
-import { now } from './util';
 
 const CACHE_KEY = 'settings:v1';
 
@@ -13,13 +12,7 @@ export async function getSettings(env: Env): Promise<Record<string, string>> {
   return out;
 }
 
-export async function putSettings(env: Env, values: Record<string, string>): Promise<void> {
-  const ts = now();
-  const stmts = Object.entries(values).map(([k, v]) =>
-    v.trim()
-      ? env.DB.prepare('INSERT INTO settings (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at').bind(k, v.trim(), ts)
-      : env.DB.prepare('DELETE FROM settings WHERE key = ?').bind(k),
-  );
-  if (stmts.length) await env.DB.batch(stmts);
-  await env.CACHE.delete(CACHE_KEY);
+/** Drop the cached copy after a write so public pages pick the change up on their next read. */
+export async function invalidateSettingsCache(env: Env): Promise<void> {
+  await env.CACHE.delete(CACHE_KEY).catch(() => undefined);
 }

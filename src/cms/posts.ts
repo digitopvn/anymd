@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { BUNDLED_POSTS, type BlogPost } from '../content';
 import type { Env, Principal } from '../env';
 import { newId, now, slugify } from '../lib/util';
+import { recordAudit } from '../services/admin/audit';
 
 export interface PostRow {
   id: string;
@@ -78,10 +79,8 @@ export async function getPostRow(env: Env, idOrSlug: string): Promise<PostRow | 
   return env.DB.prepare('SELECT * FROM posts WHERE id = ? OR slug = ?').bind(idOrSlug, idOrSlug).first<PostRow>();
 }
 
-async function audit(env: Env, actor: Principal, action: string, target: string) {
-  await env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)')
-    .bind(newId('aud_'), `${actor.kind}:${actor.userId}`, action, target, '{}', now())
-    .run();
+async function audit(env: Env, actor: Principal, action: string, target: string, meta: Record<string, unknown> = {}) {
+  await recordAudit(env, actor, { action, targetType: 'post', target, meta });
 }
 
 export async function createPost(env: Env, actor: Principal, input: PostInput): Promise<PostRow> {
@@ -134,4 +133,30 @@ export async function deletePost(env: Env, actor: Principal, id: string): Promis
   const res = await env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(id).run();
   if (res.meta.changes) await audit(env, actor, 'post.delete', id);
   return res.meta.changes > 0;
+}
+
+/**
+ * Copy a bundled (file-based) post into the database so it can be edited. Returns the existing
+ * database post when one already has the slug; null when no bundled post has it.
+ */
+export async function forkBundledPost(env: Env, actor: Principal, slug: string): Promise<{ post: PostRow; forked: boolean } | null> {
+  const existing = await getPostRow(env, slug);
+  if (existing) return { post: existing, forked: false };
+  const src = BUNDLED_POSTS.find((p) => p.slug === slug);
+  if (!src) return null;
+  const row = await createPost(env, actor, {
+    slug: src.slug,
+    title: src.title,
+    markdown: src.markdown,
+    excerpt: src.excerpt,
+    category: (['article', 'announcement', 'guide'].includes(src.category) ? src.category : 'article') as 'article',
+    tags: src.tags,
+    cover_url: src.coverUrl,
+    seo_title: src.seoTitle,
+    seo_description: src.seoDescription,
+  });
+  // Keep the original date so the fork does not jump to the top of the blog once published.
+  await env.DB.prepare('UPDATE posts SET published_at = ?, author_name = ? WHERE id = ?').bind(src.publishedAt || null, src.authorName, row.id).run();
+  await audit(env, actor, 'post.fork', row.id, { slug: src.slug });
+  return { post: (await getPostRow(env, row.id)) ?? row, forked: true };
 }

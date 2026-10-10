@@ -9,6 +9,7 @@ import { reserveConversion, settleConversion } from '../src/lib/conversion-budge
 
 interface SqliteStatement {
   get(...values: unknown[]): unknown;
+  all(...values: unknown[]): unknown[];
   run(...values: unknown[]): { changes: number | bigint };
 }
 
@@ -33,6 +34,9 @@ function d1Adapter(db: SqliteDatabase): D1Database {
         },
         async first<T>() {
           return (db.prepare(query).get(...values) ?? null) as T | null;
+        },
+        async all<T>() {
+          return { results: db.prepare(query).all(...values) as T[] };
         },
         async run() {
           const result = db.prepare(query).run(...values);
@@ -61,7 +65,10 @@ async function database(): Promise<{ db: SqliteDatabase; env: Env }> {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       credits INTEGER NOT NULL,
-      expires_at INTEGER
+      created_at INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER,
+      revoked_at INTEGER,
+      recurring INTEGER
     );
   `);
   db.exec(readMigration());

@@ -1,11 +1,10 @@
 /** REST API v1 — see plans/260926-1256-anymd-platform/contracts.md and /api/v1/openapi.json. */
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
 import { z } from 'zod';
-import { createApiKey, getUser, type ApiKeyRow } from '../auth/identity';
-import { apiError, requireScope, sameOriginWrites, type AppContext } from '../auth/middleware';
-import { isRole, KEY_PRESETS, ROLE_TEMPLATES, roleAtLeast } from '../auth/roles';
-import { getPlan, PLANS, type PlanId } from '../billing/plans';
+import { getUser } from '../auth/identity';
+import { apiError, markVia, requireScope, sameOriginWrites, type AppContext } from '../auth/middleware';
+import { getPlan, type PlanId } from '../billing/plans';
 import { billingEnabled, createCheckout, customerPortalUrl } from '../billing/provider';
 import { blockCatalog } from '../cms/blocks';
 import {
@@ -27,17 +26,23 @@ import {
 } from '../cms/pages';
 import { createPost, deletePost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { convertBlobToMarkdown, documentCreditCost, mimeFor } from '../convert/document';
-import { runConversion } from '../convert/service';
+import { runConversion, type NotSavedReason } from '../convert/service';
 import { enrichmentOptions } from '../convert/enrichment-types';
+import { applyPreferencesPatch, canWriteReadingPreferences, getReadingPreferences, PREFERENCES_WRITE_SCOPE, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences, type StoredReadingPreferences } from '../convert/reading-preferences';
+import { DEFAULT_READING_PREFERENCES, READING_LIMITS } from '../lib/reading-options';
 import { ConvertError, countWords, type ConvertResult } from '../convert/types';
 import type { AppBindings, Principal } from '../env';
 import { embedDocument, getDocument, listDocuments, saveDocument, deleteDocument, updateTags } from '../library/store';
-import { getSettings, putSettings } from '../lib/settings';
+import { editTags, listTags, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags, parseTagFilter } from '../library/store';
 import { Tracer } from '../lib/tracer';
 import { canSpend, recordUsage } from '../lib/usage';
-import { newId, safeJson } from '../lib/util';
+import { newId } from '../lib/util';
 import { convertPayload, searchForPrincipal, usageSummary } from '../services';
 import { buildOpenApi } from '../openapi';
+import { createOwnKey, listOwnKeys, revokeOwnKey } from '../services/admin/credentials';
+import { getOwnTrace, listOwnTraces } from '../services/admin/observability';
+import { AdminError } from '../services/admin/shared';
+import { adminControlPlane } from './api-admin-control-plane';
 import { clientIp, originOf } from './shared';
 
 export const api = new Hono<AppBindings>();
@@ -61,6 +66,10 @@ api.onError((err, c) => handleApiError(c, err));
 api.notFound((c) => apiError(c, 404, 'not_found', `No route for ${c.req.method} ${new URL(c.req.url).pathname}. See /api/v1/openapi.json`));
 
 export function handleApiError(c: AppContext, err: unknown) {
+  if (err instanceof AdminError) {
+    if (err.status === 429) c.header('Retry-After', '60');
+    return apiError(c, err.status, err.code, err.message, err.details !== undefined ? { details: err.details } : {});
+  }
   if (err instanceof PageError) return apiError(c, err.status, err.code, err.message, err.details ? { details: err.details } : {});
   if (err instanceof ConvertError) return apiError(c, err.status, err.code, err.message);
   if (err instanceof z.ZodError) return apiError(c, 422, 'invalid_request', 'Request body failed validation', { details: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })) });
@@ -105,6 +114,56 @@ api.get('/me', requireScope(), async (c) => {
   return c.json({ id: user.id, email: user.email, name: user.name, role: user.role, plan: user.plan, scopes: p.scopes, auth: p.kind, created_at: user.created_at });
 });
 
+// ─── Reading preferences ───────────────────────────────────────────────────
+
+/** Anonymous callers hold `convert` for the URL API, so account-scoped routes check the user explicitly. */
+const requireAccount: MiddlewareHandler<AppBindings> = async (c, next) => {
+  if (!c.get('principal').userId) return apiError(c, 401, 'unauthorized', 'Reading preferences belong to an account. Sign in or send an API key: Authorization: Bearer amd_…');
+  await next();
+};
+
+function preferencesBody(stored: StoredReadingPreferences) {
+  return { preferences: stored.preferences, saved: stored.saved, updated_at: stored.updatedAt, defaults: DEFAULT_READING_PREFERENCES, limits: READING_LIMITS };
+}
+
+api.get('/account/reading-preferences', requireAccount, requireScope('convert'), async (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(preferencesBody(await getReadingPreferences(c.env, me(c).userId)));
+});
+
+/**
+ * Changing saved defaults: any signed-in session, or an API key / OAuth grant holding
+ * `keys:manage` (see `canWriteReadingPreferences`). Reading them only needs `convert`.
+ */
+const requirePreferencesWriter: MiddlewareHandler<AppBindings> = async (c, next) => {
+  if (!canWriteReadingPreferences(c.get('principal'))) {
+    return apiError(c, 403, 'forbidden', `Missing scope: ${PREFERENCES_WRITE_SCOPE}`, { required: [PREFERENCES_WRITE_SCOPE] });
+  }
+  markVia(c, 'api');
+  await next();
+};
+
+/** Partial update: omitted fields keep their saved value. Out-of-range values are rejected, not clamped. */
+api.put('/account/reading-preferences', requireAccount, requirePreferencesWriter, async (c) => {
+  const raw = await c.req.json().catch(() => {
+    throw Object.assign(new Error('Body must be JSON'), { status: 400, code: 'invalid_json' });
+  });
+  const current = await getReadingPreferences(c.env, me(c).userId);
+  try {
+    const next = applyPreferencesPatch(current.preferences, raw);
+    c.header('Cache-Control', 'no-store');
+    return c.json(preferencesBody(await saveReadingPreferences(c.env, c.get('principal'), current, next)));
+  } catch (err) {
+    if (err instanceof ReadingPreferencesError) return apiError(c, err.status, err.code, err.message, { details: err.details });
+    throw err;
+  }
+});
+
+api.delete('/account/reading-preferences', requireAccount, requirePreferencesWriter, async (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(preferencesBody(await resetReadingPreferences(c.env, c.get('principal'))));
+});
+
 // ─── Convert ────────────────────────────────────────────────────────────────
 
 const ConvertBody = z.object({
@@ -122,6 +181,7 @@ const ConvertBody = z.object({
 api.post('/convert', requireScope('convert'), async (c) => {
   const b = await body(c, ConvertBody);
   const r = await runConversion(c.env, c.executionCtx, {
+    expandThread: b.expandThread, maxThreadPosts: b.maxThreadPosts,
     includeComments: b.includeComments, analyzeImages: b.analyzeImages,
     maxComments: b.maxComments, maxImages: b.maxImages, maxCredits: b.maxCredits,
     url: b.url,
@@ -159,9 +219,11 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
     const title = markdown.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() || file.name;
     const result: ConvertResult = { title, author: '', published: '', description: '', domain: 'upload', content: markdown, wordCount: countWords(markdown), source: `upload://${file.name}`, sourceKind: kind };
     let documentId: string | null = null;
-    if (form.save !== '0' && p.scopes.includes('library:write')) {
+    let notSavedReason: NotSavedReason | null = form.save === '0' ? 'not_requested' : !p.scopes.includes('library:write') ? 'missing_scope' : null;
+    if (!notSavedReason) {
       const saved = await saveDocument(c.env, p.userId, result, markdown, getPlan(user?.plan ?? 'free').libraryLimit);
       documentId = saved?.id ?? null;
+      if (!saved) notSavedReason = 'library_limit';
       if (saved?.changed) c.executionCtx.waitUntil(embedDocument(c.env, p.userId, saved.id).catch(() => 0));
     }
     c.executionCtx.waitUntil(
@@ -170,7 +232,7 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
     c.header('X-Anymd-Credits', String(credits));
     c.header('X-Anymd-Trace', tracer.id);
     c.header('X-Anymd-Kind', kind);
-    return c.json({ name: file.name, bytes: file.size, kind, title, word_count: result.wordCount, markdown, document_id: documentId, credits, trace_id: tracer.id, duration_ms: tracer.elapsed() });
+    return c.json({ name: file.name, bytes: file.size, kind, title, word_count: result.wordCount, markdown, document_id: documentId, saved: documentId !== null, not_saved_reason: notSavedReason, credits, trace_id: tracer.id, duration_ms: tracer.elapsed() });
   } catch (err) {
     const e = err instanceof ConvertError ? err : new ConvertError('Could not convert this file', 422, 'document_failed');
     c.executionCtx.waitUntil(
@@ -184,8 +246,25 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
 
 api.get('/library', requireScope('library:read'), async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 20, 1), 100);
-  const items = await listDocuments(c.env, me(c).userId, { limit, before: Number(c.req.query('before')) || undefined, domain: c.req.query('domain') || undefined, kind: c.req.query('kind') || undefined });
+  // `?tag=a&tag=b` or `?tag=a,b`: documents carrying every tag.
+  const tags = parseTagFilter(c.req.queries('tag'));
+  const items = await listDocuments(c.env, me(c).userId, { limit, before: Number(c.req.query('before')) || undefined, domain: c.req.query('domain') || undefined, kind: c.req.query('kind') || undefined, tags });
   return c.json({ items, next_cursor: items.length === limit ? items[items.length - 1].created_at : null });
+});
+
+// Registered before /library/:id so "tags" is not taken for a document id.
+api.get('/library/tags', requireScope('library:read'), async (c) => {
+  return c.json({ items: await listTags(c.env, me(c).userId, Number(c.req.query('limit')) || 100) });
+});
+
+const TagList = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAGS);
+api.post('/library/:id/tags', requireScope('library:write'), async (c) => {
+  const b = await body(c, z.object({ add: TagList.optional(), remove: TagList.optional(), set: TagList.optional() }).strict());
+  if (b.set && (b.add || b.remove)) return apiError(c, 422, 'invalid_request', 'Use either `set`, or `add` and/or `remove`, not both.');
+  if (!b.set && !b.add && !b.remove) return apiError(c, 422, 'invalid_request', 'Pass `add`, `remove` or `set`.');
+  const tags = await editTags(c.env, me(c).userId, c.req.param('id'), b);
+  if (!tags) return apiError(c, 404, 'not_found', 'Document not found');
+  return c.json({ id: c.req.param('id'), tags });
 });
 
 api.get('/library/:id', requireScope('library:read'), async (c) => {
@@ -195,7 +274,7 @@ api.get('/library/:id', requireScope('library:read'), async (c) => {
     const md = `---\ntitle: ${JSON.stringify(doc.title)}\nsource: ${JSON.stringify(doc.url)}\n---\n\n${doc.markdown}`;
     return c.body(md, 200, { 'Content-Type': 'text/markdown; charset=utf-8' });
   }
-  return c.json({ ...doc, tags: doc.tags.split(' ').filter(Boolean) });
+  return c.json({ ...doc, tags: parseStoredTags(doc.tags) });
 });
 
 api.patch('/library/:id', requireScope('library:write'), async (c) => {
@@ -235,59 +314,24 @@ api.get('/usage', requireScope('usage:read'), async (c) => {
 });
 
 api.get('/traces', requireScope('usage:read'), async (c) => {
-  const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 200);
-  const { results } = await c.env.DB.prepare('SELECT id,kind,target,status,duration_ms,meta,created_at FROM traces WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').bind(me(c).userId, limit).all<{ meta: string }>();
-  return c.json({ items: results.map((r) => ({ ...r, meta: safeJson(r.meta, {}) })) });
+  const limit = Number(c.req.query('limit')) || 50;
+  return c.json(await listOwnTraces(c.env, me(c), { limit: Math.min(Math.max(limit, 1), 200), cursor: c.req.query('cursor') || undefined }));
 });
 
-api.get('/traces/:id', requireScope('usage:read'), async (c) => {
-  const row = await c.env.DB.prepare('SELECT * FROM traces WHERE id = ? AND user_id = ?').bind(c.req.param('id'), me(c).userId).first<{ spans: string; meta: string }>();
-  if (!row) return apiError(c, 404, 'not_found', 'Trace not found');
-  return c.json({ ...row, spans: safeJson(row.spans, []), meta: safeJson(row.meta, {}) });
-});
+api.get('/traces/:id', requireScope('usage:read'), async (c) => c.json(await getOwnTrace(c.env, me(c), c.req.param('id'))));
 
 // ─── API keys ───────────────────────────────────────────────────────────────
 
-function keyView(k: ApiKeyRow) {
-  return { id: k.id, name: k.name, prefix: k.prefix, scopes: safeJson<string[]>(k.scopes, []), created_at: k.created_at, last_used_at: k.last_used_at, expires_at: k.expires_at, revoked_at: k.revoked_at };
-}
-
-export async function activeKeyCount(env: AppContext['env'], userId: string): Promise<number> {
-  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM api_keys WHERE user_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)').bind(userId, Date.now()).first<{ n: number }>();
-  return row?.n ?? 0;
-}
-
-/** Free accounts get 2 active keys; paid plans and staff are unlimited. */
-export function keyLimit(plan: string, role: string): number {
-  return plan === 'free' && !['owner', 'admin'].includes(role) ? 2 : Infinity;
-}
-
-export function scopesForPreset(preset: string | undefined, explicit: string[] | undefined): string[] | null {
-  if (explicit?.length) return explicit;
-  const p = KEY_PRESETS.find((k) => k.id === preset);
-  return p ? p.scopes : null;
-}
-
-api.get('/keys', requireScope('keys:manage'), async (c) => {
-  const { results } = await c.env.DB.prepare('SELECT * FROM api_keys WHERE user_id = ? ORDER BY created_at DESC').bind(me(c).userId).all<ApiKeyRow>();
-  return c.json({ items: results.map(keyView), presets: KEY_PRESETS });
-});
+api.get('/keys', requireScope('keys:manage'), async (c) => c.json(await listOwnKeys(c.env, me(c))));
 
 api.post('/keys', requireScope('keys:manage'), async (c) => {
-  const b = await body(c, z.object({ name: z.string().min(1).max(80), preset: z.string().optional(), scopes: z.array(z.string()).optional(), expires_in_days: z.number().int().min(1).max(3650).optional() }));
-  const user = await getUser(c.env, me(c).userId);
-  if (!user) return apiError(c, 401, 'unauthorized', 'Account not found');
-  if ((await activeKeyCount(c.env, user.id)) >= keyLimit(user.plan, user.role)) return apiError(c, 403, 'key_limit', 'Free accounts can have 2 active API keys. Revoke one or upgrade.');
-  const requested = scopesForPreset(b.preset, b.scopes) ?? me(c).scopes;
-  // A key can never exceed the scopes of the credential that created it.
-  const scopes = requested.filter((s) => me(c).scopes.includes(s as never));
-  const { key, row } = await createApiKey(c.env, user, { name: b.name, scopes, expiresInDays: b.expires_in_days });
-  return c.json({ key, ...keyView(row) }, 201);
+  const b = await body(c, z.object({ name: z.string(), preset: z.string().optional(), scopes: z.array(z.string()).optional(), expires_in_days: z.number().int().optional() }));
+  const { expires_in_days, ...rest } = b;
+  return c.json(await createOwnKey(c.env, me(c), { ...rest, expiresInDays: expires_in_days }), 201);
 });
 
 api.delete('/keys/:id', requireScope('keys:manage'), async (c) => {
-  const res = await c.env.DB.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL').bind(Date.now(), c.req.param('id'), me(c).userId).run();
-  if (!res.meta.changes) return apiError(c, 404, 'not_found', 'Key not found or already revoked');
+  await revokeOwnKey(c.env, me(c), c.req.param('id'));
   return c.json({ ok: true });
 });
 
@@ -363,7 +407,7 @@ admin.get('/pages/:id/revisions', requireScope('pages:read'), async (c) => c.jso
 
 admin.post('/pages/:id/preview-token', requireScope('pages:write'), async (c) => {
   const page = await pageOr404(c);
-  const token = await rotatePreviewToken(c.env, page.id);
+  const token = await rotatePreviewToken(c.env, c.get('principal'), page.id);
   return c.json({ previewUrl: `${originOf(c)}/p/${page.slug}?preview=${token}` });
 });
 
@@ -407,36 +451,8 @@ admin.post('/posts/:id/publish', requireScope('content:publish'), async (c) => {
   return c.json({ post: row, url: `${originOf(c)}/blog/${row.slug}` });
 });
 
-// ─── Admin: users, roles, settings ──────────────────────────────────────────
+// ─── Admin: control plane (users, roles, settings, opt-outs, credits, billing, audit, system) ──
 
-admin.get('/users', requireScope('users:read'), async (c) => {
-  const { results } = await c.env.DB.prepare('SELECT id,email,name,role,plan,created_at,last_login_at FROM users ORDER BY created_at DESC LIMIT 500').all();
-  return c.json({ items: results });
-});
-
-admin.patch('/users/:id', requireScope('users:write'), async (c) => {
-  const b = await body(c, z.object({ role: z.string().optional(), plan: z.enum(PLANS.map((p) => p.id) as [PlanId, ...PlanId[]]).optional() }));
-  const actor = c.get('principal');
-  const target = await getUser(c.env, c.req.param('id'));
-  if (!target) return apiError(c, 404, 'not_found', 'User not found');
-  if (target.id === actor.userId) return apiError(c, 403, 'forbidden', 'You cannot change your own role or plan.');
-  if (b.role !== undefined) {
-    if (!isRole(b.role)) return apiError(c, 422, 'invalid_role', `Role must be one of ${Object.keys(ROLE_TEMPLATES).join(', ')}`);
-    // Nobody grants or removes a role at or above their own, except the owner.
-    if (actor.role !== 'owner' && (roleAtLeast(b.role, actor.role) || roleAtLeast(target.role, actor.role))) return apiError(c, 403, 'forbidden', 'You can only manage roles below your own.');
-  }
-  await c.env.DB.prepare('UPDATE users SET role = COALESCE(?, role), plan = COALESCE(?, plan), updated_at = ? WHERE id = ?').bind(b.role ?? null, b.plan ?? null, Date.now(), target.id).run();
-  await c.env.DB.prepare('INSERT INTO audit_log (id,actor,action,target,meta,created_at) VALUES (?,?,?,?,?,?)').bind(newId('aud_'), `${actor.kind}:${actor.userId}`, 'user.update', target.id, JSON.stringify(b), Date.now()).run();
-  return c.json({ ok: true, user: { ...(await getUser(c.env, target.id)), password_hash: undefined } });
-});
-
-admin.get('/roles', requireScope(), (c) => c.json({ roles: ROLE_TEMPLATES, presets: KEY_PRESETS, plans: PLANS.map((p) => ({ id: p.id, name: p.name, credits: p.credits })) }));
-
-admin.get('/settings', requireScope('settings:write'), async (c) => c.json({ settings: await getSettings(c.env) }));
-admin.put('/settings', requireScope('settings:write'), async (c) => {
-  const b = await body(c, z.record(z.string().regex(/^[a-z_]{1,40}$/), z.string().max(1000)));
-  await putSettings(c.env, b);
-  return c.json({ settings: await getSettings(c.env) });
-});
+admin.route('/', adminControlPlane);
 
 api.route('/admin', admin);

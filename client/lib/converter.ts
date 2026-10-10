@@ -1,8 +1,9 @@
 /** The URL converter island (home page, dashboard, page-builder block). Works as a plain GET form without JS. */
-import { ApiFailure, convertUrl, type ConvertPayload } from './api';
+import { ApiFailure, convertUrl, getReadingPreferences, type ConvertPayload } from './api';
 import { copyText, isAiTarget, sendMarkdownToAi } from './clipboard';
 import { $, $$, closestTarget, reducedMotion, setupTabs } from './dom';
 import { loadMarkdownRenderer } from './markdown';
+import { applyPreferences, changedOptions, mergeUntouched, readPreferences } from './reading-options';
 
 const KIND_LABELS: Record<string, string> = {
   web: 'Web page',
@@ -115,6 +116,37 @@ function initConverter(root: HTMLElement): void {
     json: $('[data-output-json]', root),
   };
   const submitContent = Array.from(submit.childNodes);
+  const panel = $<HTMLDetailsElement>('[data-reading-panel]', root);
+  const fields = panel ? $('[data-reading-options]', panel) : null;
+  // Baseline the user's one-time changes are measured against; it never gets written back.
+  let baseline = fields ? readPreferences(fields) : null;
+  if (panel && fields && panel.dataset.readingSource === 'unknown') {
+    // Load saved defaults once, on first open, so anonymous page views cost no API call.
+    panel.addEventListener('toggle', () => {
+      if (!panel.open || panel.dataset.readingSource !== 'unknown') return;
+      panel.dataset.readingSource = 'loading';
+      const status = $('[data-reading-status]', panel);
+      void getReadingPreferences()
+        .then((stored) => {
+          panel.dataset.readingSource = stored.saved ? 'saved' : 'default';
+          // Untouched fields show the saved defaults; a field the user already changed keeps their value.
+          const current = readPreferences(fields);
+          applyPreferences(fields, baseline ? mergeUntouched(baseline, current, stored.preferences) : stored.preferences);
+          // The server applies the saved defaults to anything not sent, so they are the new baseline.
+          baseline = { ...stored.preferences };
+          if (status?.firstChild) {
+            status.firstChild.textContent = stored.saved
+              ? 'Prefilled from your saved reading defaults. Changes here apply to this conversion only. '
+              : 'You have no saved reading defaults: deep reading is off unless you turn it on. Changes here apply to this conversion only. ';
+          }
+        })
+        .catch((err: unknown) => {
+          panel.dataset.readingSource = 'default';
+          if (err instanceof ApiFailure && (err.status === 401 || err.status === 403)) return;
+          if (status?.firstChild) status.firstChild.textContent = 'Could not load your saved defaults; options you leave unchanged still follow them. ';
+        });
+    });
+  }
   let current: ConvertPayload | null = null;
   let previewed: ConvertPayload | null = null;
   let busy = false;
@@ -190,14 +222,9 @@ function initConverter(root: HTMLElement): void {
     setBusy(true);
     showError(null);
     try {
-      const values = new FormData(form);
-      const { data, headers } = await convertUrl(url, undefined, {
-        includeComments: values.get('includeComments') === '1',
-        analyzeImages: values.get('analyzeImages') === '1',
-        maxComments: Number(values.get('maxComments') ?? 100),
-        maxImages: Number(values.get('maxImages') ?? 10),
-        maxCredits: Number(values.get('maxCredits') ?? 100),
-      });
+      // Only one-time overrides are sent; the server applies saved defaults to everything else.
+      const options = fields && baseline ? changedOptions(baseline, readPreferences(fields)) : {};
+      const { data, headers } = await convertUrl(url, undefined, options);
       current = data;
       previewed = null;
       render(data, headers);

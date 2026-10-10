@@ -25,15 +25,16 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 
 | Path | Owns |
 |---|---|
-| `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, bounded enrichment (`enrichment-types.ts`, `image-enrichment.ts`, `x-thread.ts`, and social adapters), file conversion (`document.ts`) |
+| `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, bounded enrichment (`enrichment-types.ts`, `image-enrichment.ts`, `x-thread.ts`, and social adapters), reading preferences and option precedence (`reading-preferences.ts`; bounds and defaults shared with the browser in `src/lib/reading-options.ts`), file conversion (`document.ts`) |
 | `src/library/` | Library persistence and embeddings (`store.ts`), search modes, fan-out and RRF (`search.ts`), Jev tie-break (`jev.ts`) |
 | `src/auth/` | Principal resolution, scope guards, same-origin writes (`middleware.ts`), users/sessions/API keys (`identity.ts`), role templates and key presets (`roles.ts`) |
 | `src/billing/` | Plans, credit table, offers (`plans.ts`); `provider.ts` routes checkout and portal to the provider named by `BILLING_PROVIDER`: Creem (`creem.ts`: checkout, portal, webhooks) or Polar (`polar.ts`: also usage ingest for metered overage) |
 | `src/cms/` | Page-builder block registry (`blocks.ts`) and page document service: ops, revisions, publish (`pages.ts`) |
+| `src/services/admin/` | The admin control plane: users, credentials, settings, opt-outs, credits, billing (read-only), audit and observability. Each service checks its scope, validates input, enforces rank rules, applies idempotency and optimistic concurrency, and writes the audit row in the same D1 batch as the change. REST, web admin and MCP are thin adapters over it |
 | `src/lib/` | Usage + quota accounting (`usage.ts`), tracer, Markdown rendering (`markdown.ts`), email, utilities |
 | `src/content/` | Bundled Markdown (blog, docs, legal) and site copy (`site.ts`); loader in `index.ts` |
 | `src/views/` | Hono JSX layouts and pages |
-| `src/routes/`, `src/mcp/` | HTTP routes and the MCP server |
+| `src/routes/`, `src/mcp/` | HTTP routes and the MCP server. `src/mcp/protocol.ts` serves the 2026-07-28 stateless protocol and 2025-era clients from one endpoint; `rate-limit.ts` holds the MCP buckets; tools live in `server.ts` plus `cms-parity-tools.ts`, `account-tools.ts` and `admin-tools.ts` |
 | `client/` | Browser islands, bundled by `scripts/build-client.mjs` |
 | `cli/` | The `anymd` CLI (zero dependencies) |
 | `migrations/` | D1 schema |
@@ -42,19 +43,20 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 
 ### Principal
 
-`resolvePrincipal` (`src/auth/middleware.ts`) runs once per request: API key (`Authorization: Bearer` or `X-API-Key`) → session cookie → anonymous. A presented key that doesn't resolve is a hard `401`, never a silent downgrade to anonymous. Key scopes are intersected with the owner's **current** role on every request (`capScopes`), so demotion takes effect immediately without key rotation.
+`resolvePrincipal` (`src/auth/middleware.ts`) runs once per request: API key (`Authorization: Bearer` or `X-API-Key`) → session cookie → anonymous. A presented key that doesn't resolve is a hard `401`, never a silent downgrade to anonymous. Key scopes are intersected with the owner's **current** role on every request (`capScopes`), so demotion takes effect immediately without key rotation. Suspended accounts resolve to no principal for sessions, keys and OAuth. OAuth grants are re-capped the same way (`oauthPrincipalScopes`); grants from before least-privilege consent keep no admin scopes.
 
 ### Conversion
 
 `runConversion` (`src/convert/service.ts`) is the only conversion path. In order:
 
 1. `normalizeTargetUrl`: coerce to absolute http(s), reject private, internal, self-referential and credentialed targets.
-2. Cache lookup keyed on URL + language + selector + image flag (not on the caller), unless `fresh`.
-3. On a miss: quota check (signed-in) or anonymous daily counter, then `pickAdapter` → adapter. Adapters are tried in registry order; the web adapter is the fallback and itself hands binary responses to `document.ts`.
-4. Credits come from the adapter's resulting `sourceKind`. The quota pre-check uses the cheapest cost because the kind is unknown until the adapter runs.
-5. Save to the library when signed in, `save !== false` and the principal has `library:write`. Embedding, usage recording and (when Polar is the provider) Polar usage ingest run in `waitUntil` so they never add latency or fail the request.
+2. Resolve reading options with `resolveReadingOptions`: explicit request option > the signed-in user's saved `reading_preferences` row > safe default (every credit-consuming enrichment off). The effective values and their sources go into the response (`reading_options`) and the trace meta.
+3. Cache lookup keyed on URL + language + selector + the effective reading options (not on the caller's identity), unless `fresh`.
+4. On a miss: quota check (signed-in) or anonymous daily counter, then `pickAdapter` → adapter. Adapters are tried in registry order; the web adapter is the fallback and itself hands binary responses to `document.ts`.
+5. Credits come from the adapter's resulting `sourceKind`. The quota pre-check uses the cheapest cost because the kind is unknown until the adapter runs.
+6. Save to the library when signed in, `save !== false` and the principal has `library:write`. Embedding, usage recording and (when Polar is the provider) Polar usage ingest run in `waitUntil` so they never add latency or fail the request.
 
-Signed-in X conversions may expand the rooted same-author thread automatically. Comments and article-image analysis are explicit opt-ins, and Facebook, Instagram, Threads and LinkedIn adapters require an account. Enrichment coverage is returned with the conversion so provider failures, limits and timeouts remain visible instead of looking complete; the executable bounds and unit prices live in `src/convert/enrichment-types.ts` and `src/billing/plans.ts`.
+X thread expansion (bounded by `maxThreadPosts`), comments and article-image analysis are explicit opt-ins (per request or saved preference); authentication alone never enables them. Base-only conversions reserve only the base price, and Facebook, Instagram, Threads and LinkedIn adapters require an account. Enrichment coverage is returned with the conversion so provider failures, limits and timeouts remain visible instead of looking complete; the executable bounds and unit prices live in `src/convert/enrichment-types.ts` and `src/billing/plans.ts`.
 
 Why a caller-independent cache: identical URLs are converted once per hour for everyone, and cached hits are free, which is the pricing promise.
 
@@ -74,12 +76,12 @@ The schema is owned by `migrations/`. Tables group as:
 
 | Area | Tables | Notes |
 |---|---|---|
-| Identity | `users`, `sessions`, `api_keys` | Sessions and keys store SHA-256 hashes, never raw tokens. Key `scopes` is a JSON array. |
+| Identity | `users`, `sessions`, `api_keys`, `reading_preferences` | Sessions and keys store SHA-256 hashes, never raw tokens. Key `scopes` is a JSON array. `users.status` (`active`/`suspended`) gates every credential. `reading_preferences` holds one zod-validated JSON object per user; no row means the safe defaults. |
 | Library | `documents`, `documents_fts` | Unique per `(user_id, url_hash)`. FTS5 is an external-content table kept in sync by triggers. `embedded_chunks` tracks vectors `<doc_id>#<n>` in Vectorize. |
 | Metering | `usage_events`, `traces` | Monthly credit use is summed from `usage_events` since the UTC month start. |
-| Billing | `subscriptions`, `credit_grants`, `webhook_events` | `webhook_events` makes Creem and Polar webhook handling idempotent. `users.creem_customer_id` opens the Creem portal. |
+| Billing | `subscriptions`, `credit_grants`, `webhook_events` | `webhook_events` makes Creem and Polar webhook handling idempotent and records the provider and outcome. `users.creem_customer_id` opens the Creem portal. Credit grants carry reason, actor, idempotency key and revocation; only active grants raise the allowance. Plans are owned by the billing provider. |
 | Content | `posts`, `pages`, `page_revisions`, `idempotency_keys` | Page `draft`/`published` are JSON page documents. |
-| Admin | `audit_log`, `settings`, `stats` | Page mutations and billing webhook events write to `audit_log`. |
+| Admin | `audit_log`, `settings`, `settings_state`, `site_optouts`, `stats` | Every privileged change writes `audit_log` with actor, auth kind, credential, `via`, request id and a scrubbed diff. `settings_state.version` makes settings writes optimistic. |
 
 Add schema changes as a new numbered file in `migrations/`; never edit an applied migration.
 

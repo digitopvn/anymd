@@ -93,6 +93,12 @@ The adapter source files own the fixed provider hosts and paths; callers never s
 - **Code:** `npx wrangler rollback --env production` returns to the previous version; `npx wrangler rollback <version-id> --env production` targets a specific one (`npx wrangler versions list --env production`). Rollback does not touch D1, KV, R2 or Vectorize.
 - **Data:** D1 Time Travel can restore a database to a point in the last 30 days: `npx wrangler d1 time-travel restore anymd-production --timestamp=<RFC3339 or unix seconds>`. This overwrites current data; take a bookmark with `time-travel info` first.
 - **Pages:** republish an earlier revision with `POST /api/v1/admin/pages/:id/publish {"revision": n}`.
+- **After rolling back past the admin control plane (migration `0007`):** the schema stays (migrations are additive), but the older Worker ignores what it added. Until you redeploy:
+  - Revoked credit grants count again (the old code does not read `credit_grants.revoked_at`). Re-check with `SELECT id, user_id, credits FROM credit_grants WHERE revoked_at IS NOT NULL AND (expires_at IS NULL OR expires_at > <now ms>)`, and if any matter, set their `expires_at` to now; that holds under both versions.
+  - Credit grants are billed the old way: every active grant raises the allowance by its full credits each month (one-time pools, `credit_grants.recurring = 0`, renew), and all spent units are sent to the Polar meter, including those a grant covers. A one-time grant made late in a month lasts into the next one, so for a long rollback consider setting the `expires_at` of such grants to the first of the next month.
+  - Suspended accounts can sign in and use their API keys and OAuth tokens again (the old code does not read `users.status`). Revoke their sessions and keys directly: `DELETE FROM sessions WHERE user_id = ?`, `UPDATE api_keys SET revoked_at = <now ms> WHERE user_id = ? AND revoked_at IS NULL`, and remove their OAuth grants and tokens (KV keys `grant:<userId>:*` and `token:<userId>:*` in `OAUTH_KV`).
+  - Settings saved by the old admin screen do not bump `settings_state.version`, so after redeploying, an agent holding an old `expectedVersion` could overwrite them. Run `UPDATE settings_state SET version = version + 1 WHERE id = 1` right after the redeploy.
+  - Audit rows written meanwhile have only the legacy columns (`actor`, `action`, `target`, `meta`); `actor_user_id`, `auth_kind` and `via` are empty for that window.
 
 ## Caches
 

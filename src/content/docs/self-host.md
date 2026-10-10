@@ -35,6 +35,7 @@ The repository's `wrangler.jsonc` declares two environments, `staging` and `prod
 | `AI` | Workers AI | Embeddings, query fan-out, document conversion |
 | `RL_ANON`, `RL_AUTH` | Rate limiting | Per-minute limits for anonymous and signed-in callers |
 | `RL_DOMAIN` | Rate limiting | Per-minute fetch budget per target site, shared by all callers |
+| `RL_MCP`, `RL_MCP_MUTATION` | Rate limiting | Per-minute MCP limits per user and credential: every request, and the stricter budget for tools that change data. Optional: without them MCP falls back to `RL_AUTH` |
 
 Create them (production shown; repeat with `-staging` names for staging):
 
@@ -87,6 +88,8 @@ These scripts use the database names `anymd-staging` and `anymd-production`; adj
 ```bash
 npx wrangler d1 migrations apply anymd-staging --local --env staging
 ```
+
+Every migration is additive, so the previous Worker version keeps working while you roll out. `0007_admin_control_plane.sql` adds the audit, account status, credit-grant lifecycle, settings version and webhook outcome columns the admin control plane needs; apply it before deploying the Worker that uses them.
 
 ## 5. Set secrets
 

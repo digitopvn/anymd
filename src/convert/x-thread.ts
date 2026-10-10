@@ -3,9 +3,10 @@ import { rapidJson } from './provider-fetch';
 import { fetchTweetData } from './x-twitter';
 import { ConvertError, type ConvertContext, type ConvertResult } from './types';
 import type { Coverage } from './enrichment-types';
+import { READING_LIMITS } from '../lib/reading-options';
 import { quote } from './social-common';
 
-interface Tweet {
+export interface Tweet {
   id: string;
   parent: string;
   conversation: string;
@@ -51,18 +52,38 @@ async function getTweet(id: string, ctx: ConvertContext): Promise<Tweet> {
   return tweet;
 }
 
+/** Thread members to render: at most `limit`, rooted first, always containing the requested post. */
+export function boundedThread(members: Tweet[], initialId: string, limit: number): Tweet[] {
+  if (members.length <= limit) return members;
+  const index = Math.max(0, members.findIndex((tweet) => tweet.id === initialId));
+  const start = Math.max(0, index - limit + 1);
+  return members.slice(start, start + limit);
+}
+
+/**
+ * X deep reading. Runs only for signed-in callers that explicitly opted in (per request or via
+ * saved preferences): `expandThread` renders the rooted same-author thread up to `maxThreadPosts`,
+ * `includeComments` reads replies. Authentication alone never triggers either.
+ */
 export async function enrichX(result: ConvertResult, ctx: ConvertContext): Promise<void> {
-  if (!ctx.authenticated || !ctx.budget) return;
+  if (!ctx.authenticated || !ctx.budget || !(ctx.expandThread || ctx.includeComments)) return;
   const state = coverage();
-  result.enrichment = { thread: state };
+  result.enrichment = ctx.expandThread ? { thread: state } : {};
   const initialId = result.source.match(/\/status\/(\d+)/)?.[1];
   if (!initialId) return;
+  const limit = ctx.maxThreadPosts ?? READING_LIMITS.maxThreadPosts.default;
   try {
     const initial = await getTweet(initialId, ctx);
+    if (!ctx.expandThread) {
+      // Comments only: replies reachable from the requested post, without walking the thread.
+      await xComments(result, initial, new Set([initial.id]), ctx);
+      return;
+    }
     let root = initial;
     const ancestors = [initial];
     const visited = new Set([root.id]);
     while (root.parent) {
+      if (ancestors.length >= limit) { state.complete = false; state.reason = 'thread_limit'; break; }
       if (!ctx.budget.canSpend(ancestors.length * ENRICHMENT_CREDITS.threadPost)) {
         state.complete = false; state.reason = 'credit_limit'; break;
       }
@@ -75,8 +96,12 @@ export async function enrichX(result: ConvertResult, ctx: ConvertContext): Promi
     const candidates = [...ancestors];
     let cursor = '';
     const cursors = new Set<string>();
+    let searched = false;
     do {
-      if (!ctx.budget.canSpend((candidates.length) * ENRICHMENT_CREDITS.threadPost)) { state.complete = false; state.reason = 'credit_limit'; break; }
+      // Stop once the bound is reached; more posts may exist unless the search was exhausted.
+      if (threadMembers(root, candidates).length >= limit) { if (cursor || !searched) { state.complete = false; state.reason = 'thread_limit'; } break; }
+      searched = true;
+      if (!ctx.budget.canSpend(Math.min(candidates.length, limit) * ENRICHMENT_CREDITS.threadPost)) { state.complete = false; state.reason = 'credit_limit'; break; }
       const data = record(await rapidJson(HOST, '/search.php', {
         query: `conversation_id:${root.conversation || root.id} from:${root.handle}`, search_type: 'Latest', ...(cursor ? { cursor } : {}),
       }, ctx));
@@ -89,7 +114,9 @@ export async function enrichX(result: ConvertResult, ctx: ConvertContext): Promi
       if (cursor && cursors.has(cursor)) { state.complete = false; state.reason = 'source_incomplete'; break; }
       if (cursor) cursors.add(cursor);
     } while (cursor);
-    const members = threadMembers(root, candidates);
+    const allMembers = threadMembers(root, candidates);
+    const members = boundedThread(allMembers, initial.id, limit);
+    if (members.length < allMembers.length) { state.complete = false; state.reason = 'thread_limit'; }
     const parts: string[] = [];
     for (const tweet of members) {
       if (tweet.id !== initial.id && !ctx.budget.canSpend(ENRICHMENT_CREDITS.threadPost)) { state.complete = false; state.reason = 'credit_limit'; break; }

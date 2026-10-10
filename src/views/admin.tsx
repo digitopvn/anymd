@@ -1,7 +1,5 @@
 /** Admin screens: landing pages (builder), blog posts, users & roles, site opt-outs, settings. */
-import type { UserRow } from '../auth/identity';
 import { ROLE_TEMPLATES } from '../auth/roles';
-import { PLANS } from '../billing/plans';
 import type { PostRow } from '../cms/posts';
 import type { PageRow } from '../cms/pages';
 import type { SiteOptout } from '../convert/optouts';
@@ -9,6 +7,8 @@ import { TEMPLATES } from '../cms/pages';
 import type { BlogPost } from '../content';
 import type { RoleName } from '../env';
 import { humanDate, timeAgo } from '../lib/util';
+import { SETTING_FIELDS } from '../services/admin/settings';
+import type { UserSummary } from '../services/admin/users';
 import { Icon } from './components/icons';
 
 function StatusChip({ status }: { status: string }) {
@@ -386,17 +386,102 @@ export function PostEditorPage({ post, canPublish, error, notice }: { post: Post
   );
 }
 
-export function UsersPage({ users, canWrite, me }: { users: UserRow[]; canWrite: boolean; me: string }) {
+export interface UserFilters {
+  search?: string;
+  role?: string;
+  status?: string;
+}
+
+const NOTICE_CLASS = 'mb-4 rounded-xl border border-ok-line bg-accent-soft px-4 py-3 text-sm text-accent-ink';
+const ERROR_CLASS = 'mb-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger';
+
+function Flash({ notice, error }: { notice?: string; error?: string }) {
   return (
     <>
+      {notice ? <p class={NOTICE_CLASS}>{notice}</p> : null}
+      {error ? (
+        <p class={ERROR_CLASS} role="alert">
+          {error}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Users, newest first, with filters and cursor paging. Roles are edited here; plans are shown
+ * read-only because the billing provider owns them (use credit grants for support allowances).
+ */
+export function UsersPage({
+  users,
+  nextCursor,
+  filters,
+  canWriteRole,
+  canSuspend,
+  me,
+  notice,
+  error,
+}: {
+  users: UserSummary[];
+  nextCursor: string | null;
+  filters: UserFilters;
+  canWriteRole: boolean;
+  canSuspend: boolean;
+  me: string;
+  notice?: string;
+  error?: string;
+}) {
+  const next = new URLSearchParams(Object.entries({ ...filters, cursor: nextCursor ?? '' }).filter(([, v]) => v) as [string, string][]);
+  return (
+    <>
+      <Flash notice={notice} error={error} />
+      <form method="get" action="/admin/users" class="card mb-4 flex flex-wrap items-end gap-3 p-4">
+        <div class="min-w-[200px] flex-1">
+          <label class="label" for="u-search">
+            Search
+          </label>
+          <input id="u-search" name="search" class="input" placeholder="Email, name or user id" value={filters.search ?? ''} maxlength={200} />
+        </div>
+        <div>
+          <label class="label" for="u-role">
+            Role
+          </label>
+          <select id="u-role" name="role" class="input !w-auto">
+            <option value="">Any</option>
+            {Object.entries(ROLE_TEMPLATES).map(([id, r]) => (
+              <option value={id} selected={filters.role === id}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label class="label" for="u-status">
+            Status
+          </label>
+          <select id="u-status" name="status" class="input !w-auto">
+            <option value="">Any</option>
+            <option value="active" selected={filters.status === 'active'}>
+              Active
+            </option>
+            <option value="suspended" selected={filters.status === 'suspended'}>
+              Suspended
+            </option>
+          </select>
+        </div>
+        <button class="btn btn-ghost" type="submit">
+          Filter
+        </button>
+      </form>
       <div class="card overflow-hidden">
         <div class="scroll-x">
-          <table class="table min-w-[720px]">
+          <table class="table min-w-[860px]">
             <thead>
               <tr>
                 <th>User</th>
                 <th>Role</th>
                 <th>Plan</th>
+                <th>Status</th>
                 <th>Joined</th>
                 <th>Last login</th>
               </tr>
@@ -408,20 +493,15 @@ export function UsersPage({ users, canWrite, me }: { users: UserRow[]; canWrite:
                     <p class="font-semibold">{u.name || '—'}</p>
                     <p class="text-xs text-muted">{u.email}</p>
                   </td>
-                  <td colspan={2}>
-                    {canWrite && u.id !== me ? (
+                  <td>
+                    {canWriteRole && u.id !== me ? (
                       <form method="post" action={`/admin/users/${u.id}`} class="flex flex-wrap items-center gap-2">
+                        <input type="hidden" name="intent" value="role" />
+                        <input type="hidden" name="expectedRole" value={u.role} />
                         <select name="role" class="input !min-h-9 !w-auto !py-1 text-sm" aria-label="Role">
                           {Object.entries(ROLE_TEMPLATES).map(([id, r]) => (
                             <option value={id} selected={u.role === id}>
                               {r.label}
-                            </option>
-                          ))}
-                        </select>
-                        <select name="plan" class="input !min-h-9 !w-auto !py-1 text-sm" aria-label="Plan">
-                          {PLANS.map((p) => (
-                            <option value={p.id} selected={u.plan === p.id}>
-                              {p.name}
                             </option>
                           ))}
                         </select>
@@ -430,9 +510,27 @@ export function UsersPage({ users, canWrite, me }: { users: UserRow[]; canWrite:
                         </button>
                       </form>
                     ) : (
-                      <span class="text-sm">
-                        {ROLE_TEMPLATES[u.role as RoleName]?.label ?? u.role} · {u.plan}
-                      </span>
+                      <span class="text-sm">{ROLE_TEMPLATES[u.role as RoleName]?.label ?? u.role}</span>
+                    )}
+                  </td>
+                  <td>
+                    <span class="text-sm" title="Plans follow the billing provider">
+                      {u.plan}
+                    </span>
+                  </td>
+                  <td>
+                    {canSuspend && u.id !== me ? (
+                      <form method="post" action={`/admin/users/${u.id}`} class="flex flex-wrap items-center gap-2">
+                        <input type="hidden" name="intent" value="status" />
+                        <input type="hidden" name="expectedStatus" value={u.status} />
+                        <input type="hidden" name="status" value={u.status === 'suspended' ? 'active' : 'suspended'} />
+                        <input name="reason" class="input !min-h-9 !w-40 !py-1 text-sm" placeholder="Reason" required minlength={3} maxlength={300} aria-label="Reason" />
+                        <button class={`btn btn-ghost btn-sm${u.status === 'suspended' ? '' : ' !text-danger'}`} type="submit">
+                          {u.status === 'suspended' ? 'Reactivate' : 'Suspend'}
+                        </button>
+                      </form>
+                    ) : (
+                      <span class={`text-sm${u.status === 'suspended' ? ' text-danger' : ''}`}>{u.status}</span>
                     )}
                   </td>
                   <td class="whitespace-nowrap text-muted">{humanDate(u.created_at)}</td>
@@ -442,7 +540,16 @@ export function UsersPage({ users, canWrite, me }: { users: UserRow[]; canWrite:
             </tbody>
           </table>
         </div>
+        {!users.length ? <p class="p-5 text-sm text-muted">No users match these filters.</p> : null}
       </div>
+      {nextCursor ? (
+        <p class="mt-4">
+          <a class="btn btn-ghost" href={`/admin/users?${next.toString()}`}>
+            Next page
+          </a>
+        </p>
+      ) : null}
+      <p class="mt-4 text-xs text-muted">Plans come from the billing provider and cannot be edited here. Grant credits for support allowances (owner, over the API or MCP).</p>
       <RoleTemplates />
     </>
   );
@@ -472,44 +579,56 @@ function RoleTemplates() {
   );
 }
 
-export const SETTING_FIELDS: { key: string; label: string; hint: string; multiline?: boolean }[] = [
-  { key: 'announcement', label: 'Announcement bar', hint: 'Plain text shown above the header on public pages. Leave empty to hide.' },
-  { key: 'announcement_href', label: 'Announcement link', hint: 'Optional URL the announcement points to.' },
-  { key: 'support_email', label: 'Support email', hint: 'Shown in emails and error pages.' },
-];
-
-export function SettingsPage({ values, notice }: { values: Record<string, string>; notice?: string }) {
+export function SettingsPage({ values, version, canWrite, notice, error }: { values: Record<string, string>; version: number; canWrite: boolean; notice?: string; error?: string }) {
   return (
     <>
-      {notice ? <p class="mb-4 rounded-xl border border-ok-line bg-accent-soft px-4 py-3 text-sm text-accent-ink">{notice}</p> : null}
+      <Flash notice={notice} error={error} />
       <form method="post" action="/admin/settings" class="card max-w-2xl space-y-4 p-5">
+        <input type="hidden" name="expectedVersion" value={String(version)} />
         {SETTING_FIELDS.map((f) => (
           <div>
             <label class="label" for={`s-${f.key}`}>
               {f.label}
             </label>
-            <input id={`s-${f.key}`} name={f.key} class="input" value={values[f.key] ?? ''} maxlength={300} />
+            <input id={`s-${f.key}`} name={f.key} class="input" value={values[f.key] ?? ''} maxlength={300} disabled={!canWrite} />
             <p class="mt-1 text-xs text-muted">{f.hint}</p>
           </div>
         ))}
-        <button class="btn btn-dark" type="submit">
-          Save settings
-        </button>
+        {canWrite ? (
+          <button class="btn btn-dark" type="submit">
+            Save settings
+          </button>
+        ) : (
+          <p class="text-xs text-muted">Read-only: your role can view settings but not change them.</p>
+        )}
+        <p class="text-xs text-muted">Version {version}. Changes are recorded in the audit log.</p>
       </form>
       <RoleTemplates />
     </>
   );
 }
 
-export function OptoutsPage({ optouts, error, notice }: { optouts: SiteOptout[]; error?: string; notice?: string }) {
+export function OptoutsPage({
+  optouts,
+  total,
+  search,
+  nextCursor,
+  canWrite,
+  error,
+  notice,
+}: {
+  optouts: SiteOptout[];
+  total: number;
+  search?: string;
+  nextCursor: string | null;
+  canWrite: boolean;
+  error?: string;
+  notice?: string;
+}) {
   return (
     <>
-      {notice ? <p class="mb-4 rounded-xl border border-ok-line bg-accent-soft px-4 py-3 text-sm text-accent-ink">{notice}</p> : null}
-      {error ? (
-        <p class="mb-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
-          {error}
-        </p>
-      ) : null}
+      <Flash notice={notice} error={error} />
+      {canWrite ? (
       <form method="post" action="/admin/optouts" class="card max-w-2xl space-y-4 p-5">
         <p class="text-sm text-muted">
           Blocks conversions of the domain and all its subdomains on every channel, including cached results. Use it for owner opt-out and takedown requests
@@ -532,7 +651,15 @@ export function OptoutsPage({ optouts, error, notice }: { optouts: SiteOptout[];
           Block domain
         </button>
       </form>
-      <div class="card mt-4 max-w-2xl overflow-hidden">
+      ) : null}
+      <form method="get" action="/admin/optouts" class="mt-4 flex max-w-2xl gap-2">
+        <input name="search" class="input" placeholder="Find a domain" value={search ?? ''} maxlength={200} aria-label="Find a domain" />
+        <button class="btn btn-ghost" type="submit">
+          Search
+        </button>
+      </form>
+      <p class="mt-2 text-xs text-muted">{total} blocked domain{total === 1 ? '' : 's'}</p>
+      <div class="card mt-2 max-w-2xl overflow-hidden">
         {optouts.length ? (
           <div class="scroll-x">
             <table class="table">
@@ -554,12 +681,14 @@ export function OptoutsPage({ optouts, error, notice }: { optouts: SiteOptout[];
                     </td>
                     <td class="hidden whitespace-nowrap text-muted sm:table-cell">{humanDate(o.created_at)}</td>
                     <td class="text-right">
+                      {canWrite ? (
                       <form method="post" action="/admin/optouts">
                         <input type="hidden" name="domain" value={o.domain} />
                         <button class="btn btn-ghost btn-sm" type="submit" name="intent" value="remove" aria-label={`Unblock ${o.domain}`}>
                           <Icon name="trash" size={15} /> Unblock
                         </button>
                       </form>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -567,9 +696,16 @@ export function OptoutsPage({ optouts, error, notice }: { optouts: SiteOptout[];
             </table>
           </div>
         ) : (
-          <p class="p-5 text-sm text-muted">No domains are blocked.</p>
+          <p class="p-5 text-sm text-muted">{search ? 'No blocked domain matches.' : 'No domains are blocked.'}</p>
         )}
       </div>
+      {nextCursor ? (
+        <p class="mt-4">
+          <a class="btn btn-ghost" href={`/admin/optouts?${new URLSearchParams({ ...(search ? { search } : {}), cursor: nextCursor }).toString()}`}>
+            Next page
+          </a>
+        </p>
+      ) : null}
     </>
   );
 }

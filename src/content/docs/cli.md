@@ -1,7 +1,7 @@
 ---
 title: "CLI"
 description: "The anymd command: convert URLs and files, search your library, manage pages and print MCP config from your terminal."
-updated: "2026-10-04"
+updated: "2026-10-09"
 ---
 
 `anymd` is a zero-dependency command-line client. It needs Node.js 18 or newer and nothing else.
@@ -43,15 +43,25 @@ Without a key the CLI works anonymously, with the same 50-per-day limit as the [
 | `anymd convert <url> [--json] [-o file] [--no-save] [--fresh] [enrichment flags]` | Convert with options |
 | `anymd file <path>` | Convert a local file (PDF, DOCX, XLSX, CSV, images…) |
 | `anymd search <query> [--mode hybrid] [--limit 10] [--json]` | Search your library |
-| `anymd ls [--limit 20] [--domain x]` | List library documents |
+| `anymd ls [--limit 20] [--domain x] [--tag a,b]` | List library documents (`--tag`: every tag must match) |
 | `anymd get <id>` | Print a saved document |
 | `anymd rm <id>` | Delete a saved document |
+| `anymd tag <id> [--add a,b] [--remove c]` · `--set a,b` | Edit a document's tags and print the result (`--set ""` clears) |
+| `anymd tags [--limit 100]` | List your tags with document counts |
 | `anymd usage` | Credits used and remaining |
 | `anymd login [--key amd_…]` · `anymd logout` · `anymd whoami` | Manage credentials |
 | `anymd pages ls` · `get <id>` · `create --slug --title [--template]` · `ops <id> --file ops.json` · `publish <id>` · `blocks` | Page builder |
 | `anymd mcp` | Print MCP config snippets for your clients |
+| `anymd prefs [show]` / `set <field>=<value>…` / `reset` | Show, change or reset your saved deep reading defaults |
 
 ## Recipes
+
+Tag a saved document, then list everything with that tag:
+
+```bash
+anymd tag doc_… --add rag,research --remove todo
+anymd ls --tag rag
+```
 
 Save an article as a file:
 
@@ -77,13 +87,23 @@ Convert without touching your library, bypassing the cache:
 anymd convert https://example.com --no-save --fresh
 ```
 
-Signed-in conversions also accept `--include-comments`, `--analyze-images`, `--max-comments <1..1000>`, `--max-images <1..20>` and `--max-credits <1..1000>`. Comments and image analysis are opt-in; `maxCredits` defaults to 100. Anonymous X reads retain the basic post conversion, while signed-in X reads can expand a rooted same-author thread automatically. Social post adapters require a key. JSON output includes the `credit_breakdown` and `enrichment` coverage fields, so provider failures or request limits remain visible.
+Signed-in conversions also accept `--expand-thread`, `--max-thread-posts <1..100>`, `--include-comments`, `--analyze-images`, `--max-comments <1..1000>`, `--max-images <1..20>` and `--max-credits <1..1000>`, plus `--no-expand-thread`, `--no-include-comments` and `--no-analyze-images` to switch a saved default off for one conversion, and `--keep-images` / `--no-images` for image/media URLs (no credit effect). Flags you leave out follow your saved defaults, otherwise thread expansion, comments and image analysis are off; `maxCredits` defaults to 100. X posts convert as the single requested post unless you opt in; a key alone never expands threads. Social post adapters require a key. JSON output includes the `credit_breakdown` and `enrichment` coverage fields, so provider failures or request limits remain visible.
 
 For example:
 
 ```bash
-anymd convert https://x.com/example/status/123 --include-comments --max-comments 40 --max-credits 200 --json
+anymd convert https://x.com/example/status/123 --expand-thread --max-thread-posts 10 --include-comments --max-comments 40 --max-credits 200 --json
 ```
+
+Save defaults once, then override per conversion:
+
+```bash
+anymd prefs set expandThread=on maxThreadPosts=30
+anymd convert https://x.com/example/status/123 --no-expand-thread   # this conversion only
+anymd prefs reset                                                    # deep reading off again
+```
+
+`anymd prefs` works with any key that has `convert`. `prefs set` and `prefs reset` change what every key and client of your account may spend, so they need a key with the `keys:manage` scope (the **Everything my role allows** preset); a **Convert only** key gets `forbidden`.
 
 Convert a local PDF:
 

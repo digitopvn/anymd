@@ -8,7 +8,7 @@ Guide for AI coding agents working in this repository. anymd.cc converts any URL
 - Cloudflare D1 (with FTS5), KV, R2, Vectorize, Workers AI, rate-limit bindings.
 - Conversion: the `src/convert/web.ts` extractor + linkedom, turndown; Workers AI `toMarkdown` for files.
 - Tailwind CSS v4; client islands bundled with esbuild; vitest for tests.
-- MCP: `@modelcontextprotocol/sdk`, OAuth via `@cloudflare/workers-oauth-provider`. Billing: Polar.sh on production, Creem.io on staging, picked by `BILLING_PROVIDER`.
+- MCP: a hand-written JSON-RPC protocol layer in `src/mcp/` (no SDK dependency) that serves the stateless 2026-07-28 protocol and 2025-era clients (`initialize`, `ping`, batches) from one endpoint; OAuth via `@cloudflare/workers-oauth-provider`. Billing: Polar.sh on production, Creem.io on staging, picked by `BILLING_PROVIDER`.
 
 Bindings, vars and secrets are typed in `src/env.ts`; per-environment values in `wrangler.jsonc`.
 

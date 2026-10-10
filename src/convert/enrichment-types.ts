@@ -1,11 +1,20 @@
 import { z } from 'zod';
+import { READING_LIMITS, type ReadingLimitKey } from '../lib/reading-options';
 
+const bounded = (key: ReadingLimitKey) => z.number().int().min(READING_LIMITS[key].min).max(READING_LIMITS[key].max);
+
+/**
+ * Per-request conversion options shared by REST, MCP and the URL API. Every field is optional:
+ * an omitted field falls back to the caller's saved reading preference, then the safe default.
+ */
 export const enrichmentOptions = {
-  includeComments: z.boolean().optional(),
-  analyzeImages: z.boolean().optional(),
-  maxComments: z.number().int().min(1).max(1000).optional(),
-  maxImages: z.number().int().min(1).max(20).optional(),
-  maxCredits: z.number().int().min(1).max(1000).optional(),
+  expandThread: z.boolean().optional().describe('Expand the rooted same-author X thread (extra credits, account required)'),
+  maxThreadPosts: bounded('maxThreadPosts').optional().describe('Maximum thread posts including the requested post (1-100, default 20)'),
+  includeComments: z.boolean().optional().describe('Retrieve comments and replies (extra credits, account required)'),
+  analyzeImages: z.boolean().optional().describe('OCR and describe article images (extra credits, account required)'),
+  maxComments: bounded('maxComments').optional().describe('Maximum comments including replies (1-1000, default 100)'),
+  maxImages: bounded('maxImages').optional().describe('Maximum analyzed article images (1-20, default 10)'),
+  maxCredits: bounded('maxCredits').optional().describe('Credit cap for this request (1-1000, default 100)'),
 };
 export const EnrichmentOptionsSchema = z.object(enrichmentOptions);
 export type EnrichmentOptions = z.infer<typeof EnrichmentOptionsSchema>;

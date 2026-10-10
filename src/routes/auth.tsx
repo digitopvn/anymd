@@ -2,8 +2,8 @@
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { createSession, createUser, destroySession, getUserByEmail, hashPassword, SESSION_COOKIE, SESSION_TTL_MS, verifyPassword } from '../auth/identity';
-import { capScopes } from '../auth/roles';
-import { beginSso, completeSso, enabledSsoProviders, isSsoProvider, SSO_ERRORS, SSO_STATE_COOKIE, SSO_STATE_TTL, SsoError, type SsoErrorCode, type SsoState } from '../auth/sso';
+import { OAUTH_GRANT_VERSION, oauthConsentScopes } from '../auth/roles';
+import { beginSso, completeSso, enabledSsoProviders, isSsoProvider, SSO_ERRORS, SSO_STATE_COOKIE, SSO_STATE_TTL, SsoError, SUSPENDED_MESSAGE, type SsoErrorCode, type SsoState } from '../auth/sso';
 import type { AppBindings } from '../env';
 import { resetEmail, sendEmail, welcomeEmail } from '../lib/email';
 import { randomToken, sha256 } from '../lib/util';
@@ -58,6 +58,8 @@ authRoutes.post('/login', async (c) => {
   if (!user || !(await verifyPassword(f.password ?? '', user.password_hash))) {
     return renderPage(c, { title: 'Log in', path: '/login', ...noindex }, <LoginPage next={next} email={email} providers={providers} error="Email or password is incorrect." />, 401);
   }
+  // Checked after the password so the message does not reveal which emails have accounts.
+  if (user.status === 'suspended') return renderPage(c, { title: 'Log in', path: '/login', ...noindex }, <LoginPage next={next} email={email} providers={providers} error={SUSPENDED_MESSAGE} />, 403);
   await startSession(c, user.id);
   return c.redirect(next);
 });
@@ -171,6 +173,7 @@ authRoutes.get('/api/auth/oauth/:provider/callback', async (c) => {
   if (!code) return ssoFail(c, 'failed', saved.next);
   try {
     const { user, created } = await completeSso(c.env, provider, code, saved.verifier);
+    if (user.status === 'suspended') return ssoFail(c, 'suspended', saved.next);
     await startSession(c, user.id);
     if (created) {
       const mail = welcomeEmail(c.env, user.name);
@@ -199,13 +202,14 @@ authRoutes.get('/oauth/authorize', async (c) => {
   }
   const client = await c.env.OAUTH_PROVIDER.lookupClient(authRequest.clientId);
   if (!client) return renderMessage(c, 400, 'Unknown client', 'This MCP client is not registered. Reconnect it from your agent.');
-  const scopes = capScopes(user.role, authRequest.scope.length ? authRequest.scope : null);
+  // Least privilege: a client that asks for nothing gets the customer baseline, never the whole role.
+  const { granted, unavailable } = oauthConsentScopes(user.role, authRequest.scope);
   const { handle, headers } = await c.env.OAUTH_PROVIDER.beginConsent(authRequest);
   headers.forEach((v, k) => c.header(k, v, { append: true }));
   return renderPage(
     c,
     { title: 'Authorize MCP client', path: '/oauth/authorize', ...noindex },
-    <ConsentPage clientName={client.clientName || 'An MCP client'} clientUri={client.clientUri} scopes={scopes} state={handle} userEmail={user.email} role={user.role} />,
+    <ConsentPage clientName={client.clientName || 'An MCP client'} clientUri={client.clientUri} scopes={granted} unavailable={unavailable} requestedNothing={!authRequest.scope.length} state={handle} userEmail={user.email} role={user.role} />,
   );
 });
 
@@ -220,14 +224,15 @@ authRoutes.post('/oauth/authorize', async (c) => {
       return c.redirect(denied.redirectTo);
     }
     const approved = await c.env.OAUTH_PROVIDER.approveConsent(c.req.raw, f.state ?? '');
-    const scopes = capScopes(user.role, approved.request.scope.length ? approved.request.scope : null);
+    const { granted: scopes } = oauthConsentScopes(user.role, approved.request.scope);
     const client = await c.env.OAUTH_PROVIDER.lookupClient(approved.request.clientId);
     const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
       request: { ...approved.request, scope: scopes },
       userId: user.id,
       metadata: { clientName: client?.clientName ?? 'MCP client', grantedAt: Date.now() },
       scope: scopes,
-      props: { userId: user.id, scopes },
+      // `v` marks least-privilege consent; the MCP handler re-caps these scopes by role on every call.
+      props: { userId: user.id, scopes, clientId: approved.request.clientId, v: OAUTH_GRANT_VERSION },
     });
     approved.headers.forEach((v, k) => c.header(k, v, { append: true }));
     return c.redirect(redirectTo);

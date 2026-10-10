@@ -2,6 +2,8 @@ import { CREDIT_TABLE, LAUNCH_OFFER, PLANS, type Plan } from '../../billing/plan
 import type { Child } from 'hono/jsx';
 import { ECOSYSTEM, FAQ, FOUNDER, SITE } from '../../content/site';
 import { Icon } from './icons';
+import { ReadingOptionsFields } from './reading-options-fields';
+import { DEFAULT_READING_PREFERENCES, type ReadingPreferences } from '../../lib/reading-options';
 
 /** Inline link for the company names we credit in running copy. */
 export function BrandLink({ to, class: cls = '' }: { to: 'owner' | 'partner'; class?: string }) {
@@ -35,7 +37,12 @@ export function OfferBar() {
   );
 }
 
-export function Converter({ compact = false, autofocus = false }: { compact?: boolean; autofocus?: boolean }) {
+/**
+ * `reading` prefills the per-request panel when the server already knows the signed-in user's
+ * saved defaults (dashboard). Elsewhere the client loads them when the panel is opened. Only
+ * options the user changes are sent, so untouched fields keep following the saved defaults.
+ */
+export function Converter({ compact = false, autofocus = false, reading }: { compact?: boolean; autofocus?: boolean; reading?: { preferences: ReadingPreferences; saved: boolean } }) {
   const examples = [
     ['stephango.com/saw', 'Article'],
     ['developers.cloudflare.com/workers/', 'Docs page'],
@@ -67,18 +74,24 @@ export function Converter({ compact = false, autofocus = false }: { compact?: bo
         <button type="submit" class="btn btn-primary h-12 sm:w-auto" data-converter-submit>
           Convert <Icon name="arrow" size={16} />
         </button>
-        <details class="w-full px-3 py-2 text-sm">
+        <details class="w-full px-3 py-2 text-sm" data-reading-panel data-reading-source={reading ? (reading.saved ? 'saved' : 'default') : 'unknown'}>
           <summary class="cursor-pointer font-medium">Reading options & credit limit</summary>
-          <div class="mt-3 flex flex-wrap gap-4">
-            <label class="flex items-center gap-2"><input type="checkbox" name="includeComments" value="1" /> Include comments and replies</label>
-            <label class="flex items-center gap-2"><input type="checkbox" name="analyzeImages" value="1" /> Read text and details in images</label>
+          <p class="mt-2 text-muted" data-reading-status>
+            {reading
+              ? reading.saved
+                ? 'Prefilled from your saved reading defaults. Changes here apply to this conversion only.'
+                : 'You have no saved reading defaults: deep reading is off unless you turn it on. Changes here apply to this conversion only.'
+              : // Saved defaults are not known yet (loaded when the panel opens): describe the rule, not a state.
+                'Options you leave unchanged follow your saved reading defaults when signed in; without saved defaults deep reading is off. Changes here apply to this conversion only.'}{' '}
+            <a class="text-link" href="/dashboard/account#reading-defaults">Saved defaults</a> · <a class="text-link" href="/docs/billing">Prices</a>
+          </p>
+          <div class="mt-3">
+            <ReadingOptionsFields values={reading?.preferences ?? DEFAULT_READING_PREFERENCES} idPrefix={`convert-${crypto.randomUUID().slice(0, 8)}`} imagesName="images" />
           </div>
-          <div class="mt-3 flex flex-wrap gap-3">
-            <label>Max comments <input class="ml-1 w-20 rounded border p-1" name="maxComments" type="number" min="1" max="1000" value="100" /></label>
-            <label>Max images <input class="ml-1 w-20 rounded border p-1" name="maxImages" type="number" min="1" max="20" value="10" /></label>
-            <label>Max credits <input class="ml-1 w-20 rounded border p-1" name="maxCredits" type="number" min="1" max="1000" value="100" /></label>
-          </div>
-          <p class="mt-2 text-muted">Sign in for extra reading options. X threads expand automatically for accounts. Extra content uses credits; cached results are free. <a class="text-link" href="/docs/billing">See prices</a>.</p>
+          <p class="mt-2 text-xs text-muted">Deep reading needs an account. Cached results are free.</p>
+          <noscript>
+            <p class="mt-1 text-xs text-muted">Without JavaScript this form sends every option exactly as shown here, overriding your saved defaults for this conversion.</p>
+          </noscript>
         </details>
       </form>
       {compact ? null : (

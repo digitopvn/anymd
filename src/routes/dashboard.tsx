@@ -1,16 +1,18 @@
 /** Signed-in dashboard pages. Mutations are plain form POSTs so everything works without JS. */
 import { Hono } from 'hono';
-import { createApiKey, getUser, SESSION_COOKIE, type ApiKeyRow } from '../auth/identity';
+import { SESSION_COOKIE, type ApiKeyRow } from '../auth/identity';
 import { deleteCookie } from 'hono/cookie';
-import { requireUserPage, sameOriginWrites, type AppContext } from '../auth/middleware';
-import { KEY_PRESETS } from '../auth/roles';
+import { markVia, requireUserPage, sameOriginWrites, type AppContext } from '../auth/middleware';
 import { billingEnabled, createCheckout, customerPortalUrl, providerName } from '../billing/provider';
 import type { PlanId } from '../billing/plans';
 import type { AppBindings } from '../env';
 import { deleteAccount, documentsToMarkdown, exportDocuments } from '../lib/account';
 import { renderMarkdown } from '../lib/markdown';
+import { applyPreferencesPatch, getReadingPreferences, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences } from '../convert/reading-preferences';
+import type { ReadingLimitKey } from '../lib/reading-options';
 import { quotaState, monthStart } from '../lib/usage';
-import { getDocument, librarySummary, listDocuments } from '../library/store';
+import type { ReadingFormValues } from '../views/components/reading-options-fields';
+import { getDocument, librarySummary, listDocuments, listTags, normalizeTag } from '../library/store';
 import { searchForPrincipal, parseMode, usageSummary } from '../services';
 import {
   AccountPage,
@@ -24,11 +26,11 @@ import {
   TraceDetailPage,
   TracesPage,
   UsagePage,
-  type GrantView,
   type TraceRow,
 } from '../views/dashboard';
 import type { Child } from 'hono/jsx';
-import { activeKeyCount, keyLimit } from './api';
+import { activeKeyCount, createOwnKey, grantsOf, revokeOwnGrant, revokeOwnKey } from '../services/admin/credentials';
+import { AdminError } from '../services/admin/shared';
 import { formData, originOf, renderMessage, renderPage } from './shared';
 
 export const dashboardRoutes = new Hono<AppBindings>();
@@ -49,7 +51,7 @@ function shell(c: AppContext, current: string, title: string, children: Child, o
 
 dashboardRoutes.get('/', async (c) => {
   const user = c.get('user')!;
-  const [quota, lib, recent, month, keyCount] = await Promise.all([
+  const [quota, lib, recent, month, keyCount, reading] = await Promise.all([
     quotaState(c.env, user.id, user.plan),
     librarySummary(c.env, user.id),
     listDocuments(c.env, user.id, { limit: 6 }),
@@ -57,12 +59,13 @@ dashboardRoutes.get('/', async (c) => {
       .bind(user.id, monthStart())
       .first<{ conversions: number; errors: number | null }>(),
     activeKeyCount(c.env, user.id),
+    getReadingPreferences(c.env, user.id),
   ]);
   return shell(
     c,
     '/dashboard',
     `Hi, ${user.name?.split(' ')[0] || 'there'}`,
-    <OverviewPage user={user} quota={quota} docs={lib.docs} words={lib.words} recent={recent} month={{ conversions: month?.conversions ?? 0, errors: month?.errors ?? 0 }} keyCount={keyCount} origin={originOf(c)} />,
+    <OverviewPage user={user} quota={quota} docs={lib.docs} words={lib.words} recent={recent} month={{ conversions: month?.conversions ?? 0, errors: month?.errors ?? 0 }} keyCount={keyCount} origin={originOf(c)} reading={reading} />,
   );
 });
 
@@ -70,13 +73,21 @@ dashboardRoutes.get('/library', async (c) => {
   const user = c.get('user')!;
   const domain = c.req.query('domain') || undefined;
   const kind = c.req.query('kind') || undefined;
+  // Normalize like stored tags so the chip label and highlight match the filter that actually runs.
+  const tag = normalizeTag((c.req.query('tag') ?? '').slice(0, 40)) || undefined;
+  const before = Number(c.req.query('before')) || undefined;
   const limit = 30;
-  const [lib, docs] = await Promise.all([librarySummary(c.env, user.id), listDocuments(c.env, user.id, { limit, domain, kind, before: Number(c.req.query('before')) || undefined })]);
+  const [lib, docs, tags] = await Promise.all([
+    librarySummary(c.env, user.id),
+    listDocuments(c.env, user.id, { limit, domain, kind, tags: tag ? [tag] : undefined, before }),
+    // Tag counts scan the whole library; only the first page shows the chips.
+    before ? Promise.resolve([]) : listTags(c.env, user.id, 12),
+  ]);
   return shell(
     c,
     '/dashboard/library',
     'Library',
-    <LibraryPage docs={docs} domains={lib.domains} kinds={lib.kinds} filter={{ domain, kind }} nextCursor={docs.length === limit ? docs[docs.length - 1].created_at : null} total={lib.docs} />,
+    <LibraryPage docs={docs} domains={lib.domains} kinds={lib.kinds} tags={tags} filter={{ domain, kind, tag }} nextCursor={docs.length === limit ? docs[docs.length - 1].created_at : null} total={lib.docs} />,
   );
 });
 
@@ -128,20 +139,11 @@ dashboardRoutes.get('/traces/:id', async (c) => {
 
 // ─── API keys & connected apps ─────────────────────────────────────────────
 
-async function grantsFor(c: AppContext, userId: string): Promise<GrantView[]> {
-  try {
-    const { items } = await c.env.OAUTH_PROVIDER.listUserGrants(userId);
-    return items.map((g) => ({ id: g.id, clientName: String((g.metadata as { clientName?: string } | undefined)?.clientName ?? g.clientId), scopes: g.scope, createdAt: g.createdAt * (g.createdAt < 1e12 ? 1000 : 1) }));
-  } catch {
-    return [];
-  }
-}
-
 async function keysPage(c: AppContext, extra: { newKey?: string; error?: string } = {}, status = 200) {
   const user = c.get('user')!;
   const [{ results }, grants] = await Promise.all([
     c.env.DB.prepare('SELECT * FROM api_keys WHERE user_id = ? ORDER BY revoked_at IS NOT NULL, created_at DESC').bind(user.id).all<ApiKeyRow>(),
-    grantsFor(c, user.id),
+    grantsOf(c.env, user.id),
   ]);
   c.header('Cache-Control', 'no-store');
   return shell(c, '/dashboard/keys', 'API keys', <KeysPage keys={results} grants={grants} role={c.get('principal').role} newKey={extra.newKey} error={extra.error} />, { status });
@@ -149,26 +151,36 @@ async function keysPage(c: AppContext, extra: { newKey?: string; error?: string 
 
 dashboardRoutes.get('/keys', (c) => keysPage(c));
 
+// Key and grant changes go through the credentials service, which caps scopes, enforces the key limit and audits.
 dashboardRoutes.post('/keys', async (c) => {
+  markVia(c, 'web');
   const f = await formData(c);
-  const user = (await getUser(c.env, c.get('user')!.id))!;
   const name = (f.name ?? '').trim();
   if (!name) return keysPage(c, { error: 'Give the key a name so you can recognise it later.' }, 400);
-  if ((await activeKeyCount(c.env, user.id)) >= keyLimit(user.plan, user.role)) return keysPage(c, { error: 'Free accounts can have 2 active keys. Revoke one or upgrade to Pro.' }, 403);
-  const preset = KEY_PRESETS.find((p) => p.id === f.preset) ?? KEY_PRESETS[0];
-  const days = Number(f.expires_in_days) || null;
-  const { key } = await createApiKey(c.env, user, { name, scopes: preset.scopes, expiresInDays: days });
-  // The secret is shown exactly once, on this response.
-  return keysPage(c, { newKey: key }, 201);
+  try {
+    const { key } = await createOwnKey(c.env, c.get('principal'), { name, preset: f.preset || 'convert-only', expiresInDays: Number(f.expires_in_days) || undefined });
+    // The secret is shown exactly once, on this response.
+    return keysPage(c, { newKey: key }, 201);
+  } catch (err) {
+    if (!(err instanceof AdminError)) throw err;
+    const message = err.code === 'key_limit' ? 'Free accounts can have 2 active keys. Revoke one or upgrade to Pro.' : err.message;
+    return keysPage(c, { error: message }, err.status);
+  }
 });
 
 dashboardRoutes.post('/keys/:id/revoke', async (c) => {
-  await c.env.DB.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL').bind(Date.now(), c.req.param('id'), c.get('user')!.id).run();
+  markVia(c, 'web');
+  await revokeOwnKey(c.env, c.get('principal'), c.req.param('id')).catch((err) => {
+    if (!(err instanceof AdminError)) throw err;
+  });
   return c.redirect('/dashboard/keys');
 });
 
 dashboardRoutes.post('/grants/:id/revoke', async (c) => {
-  await c.env.OAUTH_PROVIDER.revokeGrant(decodeURIComponent(c.req.param('id')), c.get('user')!.id).catch(() => undefined);
+  markVia(c, 'web');
+  await revokeOwnGrant(c.env, c.get('principal'), c.req.param('id')).catch((err) => {
+    if (!(err instanceof AdminError)) console.error('grant revoke', err instanceof Error ? err.message : err);
+  });
   return c.redirect('/dashboard/keys');
 });
 
@@ -214,13 +226,54 @@ dashboardRoutes.post('/billing/portal', async (c) => {
 
 // ─── Account: export & delete ───────────────────────────────────────────────
 
-async function accountPage(c: AppContext, error?: string, status = 200) {
+async function accountPage(c: AppContext, error?: string, status = 200, reading?: { error: string; submitted: ReadingFormValues }) {
   const user = c.get('user')!;
-  const lib = await librarySummary(c.env, user.id);
-  return shell(c, '/dashboard/account', 'Account', <AccountPage user={user} docs={lib.docs} error={error} />, { status });
+  const [lib, stored] = await Promise.all([librarySummary(c.env, user.id), getReadingPreferences(c.env, user.id)]);
+  const saved = c.req.query('reading');
+  const notice = saved === 'saved' ? 'Reading defaults saved. They apply to new conversions that leave an option out.' : saved === 'reset' ? 'Reading defaults reset: deep reading is off.' : undefined;
+  c.header('Cache-Control', 'no-store');
+  return shell(c, '/dashboard/account', 'Account', <AccountPage user={user} docs={lib.docs} error={error} reading={{ stored, notice, error: reading?.error, submitted: reading?.submitted }} />, { status });
 }
 
 dashboardRoutes.get('/account', (c) => accountPage(c));
+
+/**
+ * Saves the account's reading defaults. A plain form: unchecked boxes mean off, and bounded
+ * numbers disabled in the browser (their toggle is off) keep their saved value.
+ */
+dashboardRoutes.post('/account/reading', async (c) => {
+  const user = c.get('user')!;
+  const principal = c.get('principal');
+  const f = await formData(c);
+  if (f.action === 'reset') {
+    await resetReadingPreferences(c.env, principal);
+    return c.redirect('/dashboard/account?reading=reset#reading-defaults', 303);
+  }
+  const toggles = {
+    expandThread: f.expandThread === '1',
+    includeComments: f.includeComments === '1',
+    keepImages: f.keepImages === '1',
+    analyzeImages: f.analyzeImages === '1',
+  };
+  const patch: Record<string, unknown> = { ...toggles };
+  const submittedNumbers: Partial<Record<ReadingLimitKey, string>> = {};
+  for (const key of ['maxThreadPosts', 'maxComments', 'maxImages', 'maxCredits'] as const) {
+    if (f[key] === undefined) continue;
+    submittedNumbers[key] = f[key];
+    patch[key] = f[key].trim() === '' ? f[key] : Number(f[key]);
+  }
+  const current = await getReadingPreferences(c.env, user.id);
+  try {
+    await saveReadingPreferences(c.env, principal, current, applyPreferencesPatch(current.preferences, patch));
+  } catch (err) {
+    if (err instanceof ReadingPreferencesError) {
+      // Re-render exactly what was submitted next to the error; nothing the user typed is lost.
+      return accountPage(c, undefined, 422, { error: `Reading defaults were not saved: ${err.message}.`, submitted: { ...current.preferences, ...toggles, ...submittedNumbers } });
+    }
+    throw err;
+  }
+  return c.redirect('/dashboard/account?reading=saved#reading-defaults', 303);
+});
 
 dashboardRoutes.get('/account/export', async (c) => {
   const user = c.get('user')!;
