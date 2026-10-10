@@ -34,6 +34,7 @@ const READING_PREFERENCE_PROPS: Record<string, Schema> = {
   maxImages: bounded('maxImages', 'Maximum analyzed images'),
   maxCredits: bounded('maxCredits', 'Credit cap per conversion'),
   downloadVideo: bool('Download the lowest-quality YouTube video to the anymd CDN in the background (extra credits, charged when ready)'),
+  analyzeVideo: bool('Also analyze each downloaded video with google/gemini-3.8-flash (needs downloadVideo; 10 + 20 credits per started minute, charged when ready; videos up to 60 minutes)'),
 };
 const READING_PREFERENCES_BODY = {
   ok: ref('ReadingPreferencesState'),
@@ -88,6 +89,8 @@ const OPS: Record<string, Record<string, Op>> = {
           maxComments: bounded('maxComments', 'Maximum comments including replies'),
           maxImages: bounded('maxImages', 'Maximum analyzed article images'),
           maxCredits: bounded('maxCredits', 'Maximum credits for this request; returns explicit partial results at the limit'),
+          downloadVideo: bool(`YouTube: download the lowest-quality video to the anymd CDN in the background; 20 credits when ready, outside maxCredits, requires account. ${PRECEDENCE}`),
+          analyzeVideo: bool(`YouTube: also analyze the downloaded video with google/gemini-3.8-flash (implies downloadVideo); 10 + 20 credits per started minute when ready, videos up to 60 minutes, outside maxCredits, requires account. ${PRECEDENCE}`),
           format: str('Response format', { enum: ['json', 'markdown'], default: 'json' }),
         },
         ['url'],
@@ -149,7 +152,7 @@ const OPS: Record<string, Record<string, Op>> = {
   '/videos/{id}': {
     get: {
       summary: 'Get a YouTube video download',
-      description: 'A background download started by a YouTube conversion when the account setting `downloadVideo` is on. Poll every 15–30 s (`Retry-After` is set while it runs) until `status` is `ready` (`cdn_url` is the lowest-quality MP4 on the anymd CDN) or `failed` (see `error`). Credits are charged only when ready.',
+      description: 'A background download started by a YouTube conversion with `downloadVideo` (request option or account setting). Poll every 15–30 s (`Retry-After` is set while it runs) until `status` is `ready` (`cdn_url` is the lowest-quality MP4 on the anymd CDN) or `failed` (see `error`). Credits are charged only when ready. When `analysis` is not null (`analyzeVideo`), keep polling until `analysis.status` is `ready` (`analysis.markdown`) or `failed`.',
       tag: 'Convert',
       scope: 'convert',
       params: [idParam('Video download')],
@@ -305,7 +308,7 @@ const SCHEMAS: Record<string, Schema> = {
     credits: int(),
     credit_breakdown: obj({ base: int(), thread: int(), comments: int(), images: int() }),
     reading_options: obj({
-      expandThread: bool(), maxThreadPosts: int(), includeComments: bool(), maxComments: int(), analyzeImages: bool(), maxImages: int(), maxCredits: int(), removeImages: bool(),
+      expandThread: bool(), maxThreadPosts: int(), includeComments: bool(), maxComments: int(), analyzeImages: bool(), maxImages: int(), maxCredits: int(), removeImages: bool(), downloadVideo: bool(), analyzeVideo: bool(),
       sources: { type: 'object', additionalProperties: str(undefined, { enum: ['request', 'preference', 'default'] }), description: 'Where each effective value came from' },
     }, [], 'Effective options after request > saved preference > safe default'),
     enrichment: obj({
@@ -323,13 +326,23 @@ const SCHEMAS: Record<string, Schema> = {
       reused: bool('An earlier job for the same video was returned instead of a new one'),
       reason: str('Why no job started: unavailable, quota_exceeded or internal (skipped only)'),
       credits: int(), quality: nullable(str()), cdn_url: nullable(str()), error: nullable(str()), check_url: str(),
-    }, [], 'YouTube reads only, when the account setting downloadVideo is on'),
+      analysis: nullable(ref('VideoAnalysis')),
+    }, [], 'YouTube reads only, when downloadVideo is on (request option or account setting)'),
   }),
+  VideoAnalysis: obj({
+    status: str(undefined, { enum: ['queued', 'running', 'ready', 'failed'] }),
+    model: str('The model that analyzes the video, e.g. google/gemini-3.8-flash'),
+    credits: int('10 + 20 per started minute of video, charged when ready; 0 otherwise'),
+    markdown: nullable(str('AI-generated summary, timeline, spoken content, on-screen text and visual details, once ready')),
+    error: nullable(str('Failure code, e.g. video_too_long, quota_exceeded, analysis_failed, download_failed')),
+  }, [], 'Present when analyzeVideo (request option or account setting) was on for this job; null otherwise'),
   VideoDownload: obj({
     id: str(), status: str(undefined, { enum: ['queued', 'downloading', 'ready', 'failed'] }), video_id: str(), source_url: str(),
     quality: nullable(str('e.g. 360p; "no audio" when only a video-only stream existed')), bytes: nullable(int()),
-    cdn_url: nullable(str('The MP4 on the anymd CDN, once ready')), credits: int('Charged when ready; 0 otherwise'),
-    error: nullable(str('Failure code, e.g. video_unavailable, video_too_large, provider_unavailable')), check_url: str(),
+    cdn_url: nullable(str('The MP4 on the anymd CDN, once ready')), duration_seconds: nullable(int('Video length, when the provider reports it')),
+    credits: int('Download credits, charged when ready; 0 otherwise'),
+    error: nullable(str('Failure code, e.g. video_unavailable, video_too_large, provider_unavailable')),
+    analysis: nullable(ref('VideoAnalysis')), check_url: str(),
     created_at: int(), updated_at: int(), completed_at: nullable(int()),
   }),
   DocumentSummary: obj({ id: str(), url: str(), title: str(), author: str(), description: str(), domain: str(), site: str(), image: str(), published: str(), language: str(), source_kind: str(), tags: str('Space-separated'), word_count: int(), embedded_chunks: int(), created_at: int(), updated_at: int() }),

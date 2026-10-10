@@ -25,11 +25,15 @@ const fields = {
   maxImages: boundedInt('maxImages'),
   maxCredits: boundedInt('maxCredits'),
   downloadVideo: flag('downloadVideo'),
+  analyzeVideo: flag('analyzeVideo'),
 };
 
 const IMAGE_CONFLICT = 'analyzeImages requires keepImages: image analysis reads the images the conversion keeps';
+const VIDEO_CONFLICT = 'analyzeVideo requires downloadVideo: video analysis reads the downloaded video';
 
-export const ReadingPreferencesSchema = z.strictObject(fields).refine((p) => !(p.analyzeImages && !p.keepImages), { error: IMAGE_CONFLICT, path: ['analyzeImages'] });
+export const ReadingPreferencesSchema = z.strictObject(fields)
+  .refine((p) => !(p.analyzeImages && !p.keepImages), { error: IMAGE_CONFLICT, path: ['analyzeImages'] })
+  .refine((p) => !(p.analyzeVideo && !p.downloadVideo), { error: VIDEO_CONFLICT, path: ['analyzeVideo'] });
 
 /** A partial update: omitted fields keep their saved value. Unknown keys are rejected. */
 export const ReadingPreferencesPatchSchema = z.strictObject(fields).partial();
@@ -58,7 +62,8 @@ export function applyPreferencesPatch(current: ReadingPreferences, patch: unknow
 
 /**
  * Stored JSON is read leniently but deterministically: a value outside today's bounds is clamped,
- * anything malformed falls back to the safe default, and image analysis without kept images is off.
+ * anything malformed falls back to the safe default, and image analysis without kept images (or
+ * video analysis without video download) is off.
  */
 export function normalizeStoredPreferences(raw: string | null | undefined): ReadingPreferences {
   let data: Record<string, unknown> = {};
@@ -69,7 +74,7 @@ export function normalizeStoredPreferences(raw: string | null | undefined): Read
     // Corrupt rows read as the safe default rather than failing every conversion.
   }
   const out: ReadingPreferences = { ...DEFAULT_READING_PREFERENCES };
-  for (const key of ['expandThread', 'includeComments', 'keepImages', 'analyzeImages', 'downloadVideo'] as const) {
+  for (const key of ['expandThread', 'includeComments', 'keepImages', 'analyzeImages', 'downloadVideo', 'analyzeVideo'] as const) {
     if (typeof data[key] === 'boolean') out[key] = data[key];
   }
   for (const key of Object.keys(READING_LIMITS) as ReadingLimitKey[]) {
@@ -77,6 +82,7 @@ export function normalizeStoredPreferences(raw: string | null | undefined): Read
     if (typeof value === 'number' && Number.isFinite(value)) out[key] = Math.min(READING_LIMITS[key].max, Math.max(READING_LIMITS[key].min, Math.round(value)));
   }
   if (out.analyzeImages && !out.keepImages) out.analyzeImages = false;
+  if (out.analyzeVideo && !out.downloadVideo) out.analyzeVideo = false;
   return out;
 }
 
@@ -189,6 +195,8 @@ export interface RequestReadingOptions {
   maxImages?: number;
   maxCredits?: number;
   removeImages?: boolean;
+  downloadVideo?: boolean;
+  analyzeVideo?: boolean;
 }
 
 export type OptionSource = 'request' | 'preference' | 'default';
@@ -202,6 +210,9 @@ export interface ResolvedReadingOptions {
   maxImages: number;
   maxCredits: number;
   removeImages: boolean;
+  /** YouTube reads only: background video download, and AI analysis of that video. */
+  downloadVideo: boolean;
+  analyzeVideo: boolean;
   /** Where each effective value came from, recorded in traces so charges are explainable. */
   sources: Record<Exclude<keyof ResolvedReadingOptions, 'sources'>, OptionSource>;
 }
@@ -216,7 +227,7 @@ export function resolveReadingOptions(request: RequestReadingOptions, preference
   const base = preferences ?? DEFAULT_READING_PREFERENCES;
   const fallback: OptionSource = preferences ? 'preference' : 'default';
   const sources = {} as ResolvedReadingOptions['sources'];
-  const pick = <K extends 'expandThread' | 'maxThreadPosts' | 'includeComments' | 'maxComments' | 'analyzeImages' | 'maxImages' | 'maxCredits'>(key: K): ReadingPreferences[K] => {
+  const pick = <K extends 'expandThread' | 'maxThreadPosts' | 'includeComments' | 'maxComments' | 'analyzeImages' | 'maxImages' | 'maxCredits' | 'downloadVideo' | 'analyzeVideo'>(key: K): ReadingPreferences[K] => {
     const explicit = request[key];
     sources[key] = explicit !== undefined ? 'request' : fallback;
     return (explicit !== undefined ? explicit : base[key]) as ReadingPreferences[K];
@@ -230,8 +241,21 @@ export function resolveReadingOptions(request: RequestReadingOptions, preference
     maxImages: pick('maxImages'),
     maxCredits: pick('maxCredits'),
     removeImages: request.removeImages ?? !base.keepImages,
+    downloadVideo: pick('downloadVideo'),
+    analyzeVideo: pick('analyzeVideo'),
     sources,
   };
+  // Video analysis reads the downloaded video: asking for analysis implies the download, an explicit
+  // "no download" turns a saved analysis off, and both explicit and conflicting are rejected.
+  if (resolved.analyzeVideo && !resolved.downloadVideo) {
+    if (sources.analyzeVideo === 'request' && sources.downloadVideo === 'request') {
+      throw new ConvertError('analyzeVideo requires downloadVideo: video analysis reads the downloaded video', 400, 'invalid_options');
+    }
+    if (sources.analyzeVideo === 'request') {
+      resolved.downloadVideo = true;
+      sources.downloadVideo = 'request';
+    } else resolved.analyzeVideo = false;
+  }
   sources.removeImages = request.removeImages !== undefined ? 'request' : fallback;
   if (resolved.analyzeImages && resolved.removeImages) {
     if (sources.analyzeImages === 'request' && sources.removeImages === 'request') {

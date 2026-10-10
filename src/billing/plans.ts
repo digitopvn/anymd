@@ -96,6 +96,17 @@ export const ANONYMOUS_DAILY_LIMIT = 50;
 export const ENRICHMENT_CREDITS = { threadPost: 1, commentBatch: 10, commentsPerBatch: 20, image: 5, socialPost: 10, videoDownload: 20 } as const;
 
 /**
+ * AI analysis of a downloaded video (Gemini 3.8 Flash reads about 5,500 input tokens per minute of
+ * video, about $0.0041, plus a bounded answer). Per started minute, so the price is known from the
+ * video length before the model runs; charged only when the analysis is ready.
+ */
+export const VIDEO_ANALYSIS_CREDITS = { base: 10, perMinute: 20 } as const;
+
+export function videoAnalysisCredits(durationSeconds: number): number {
+  return VIDEO_ANALYSIS_CREDITS.base + VIDEO_ANALYSIS_CREDITS.perMinute * Math.max(1, Math.ceil(durationSeconds / 60));
+}
+
+/**
  * One page of social search results per platform; empty or failed pages are free.
  * LinkedIn's provider costs about ten times more per search than the others.
  */
@@ -116,6 +127,7 @@ export const CREDIT_TABLE: { kind: string; label: string; credits: number }[] = 
   { kind: 'comments', label: 'Each started batch of 20 retrieved comments/replies', credits: ENRICHMENT_CREDITS.commentBatch },
   { kind: 'image-analysis', label: 'Each successfully analyzed article image', credits: ENRICHMENT_CREDITS.image },
   { kind: 'video_download', label: 'YouTube video stored on the anymd CDN (opt-in, charged when ready)', credits: ENRICHMENT_CREDITS.videoDownload },
+  { kind: 'video_analysis', label: `AI analysis of a stored YouTube video, per started minute (plus ${VIDEO_ANALYSIS_CREDITS.base} per video; opt-in, charged when ready)`, credits: VIDEO_ANALYSIS_CREDITS.perMinute },
   { kind: 'social-search', label: 'Social search: each page of X, Facebook, Instagram or Threads results', credits: SOCIAL_SEARCH_CREDITS.x },
   { kind: 'social-search-linkedin', label: 'Social search: each page of LinkedIn results', credits: SOCIAL_SEARCH_CREDITS.linkedin },
   { kind: 'search', label: 'Library search, reads, MCP reads', credits: 0 },

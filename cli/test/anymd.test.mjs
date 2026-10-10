@@ -251,8 +251,19 @@ describe('run: convert', () => {
     });
   });
 
+  test('forwards per-request YouTube video download and analysis', async () => {
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: { 'POST /api/v1/convert': () => jsonResponse({ markdown: '# Video' }) },
+    });
+    assert.equal(await h.exec(['convert', 'youtu.be/abc', '--download-video', '--analyze-video']), 0);
+    assert.deepEqual(JSON.parse(h.calls[0].body), { url: 'https://youtu.be/abc', format: 'markdown', downloadVideo: true, analyzeVideo: true });
+    assert.equal(await h.exec(['convert', 'youtu.be/abc', '--no-download-video']), 0);
+    assert.deepEqual(JSON.parse(h.calls[1].body), { url: 'https://youtu.be/abc', format: 'markdown', downloadVideo: false });
+  });
+
   test('requires a key for paid enrichment before making a request', async () => {
-    for (const option of ['--include-comments', '--analyze-images']) {
+    for (const option of ['--include-comments', '--analyze-images', '--download-video', '--analyze-video']) {
       const h = harness();
       assert.equal(await h.exec(['convert', 'example.com', option]), 1);
       assert.match(h.stderr, /^not_authenticated:/);
@@ -361,6 +372,27 @@ describe('run: convert', () => {
     assert.match(h.stdout, /check again/);
     assert.equal(await h.exec(['prefs', 'set', 'downloadVideo=on', '--json']), 0);
     assert.deepEqual(JSON.parse(h.calls[1].body), { downloadVideo: true });
+  });
+
+  test('video prints the AI analysis once ready and keeps polling while it runs', async () => {
+    const analysis = (status, markdown = null) => ({ status, model: 'google/gemini-3.8-flash', credits: status === 'ready' ? 30 : 0, markdown, error: null });
+    const job = (a) => ({ id: 'vid_1', status: 'ready', quality: '360p', cdn_url: 'https://cdn.anymd.test/v.mp4', credits: 20, error: null, analysis: a });
+    const h = harness({
+      env: { ANYMD_API_KEY: KEY },
+      routes: {
+        'GET /api/v1/videos/vid_1': () => jsonResponse(job(analysis('running'))),
+        'GET /api/v1/videos/vid_2': () => jsonResponse(job(analysis('ready', '## Summary\nA man at the zoo.'))),
+        'PUT /api/v1/account/reading-preferences': (call) => jsonResponse({ preferences: JSON.parse(call.body), saved: true }),
+      },
+    });
+    assert.equal(await h.exec(['video', 'vid_1']), 0);
+    assert.match(h.stdout, /analysis\s+running \(google\/gemini-3\.8-flash\)/);
+    assert.match(h.stdout, /check again/);
+    assert.equal(await h.exec(['video', 'vid_2']), 0);
+    assert.match(h.stdout, /ready \(google\/gemini-3\.8-flash, 30 credits\)/);
+    assert.match(h.stdout, /A man at the zoo/);
+    assert.equal(await h.exec(['prefs', 'set', 'analyzeVideo=on', '--json']), 0);
+    assert.deepEqual(JSON.parse(h.calls[2].body), { analyzeVideo: true });
   });
 
   test('prefs set and reset explain the keys:manage scope on 403', async () => {
