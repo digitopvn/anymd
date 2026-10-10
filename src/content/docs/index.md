@@ -25,7 +25,7 @@ The rest of these docs cover doing it from inside an agent, from code and from y
 | Give Claude, Cursor or my agent web context over MCP | [MCP server](/docs/mcp) |
 | Let in-browser agents use anymd.cc | [WebMCP](/docs/webmcp) |
 | Find something my agents read last month | [Library & search](/docs/library-search) |
-| Find public posts on X, Facebook, Instagram, Threads or LinkedIn | [Social search](/docs/social-search) |
+| Find public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them | [Social search](/docs/social-search) |
 | Know which sources have dedicated readers | [Supported sources](/docs/sources) |
 | Scope a key for CI or a teammate | [API keys & roles](/docs/api-keys-roles) |
 | Understand credits and plans | [Billing & credits](/docs/billing) |

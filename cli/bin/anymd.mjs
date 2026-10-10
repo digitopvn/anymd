@@ -14,7 +14,7 @@ export const VERSION = readVersion();
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
 const SEARCH_MODES = ['hybrid', 'bm25', 'fulltext', 'semantic'];
-const SOCIAL_PLATFORMS = ['x', 'facebook', 'instagram', 'threads', 'linkedin'];
+const SOCIAL_PLATFORMS = ['all', 'x', 'facebook', 'instagram', 'threads', 'linkedin'];
 const MIME_TYPES = {
   '.pdf': 'application/pdf',
   '.doc': 'application/msword',
@@ -345,7 +345,7 @@ export function formatSearchResults(results, colors = makeColors(false)) {
 }
 
 /** Social search results: author and date, the post text, then its link. */
-export function formatSocialResults(results, colors = makeColors(false)) {
+export function formatSocialResults(results, colors = makeColors(false), { showPlatform = false } = {}) {
   if (!results.length) return 'No results.\n';
   const width = String(results.length).length;
   const pad = ' '.repeat(width + 2);
@@ -359,7 +359,8 @@ export function formatSocialResults(results, colors = makeColors(false)) {
         .filter(([, n]) => typeof n === 'number')
         .map(([label, n]) => `${n} ${label}`)
         .join(' · ');
-      let block = `${String(index + 1).padStart(width)}. ${colors.bold(who)}${when ? colors.dim(`  ${when}`) : ''}${counts ? colors.dim(`  ${counts}`) : ''}\n`;
+      const tag = showPlatform && item.platform ? colors.dim(`[${item.platform}] `) : '';
+      let block = `${String(index + 1).padStart(width)}. ${tag}${colors.bold(who)}${when ? colors.dim(`  ${when}`) : ''}${counts ? colors.dim(`  ${counts}`) : ''}\n`;
       const text = truncate(oneLine(item.text ?? ''), 280);
       if (text) block += `${pad}${text}\n`;
       block += `${pad}${colors.cyan(item.url)}\n`;
@@ -574,7 +575,8 @@ async function cmdSocial(ctx, args) {
   if (ctx.flags.cursor) json.cursor = ctx.flags.cursor;
   const data = await readJson(await request(ctx, 'POST', '/api/v1/social/search', { json }));
   if (ctx.flags.json) return ctx.out(toJson(data));
-  ctx.out(formatSocialResults(pickArray(data, 'results'), ctx.colors));
+  ctx.out(formatSocialResults(pickArray(data, 'results'), ctx.colors, { showPlatform: platform === 'all' }));
+  for (const p of pickArray(data, 'platforms')) if (p?.error) ctx.err(`${p.platform} failed: ${p.error}\n`);
   const credits = typeof data?.credits === 'number' ? `${data.credits} credits` : '';
   ctx.err(`${credits}${data?.next_cursor ? `${credits ? ' · ' : ''}more: anymd social ${platform} ${JSON.stringify(query)} --cursor '${data.next_cursor}'` : ''}${credits || data?.next_cursor ? '\n' : ''}`);
 }
@@ -942,7 +944,8 @@ ${bold('Usage')}
   anymd search <query> [--mode hybrid] [--limit 10] [--json]
   anymd social <platform> <query> [--cursor c] [--json]
                                        Search public posts on ${SOCIAL_PLATFORMS.join(', ')}
-                                       (requires a key; 10 credits per page with results)
+                                       or all of them (requires a key; per page with results:
+                                       10 credits, LinkedIn 100, all = sum of platforms)
   anymd ls [--limit 20] [--domain x] [--tag a,b]
                                        List documents in your library (--tag: all tags must match)
   anymd get <id> [-o file]             Print a library document as Markdown

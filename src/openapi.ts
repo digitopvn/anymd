@@ -5,6 +5,7 @@ import { arr, bool, idParam, int, nullable, obj, ref, str, type Op, type Schema 
 import { DEFAULT_READING_PREFERENCES as READ_DEFAULTS, READING_LIMITS as LIMITS } from './lib/reading-options';
 import { SOCIAL_SEARCH_CREDITS } from './billing/plans';
 import { SOCIAL_PLATFORMS } from './convert/social-search-providers';
+import { SOCIAL_SEARCH_ALL_MAX, SOCIAL_SEARCH_TARGETS } from './convert/social-search';
 
 const ERROR_TEXT: Record<number, string> = {
   400: 'Bad request',
@@ -152,12 +153,12 @@ const OPS: Record<string, Record<string, Op>> = {
   '/social/search': {
     post: {
       summary: 'Search social media posts',
-      description: `Searches public posts on X, Facebook, Instagram, Threads or LinkedIn and returns normalized results. Requires an account. Each page that returns results costs ${SOCIAL_SEARCH_CREDITS} credits; empty pages and provider failures cost nothing. Pass \`next_cursor\` as \`cursor\` for the next page. Results are not saved to the library; convert a result URL to keep it.`,
+      description: `Searches public posts on X, Facebook, Instagram, Threads, LinkedIn, or all of them with \`platform: "all"\` (results merged newest first), and returns normalized results with a per-platform status. Requires an account. Each page that returns results costs ${SOCIAL_SEARCH_CREDITS.x} credits on X, Facebook, Instagram or Threads and ${SOCIAL_SEARCH_CREDITS.linkedin} on LinkedIn; \`all\` searches every platform at once and costs the sum for the platforms that returned results (at most ${SOCIAL_SEARCH_ALL_MAX}). Empty pages and provider failures cost nothing. Pass \`next_cursor\` as \`cursor\` for the next page. Searches appear in the dashboard history; they are not saved to the library, so convert a result URL to keep it.`,
       tag: 'Search',
       scope: 'convert',
       body: obj(
         {
-          platform: str('Platform to search', { enum: [...SOCIAL_PLATFORMS] }),
+          platform: str('Platform to search, or all of them', { enum: [...SOCIAL_SEARCH_TARGETS] }),
           query: str('Keywords, hashtags or a phrase (1-200 characters)', { examples: ['cloudflare workers'] }),
           cursor: str('next_cursor from the previous page'),
         },
@@ -329,7 +330,23 @@ const SCHEMAS: Record<string, Schema> = {
     stats: obj({ likes: nullable(int()), replies: nullable(int()), reposts: nullable(int()), views: nullable(int()) }),
     media: arr(str(), 'Up to 4 image or thumbnail URLs'),
   }),
-  SocialSearchResponse: obj({ platform: str(), query: str(), count: int(), results: arr(ref('SocialPost')), next_cursor: nullable(str()), credits: int(), trace_id: str(), duration_ms: int() }),
+  SocialPlatformStatus: obj({
+    platform: str(undefined, { enum: [...SOCIAL_PLATFORMS] }),
+    count: int('Results from this platform'),
+    credits: int('Credits charged for this platform'),
+    error: nullable(str('Why this platform failed; the other platforms still answer')),
+  }),
+  SocialSearchResponse: obj({
+    platform: str(undefined, { enum: [...SOCIAL_SEARCH_TARGETS] }),
+    query: str(),
+    count: int(),
+    results: arr(ref('SocialPost')),
+    next_cursor: nullable(str()),
+    credits: int(),
+    platforms: arr(ref('SocialPlatformStatus'), 'One entry per platform searched'),
+    trace_id: str(),
+    duration_ms: int(),
+  }),
   UsageEvent: obj({ id: str(), channel: str(), kind: str(), target: str(), status: str(), http_status: int(), credits: int(), duration_ms: int(), trace_id: nullable(str()), error: nullable(str()), created_at: int() }),
   Trace: obj({ id: str(), kind: str(), target: str(), status: str(), duration_ms: int(), spans: arr(obj({ name: str(), start: int(), duration: int(), meta: { type: 'object' } })), meta: { type: 'object' }, created_at: int() }),
   ApiKey: obj({ id: str(), name: str(), prefix: str(), scopes: arr(str()), created_at: int(), last_used_at: nullable(int()), expires_at: nullable(int()), revoked_at: nullable(int()) }),

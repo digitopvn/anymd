@@ -12,7 +12,7 @@ import { blockCatalog } from '../cms/blocks';
 import { applyPageOps, createPage, getPage, listPages, OpSchema, PageError, pageView, publishPage, TEMPLATES, unpublishPage } from '../cms/pages';
 import { createPost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
 import { runConversion } from '../convert/service';
-import { runSocialSearch, socialSearchInput, socialSearchPayload } from '../convert/social-search';
+import { runSocialSearch, SOCIAL_SEARCH_ALL_MAX, socialSearchInput, socialSearchPayload } from '../convert/social-search';
 import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError } from '../convert/types';
@@ -102,7 +102,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'search_social',
     title: 'Search social media',
-    description: `Search public posts on X, Facebook, Instagram, Threads or LinkedIn by keyword and return normalized results (url, author, text, published_at, stats). Costs ${SOCIAL_SEARCH_CREDITS} credits per page that returns results; empty pages are free. Pass next_cursor as cursor for the next page. Results are not saved; read one with read_url.`,
+    description: `Search public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them (platform "all", merged newest first) by keyword and return normalized results (platform, url, author, text, published_at, stats) plus a per-platform status. Each page that returns results costs ${SOCIAL_SEARCH_CREDITS.x} credits on X, Facebook, Instagram or Threads and ${SOCIAL_SEARCH_CREDITS.linkedin} on LinkedIn; "all" searches every platform at once and costs the sum for the platforms that returned results (at most ${SOCIAL_SEARCH_ALL_MAX}). Empty pages are free. Pass next_cursor as cursor for the next page. Searches are kept in the dashboard history, not the library; read a post with read_url.`,
     scope: 'convert',
     input: z.object(socialSearchInput),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },

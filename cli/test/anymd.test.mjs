@@ -187,7 +187,7 @@ describe('run: meta commands', () => {
     const h = harness();
     assert.equal(await h.exec(['--version']), 0);
     assert.equal(h.stdout, `${VERSION}\n`);
-    assert.equal(VERSION, '0.1.3');
+    assert.equal(VERSION, '0.1.4');
   });
 
   test('unknown command fails with a usage error', async () => {
@@ -712,6 +712,17 @@ describe('run: social search', () => {
     assert.equal(h.stderr, `10 credits · more: anymd social x "cloudflare workers" --cursor 'c2'\n`);
   });
 
+  test('all tags each post with its platform and reports failed platforms', async () => {
+    const payload = {
+      platform: 'all', query: 'q', count: 1, results: [{ ...post, platform: 'linkedin' }], next_cursor: null, credits: 100,
+      platforms: [{ platform: 'x', count: 0, credits: 0, error: null }, { platform: 'facebook', count: 0, credits: 0, error: 'upstream_error: down' }, { platform: 'linkedin', count: 1, credits: 100, error: null }],
+    };
+    const h = harness({ env: { ANYMD_API_KEY: KEY }, routes: { 'POST /api/v1/social/search': () => jsonResponse(payload) } });
+    assert.equal(await h.exec(['social', 'all', 'q']), 0);
+    assert.match(h.stdout, /^1\. \[linkedin\] @a/);
+    assert.equal(h.stderr, 'facebook failed: upstream_error: down\n100 credits\n');
+  });
+
   test('--json prints the raw payload and empty pages say so', async () => {
     const payload = { platform: 'threads', query: 'q', count: 0, results: [], next_cursor: null, credits: 0 };
     const h = harness({ env: { ANYMD_API_KEY: KEY }, routes: { 'POST /api/v1/social/search': () => jsonResponse(payload) } });
@@ -725,7 +736,7 @@ describe('run: social search', () => {
   test('validates the platform and requires a key before calling the API', async () => {
     const bad = harness({ env: { ANYMD_API_KEY: KEY } });
     assert.equal(await bad.exec(['social', 'myspace', 'q']), 1);
-    assert.match(bad.stderr, /platform must be one of x, facebook, instagram, threads, linkedin/);
+    assert.match(bad.stderr, /platform must be one of all, x, facebook, instagram, threads, linkedin/);
     const missing = harness({ env: { ANYMD_API_KEY: KEY } });
     assert.equal(await missing.exec(['social', 'x']), 1);
     assert.match(missing.stderr, /^usage:/);

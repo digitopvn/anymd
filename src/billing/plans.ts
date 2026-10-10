@@ -95,8 +95,11 @@ export const ANONYMOUS_DAILY_LIMIT = 50;
 /** Fixed prices for successful enrichment units; no charge for empty/failed units. */
 export const ENRICHMENT_CREDITS = { threadPost: 1, commentBatch: 10, commentsPerBatch: 20, image: 5, socialPost: 10 } as const;
 
-/** One page of social search results (X, Facebook, Instagram, Threads, LinkedIn); empty or failed pages are free. */
-export const SOCIAL_SEARCH_CREDITS = 10;
+/**
+ * One page of social search results per platform; empty or failed pages are free.
+ * LinkedIn's provider costs about ten times more per search than the others.
+ */
+export const SOCIAL_SEARCH_CREDITS = { x: 10, facebook: 10, instagram: 10, threads: 10, linkedin: 100 } as const;
 
 export function getPlan(id: string | null | undefined): Plan {
   return PLANS.find((p) => p.id === id) ?? PLANS[0];
@@ -112,7 +115,8 @@ export const CREDIT_TABLE: { kind: string; label: string; credits: number }[] = 
   { kind: 'thread', label: 'Each additional X thread post', credits: ENRICHMENT_CREDITS.threadPost },
   { kind: 'comments', label: 'Each started batch of 20 retrieved comments/replies', credits: ENRICHMENT_CREDITS.commentBatch },
   { kind: 'image-analysis', label: 'Each successfully analyzed article image', credits: ENRICHMENT_CREDITS.image },
-  { kind: 'social-search', label: 'Social search: each page of X, Facebook, Instagram, Threads or LinkedIn results', credits: SOCIAL_SEARCH_CREDITS },
+  { kind: 'social-search', label: 'Social search: each page of X, Facebook, Instagram or Threads results', credits: SOCIAL_SEARCH_CREDITS.x },
+  { kind: 'social-search-linkedin', label: 'Social search: each page of LinkedIn results', credits: SOCIAL_SEARCH_CREDITS.linkedin },
   { kind: 'search', label: 'Library search, reads, MCP reads', credits: 0 },
 ];
 
