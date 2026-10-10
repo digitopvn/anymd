@@ -1,7 +1,7 @@
 ---
 title: "Billing & credits"
 description: "How anymd credits work, what each source costs, plans, overage, offers, and how checkout and the customer portal work."
-updated: "2026-10-09"
+updated: "2026-10-10"
 ---
 
 anymd bills in **credits**, and you pay when your agents learn something new. Processing a new source uses credits by its complexity (one credit is one web page); reusing what your agents already know is free: cached reads, library search and MCP recall cost nothing.
@@ -18,6 +18,8 @@ anymd bills in **credits**, and you pay when your agents learn something new. Pr
 | YouTube video with transcript | 3 |
 | PDF, DOCX, XLSX, CSV and other documents (per file) | 3 |
 | Image (vision description) | 5 |
+| Social search: each page of results on X, Facebook, Instagram, Threads or LinkedIn | 10 |
+| Social search page with no results | 0 |
 | Library search, reads, MCP reads | 0 |
 | Cached result | 0 |
 | Failed conversion | 0 |

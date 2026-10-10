@@ -14,6 +14,8 @@ import { quotaState, monthStart } from '../lib/usage';
 import type { ReadingFormValues } from '../views/components/reading-options-fields';
 import { getDocument, librarySummary, listDocuments, listTags, normalizeTag } from '../library/store';
 import { searchForPrincipal, parseMode, usageSummary } from '../services';
+import { runSocialSearch, SOCIAL_PLATFORMS, type SocialPlatform } from '../convert/social-search';
+import { ConvertError } from '../convert/types';
 import {
   AccountPage,
   BillingPage,
@@ -23,6 +25,7 @@ import {
   LibraryPage,
   OverviewPage,
   SearchPage,
+  SocialSearchPage,
   TraceDetailPage,
   TracesPage,
   UsagePage,
@@ -118,6 +121,25 @@ dashboardRoutes.get('/search', async (c) => {
     }
   }
   return shell(c, '/dashboard/search', 'Search', <SearchPage q={q} mode={mode} fanout={fanout} decide={decide} result={result} error={error} />);
+});
+
+dashboardRoutes.get('/social', (c) => shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform="x" q="" result={null} />));
+
+dashboardRoutes.post('/social', async (c) => {
+  const form = await formData(c);
+  const platform: SocialPlatform = (SOCIAL_PLATFORMS as readonly string[]).includes(form.platform) ? (form.platform as SocialPlatform) : 'x';
+  const q = (form.q ?? '').trim().slice(0, 200);
+  try {
+    const result = await runSocialSearch(c.env, c.executionCtx, { platform, query: q, cursor: form.cursor, channel: 'web', principal: c.get('principal') });
+    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} result={result} />);
+  } catch (e) {
+    const known = e instanceof ConvertError;
+    const error = known && e.status < 500 ? e.message
+      : known && e.code === 'provider_unavailable' ? 'The search provider for this platform is unavailable right now. Try again later or pick another platform.'
+      : 'Search failed. Try again in a moment.';
+    if (!known) console.error('dashboard social search', e);
+    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} result={null} error={error} />, { status: known ? e.status : 500 });
+  }
 });
 
 dashboardRoutes.get('/usage', async (c) => {

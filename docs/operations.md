@@ -69,10 +69,11 @@ The adapter source files own the fixed provider hosts and paths; callers never s
 
 | Capability | Provider host | Secret |
 |---|---|---|
-| Facebook posts/comments | `facebook-scraper3.p.rapidapi.com` | `RAPIDAPI_KEY` |
-| Instagram posts/media/comments | `instagram-pro-and-cheap-api.p.rapidapi.com` | `RAPIDAPI_KEY` |
-| Threads posts/comments | `threads-api4.p.rapidapi.com` | `RAPIDAPI_KEY` |
-| LinkedIn posts/comments | `fresh-linkedin-profile-data.p.rapidapi.com` | `RAPIDAPI_KEY` |
+| X thread expansion, X social search (`/search.php`) | `twitter-api45.p.rapidapi.com` | `RAPIDAPI_KEY` |
+| Facebook posts/comments, social search (`/search/posts`) | `facebook-scraper3.p.rapidapi.com` | `RAPIDAPI_KEY` |
+| Instagram posts/media/comments, social search (`/v1/search/posts`) | `instagram-pro-and-cheap-api.p.rapidapi.com` | `RAPIDAPI_KEY` |
+| Threads posts/comments, social search (`/api/search/recent`, `/api/search/top`) | `threads-api4.p.rapidapi.com` | `RAPIDAPI_KEY` |
+| LinkedIn posts/comments, social search (`POST /search-posts`) | `fresh-linkedin-profile-data.p.rapidapi.com` | `RAPIDAPI_KEY` |
 | Article-image analysis | OpenRouter `https://openrouter.ai/api/v1/chat/completions` with `qwen/qwen3.6-35b-a3b` | `OPENROUTER_API_KEY` |
 
 ## Creem (staging)

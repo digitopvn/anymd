@@ -1,7 +1,7 @@
 ---
 title: "Documentation"
 description: "anymd is the web context layer for AI agents. Docs for MCP, the URL API, REST, CLI, WebMCP, library search and self-hosting."
-updated: "2026-09-26"
+updated: "2026-10-10"
 ---
 
 anymd is the web context layer for AI agents. It reads public web content, normalizes it into structured Markdown, remembers what your agents read in a private searchable library, and makes all of it available through MCP, the API and the CLI.
@@ -25,6 +25,7 @@ The rest of these docs cover doing it from inside an agent, from code and from y
 | Give Claude, Cursor or my agent web context over MCP | [MCP server](/docs/mcp) |
 | Let in-browser agents use anymd.cc | [WebMCP](/docs/webmcp) |
 | Find something my agents read last month | [Library & search](/docs/library-search) |
+| Find public posts on X, Facebook, Instagram, Threads or LinkedIn | [Social search](/docs/social-search) |
 | Know which sources have dedicated readers | [Supported sources](/docs/sources) |
 | Scope a key for CI or a teammate | [API keys & roles](/docs/api-keys-roles) |
 | Understand credits and plans | [Billing & credits](/docs/billing) |

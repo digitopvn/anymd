@@ -1,7 +1,7 @@
 ---
 title: "CLI"
 description: "The anymd command: convert URLs and files, search your library, manage pages and print MCP config from your terminal."
-updated: "2026-10-09"
+updated: "2026-10-10"
 ---
 
 `anymd` is a zero-dependency command-line client. It needs Node.js 18 or newer and nothing else.
@@ -43,6 +43,7 @@ Without a key the CLI works anonymously, with the same 50-per-day limit as the [
 | `anymd convert <url> [--json] [-o file] [--no-save] [--fresh] [enrichment flags]` | Convert with options |
 | `anymd file <path>` | Convert a local file (PDF, DOCX, XLSX, CSV, images…) |
 | `anymd search <query> [--mode hybrid] [--limit 10] [--json]` | Search your library |
+| `anymd social <x\|facebook\|instagram\|threads\|linkedin> <query> [--cursor c] [--json]` | Search public social posts (10 credits per page with results; see [Social search](/docs/social-search)) |
 | `anymd ls [--limit 20] [--domain x] [--tag a,b]` | List library documents (`--tag`: every tag must match) |
 | `anymd get <id>` | Print a saved document |
 | `anymd rm <id>` | Delete a saved document |
