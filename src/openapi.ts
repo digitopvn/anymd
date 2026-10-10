@@ -3,6 +3,8 @@ import { KEY_PRESETS } from './auth/roles';
 import { ADMIN_OPS, ADMIN_SCHEMAS } from './openapi-admin';
 import { arr, bool, idParam, int, nullable, obj, ref, str, type Op, type Schema } from './openapi-helpers';
 import { DEFAULT_READING_PREFERENCES as READ_DEFAULTS, READING_LIMITS as LIMITS } from './lib/reading-options';
+import { SOCIAL_SEARCH_CREDITS } from './billing/plans';
+import { SOCIAL_PLATFORMS } from './convert/social-search-providers';
 
 const ERROR_TEXT: Record<number, string> = {
   400: 'Bad request',
@@ -16,6 +18,7 @@ const ERROR_TEXT: Record<number, string> = {
   422: 'Validation failed',
   429: 'Rate limited — see Retry-After',
   502: 'The source site failed or blocked the fetch',
+  503: 'A required provider is unavailable or not configured',
 };
 
 const bounded = (key: keyof typeof LIMITS, description: string): Schema => int(description, { minimum: LIMITS[key].min, maximum: LIMITS[key].max, default: LIMITS[key].default });
@@ -145,6 +148,24 @@ const OPS: Record<string, Record<string, Op>> = {
     get: { summary: 'Get a document', tag: 'Library', scope: 'library:read', params: [idParam('Document'), { name: 'format', in: 'query', schema: str('`md` returns text/markdown', { enum: ['md'] }) }], ok: ref('Document'), errors: [404] },
     patch: { summary: 'Replace document tags', tag: 'Library', scope: 'library:write', params: [idParam('Document')], body: obj({ tags: arr(str(), 'Up to 20 tags') }, ['tags']), ok: ref('Ok'), errors: [404, 422] },
     delete: { summary: 'Delete a document', tag: 'Library', scope: 'library:write', params: [idParam('Document')], ok: ref('Ok'), errors: [404] },
+  },
+  '/social/search': {
+    post: {
+      summary: 'Search social media posts',
+      description: `Searches public posts on X, Facebook, Instagram, Threads or LinkedIn and returns normalized results. Requires an account. Each page that returns results costs ${SOCIAL_SEARCH_CREDITS} credits; empty pages and provider failures cost nothing. Pass \`next_cursor\` as \`cursor\` for the next page. Results are not saved to the library; convert a result URL to keep it.`,
+      tag: 'Search',
+      scope: 'convert',
+      body: obj(
+        {
+          platform: str('Platform to search', { enum: [...SOCIAL_PLATFORMS] }),
+          query: str('Keywords, hashtags or a phrase (1-200 characters)', { examples: ['cloudflare workers'] }),
+          cursor: str('next_cursor from the previous page'),
+        },
+        ['platform', 'query'],
+      ),
+      ok: ref('SocialSearchResponse'),
+      errors: [400, 402, 422, 502, 503],
+    },
   },
   '/search': {
     get: {
@@ -298,6 +319,17 @@ const SCHEMAS: Record<string, Schema> = {
   Document: { allOf: [ref('DocumentSummary'), obj({ markdown: str(), tags: arr(str()) })] },
   SearchHit: obj({ id: str(), title: str(), url: str(), domain: str(), source_kind: str(), snippet: str(), score: { type: 'number' }, matched: arr(str(), 'Retrievers that found it: bm25, fulltext, semantic'), created_at: int(), word_count: int() }),
   SearchResponse: obj({ query: str(), mode: str(), variants: arr(str(), 'Query variants when fan-out ran'), hits: arr(ref('SearchHit')), jev: nullable({ type: 'object', description: 'Jev tie-break decision, when it ran' }), took_ms: int(), gated: arr(str(), 'Features skipped because of the plan') }),
+  SocialPost: obj({
+    platform: str(undefined, { enum: [...SOCIAL_PLATFORMS] }),
+    id: str('Platform post id'),
+    url: str('Public post URL; convert it to read the full post'),
+    author: obj({ name: nullable(str()), handle: nullable(str()), url: nullable(str()) }),
+    text: str('Post text, up to 5,000 characters'),
+    published_at: nullable(str(undefined, { format: 'date-time' })),
+    stats: obj({ likes: nullable(int()), replies: nullable(int()), reposts: nullable(int()), views: nullable(int()) }),
+    media: arr(str(), 'Up to 4 image or thumbnail URLs'),
+  }),
+  SocialSearchResponse: obj({ platform: str(), query: str(), count: int(), results: arr(ref('SocialPost')), next_cursor: nullable(str()), credits: int(), trace_id: str(), duration_ms: int() }),
   UsageEvent: obj({ id: str(), channel: str(), kind: str(), target: str(), status: str(), http_status: int(), credits: int(), duration_ms: int(), trace_id: nullable(str()), error: nullable(str()), created_at: int() }),
   Trace: obj({ id: str(), kind: str(), target: str(), status: str(), duration_ms: int(), spans: arr(obj({ name: str(), start: int(), duration: int(), meta: { type: 'object' } })), meta: { type: 'object' }, created_at: int() }),
   ApiKey: obj({ id: str(), name: str(), prefix: str(), scopes: arr(str()), created_at: int(), last_used_at: nullable(int()), expires_at: nullable(int()), revoked_at: nullable(int()) }),
@@ -359,7 +391,7 @@ export function buildOpenApi(origin: string) {
     tags: [
       { name: 'Convert', description: 'URL and file conversion' },
       { name: 'Library', description: 'Saved documents' },
-      { name: 'Search', description: 'BM25, full-text, semantic and hybrid search' },
+      { name: 'Search', description: 'Library search (BM25, full-text, semantic, hybrid) and social media search' },
       { name: 'Usage', description: 'Credits, request logs and traces' },
       { name: 'Keys', description: 'API key management' },
       { name: 'Account', description: 'The authenticated account' },

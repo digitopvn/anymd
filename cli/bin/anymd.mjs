@@ -14,6 +14,7 @@ export const VERSION = readVersion();
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
 const SEARCH_MODES = ['hybrid', 'bm25', 'fulltext', 'semantic'];
+const SOCIAL_PLATFORMS = ['x', 'facebook', 'instagram', 'threads', 'linkedin'];
 const MIME_TYPES = {
   '.pdf': 'application/pdf',
   '.doc': 'application/msword',
@@ -69,7 +70,7 @@ const usageError = (message) =>
 const LONG_VALUE = {
   key: 'key', base: 'base', output: 'output', mode: 'mode', limit: 'limit',
   domain: 'domain', slug: 'slug', title: 'title', template: 'template', file: 'file',
-  tag: 'tag', add: 'add', remove: 'remove', set: 'set',
+  tag: 'tag', add: 'add', remove: 'remove', set: 'set', cursor: 'cursor',
   'max-comments': 'maxComments', 'max-images': 'maxImages', 'max-credits': 'maxCredits', 'max-thread-posts': 'maxThreadPosts',
 };
 const LONG_BOOL = {
@@ -343,6 +344,30 @@ export function formatSearchResults(results, colors = makeColors(false)) {
     .join('\n');
 }
 
+/** Social search results: author and date, the post text, then its link. */
+export function formatSocialResults(results, colors = makeColors(false)) {
+  if (!results.length) return 'No results.\n';
+  const width = String(results.length).length;
+  const pad = ' '.repeat(width + 2);
+  return results
+    .map((item, index) => {
+      const author = item.author ?? {};
+      const who = author.handle ? `@${author.handle}` : author.name || 'unknown';
+      const when = item.published_at ? item.published_at.slice(0, 10) : '';
+      const stats = item.stats ?? {};
+      const counts = [['likes', stats.likes], ['replies', stats.replies], ['reposts', stats.reposts], ['views', stats.views]]
+        .filter(([, n]) => typeof n === 'number')
+        .map(([label, n]) => `${n} ${label}`)
+        .join(' · ');
+      let block = `${String(index + 1).padStart(width)}. ${colors.bold(who)}${when ? colors.dim(`  ${when}`) : ''}${counts ? colors.dim(`  ${counts}`) : ''}\n`;
+      const text = truncate(oneLine(item.text ?? ''), 280);
+      if (text) block += `${pad}${text}\n`;
+      block += `${pad}${colors.cyan(item.url)}\n`;
+      return block;
+    })
+    .join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
@@ -537,6 +562,21 @@ async function cmdSearch(ctx, args) {
   const data = await readJson(await request(ctx, 'GET', '/api/v1/search', { query: { q, mode, limit } }));
   if (ctx.flags.json) return ctx.out(toJson(data));
   ctx.out(formatSearchResults(pickArray(data, 'results', 'items', 'hits'), ctx.colors));
+}
+
+async function cmdSocial(ctx, args) {
+  const [platform, ...words] = args;
+  const query = words.join(' ').trim();
+  if (!platform || !query) throw usageError(`usage: anymd social <${SOCIAL_PLATFORMS.join('|')}> <query> [--cursor c] [--json]`);
+  if (!SOCIAL_PLATFORMS.includes(platform)) throw usageError(`platform must be one of ${SOCIAL_PLATFORMS.join(', ')}`);
+  requireKey(ctx);
+  const json = { platform, query };
+  if (ctx.flags.cursor) json.cursor = ctx.flags.cursor;
+  const data = await readJson(await request(ctx, 'POST', '/api/v1/social/search', { json }));
+  if (ctx.flags.json) return ctx.out(toJson(data));
+  ctx.out(formatSocialResults(pickArray(data, 'results'), ctx.colors));
+  const credits = typeof data?.credits === 'number' ? `${data.credits} credits` : '';
+  ctx.err(`${credits}${data?.next_cursor ? `${credits ? ' · ' : ''}more: anymd social ${platform} ${JSON.stringify(query)} --cursor '${data.next_cursor}'` : ''}${credits || data?.next_cursor ? '\n' : ''}`);
 }
 
 async function cmdList(ctx, args) {
@@ -885,7 +925,7 @@ async function cmdPrefs(ctx, args) {
 }
 
 const COMMANDS = {
-  convert: cmdConvert, file: cmdFile, search: cmdSearch, ls: cmdList, get: cmdGet, rm: cmdRemove,
+  convert: cmdConvert, file: cmdFile, search: cmdSearch, social: cmdSocial, ls: cmdList, get: cmdGet, rm: cmdRemove,
   tag: cmdTag, tags: cmdTags,
   usage: cmdUsage, login: cmdLogin, logout: cmdLogout, whoami: cmdWhoami, pages: cmdPages, mcp: cmdMcp,
   prefs: cmdPrefs,
@@ -900,6 +940,9 @@ ${bold('Usage')}
   anymd convert <url> [--json] [-o file] [--no-save] [--fresh]
   anymd file <path> [--json] [-o file] Convert a local file (PDF, DOCX, XLSX, CSV, images…; max 20 MB)
   anymd search <query> [--mode hybrid] [--limit 10] [--json]
+  anymd social <platform> <query> [--cursor c] [--json]
+                                       Search public posts on ${SOCIAL_PLATFORMS.join(', ')}
+                                       (requires a key; 10 credits per page with results)
   anymd ls [--limit 20] [--domain x] [--tag a,b]
                                        List documents in your library (--tag: all tags must match)
   anymd get <id> [-o file]             Print a library document as Markdown
@@ -935,6 +978,7 @@ ${bold('Options')}
   --max-credits <n>   Hard request credit limit, 1–1000 (default 100)
   --mode <m>        Search mode: ${SEARCH_MODES.join(', ')}
   --limit <n>       Number of results
+  --cursor <c>      Next page of social search results (next_cursor of the previous page)
   --key <amd_…>     API key (overrides ANYMD_API_KEY and the config file)
   --base <url>      API base URL (default ${DEFAULT_BASE}; env ANYMD_BASE_URL)
   -h, --help        Show this help

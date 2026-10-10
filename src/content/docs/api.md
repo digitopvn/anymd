@@ -1,7 +1,7 @@
 ---
 title: "REST API"
 description: "The anymd REST API v1: authentication, errors, conversion, library, search, usage, keys and admin endpoints with curl, JavaScript and Python examples."
-updated: "2026-10-09"
+updated: "2026-10-10"
 ---
 
 Base URL: `https://anymd.cc/api/v1`. Everything is JSON unless noted.
@@ -67,6 +67,7 @@ Read `code`, not `message`. Messages are for humans and may change.
 | POST | `/library/:id/tags` | `library:write` |
 | DELETE | `/library/:id` | `library:write` |
 | GET, POST | `/search` | `library:read` |
+| POST | `/social/search` | `convert` (signed-in callers) |
 | GET | `/usage` | `usage:read` |
 | GET | `/traces`, `/traces/:id` | `usage:read` |
 | GET, POST | `/keys` | `keys:manage` |
@@ -324,6 +325,16 @@ const { hits } = await res.json();
 ```
 
 How the modes, fan-out and Jev work, plus the response shape: [Library & search](/docs/library-search).
+
+## Social search
+
+`POST /social/search` with `{ "platform": "x" | "facebook" | "instagram" | "threads" | "linkedin", "query": "…", "cursor"?: "…" }`. Scope: `convert`, and the caller must have an account. Costs 10 credits for each page that returns results; empty pages and provider failures are free. Pass `next_cursor` back as `cursor` for the next page.
+
+```bash
+curl https://anymd.cc/api/v1/social/search \n  -H "Authorization: Bearer $ANYMD_API_KEY" \n  -H "Content-Type: application/json" \n  -d '{"platform":"linkedin","query":"ai agents"}'
+```
+
+Response shape, errors and per-platform notes: [Social search](/docs/social-search).
 
 ## Usage and traces
 

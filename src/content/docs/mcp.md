@@ -1,7 +1,7 @@
 ---
 title: "MCP server"
 description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp so your agents can read the public web, remember it and search it."
-updated: "2026-10-09"
+updated: "2026-10-10"
 ---
 
 anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) server. It is the main way agents use anymd as their web context layer: connect it once and your agent can read public web content as structured Markdown, recall everything it has read from your private library, and (with the right scopes) manage pages.
@@ -86,6 +86,7 @@ Tools are listed only when the caller holds the scope they need.
 | `read_url` | `{ url, save?, fresh?, removeImages?, expandThread?, maxThreadPosts?, includeComments?, analyzeImages?, maxComments?, maxImages?, maxCredits? }` | `convert` (saving also needs `library:write`) |
 | `convert_url` | Same input as `read_url` | Same as `read_url`, kept under its original name for existing clients |
 | `search_library` | `{ query, mode?, limit? }` | `library:read` |
+| `search_social` | `{ platform, query, cursor? }` | `convert` (account required) |
 | `get_document` | `{ id }` | `library:read` |
 | `list_documents` | `{ limit?, domain?, tags?, before? }` | `library:read` |
 | `list_tags` | `{ limit? }` | `library:read` |
@@ -93,7 +94,7 @@ Tools are listed only when the caller holds the scope they need.
 | `delete_document` | `{ id }` | `library:write` |
 | `usage_summary` | `{}` | `usage:read` |
 
-`read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
+`search_social` searches public posts on X, Facebook, Instagram, Threads or LinkedIn and returns normalized results with a `next_cursor`; see [Social search](/docs/social-search). `read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
 
 `tag_document` adds and/or removes tags, or replaces them all with `set` (not combinable with `add`/`remove`; `[]` clears), and returns `{ id, tags }`. Tags are lowercased and keep only letters, digits, `-` and `_`; a document holds at most 20, and an edit past that fails with `too_many_tags` instead of dropping tags. `list_tags` returns `{ items: [{ tag, count }] }`, most used first. `list_documents` with `tags` keeps documents carrying every listed tag (whole-tag match, up to 10).
 
@@ -226,7 +227,7 @@ Things to ask an admin agent:
 
 ## Credits
 
-`read_url` (and `convert_url`) costs the same credits as any other conversion; cached reads are free. Reads such as `search_library`, `get_document` and `list_documents` are free. See [Billing & credits](/docs/billing).
+`read_url` (and `convert_url`) costs the same credits as any other conversion; cached reads are free. `search_social` costs 10 credits for each page that returns results; empty pages are free. Reads such as `search_library`, `get_document` and `list_documents` are free. See [Billing & credits](/docs/billing).
 
 ## Protocol versions
 

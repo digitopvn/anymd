@@ -25,7 +25,7 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 
 | Path | Owns |
 |---|---|
-| `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, bounded enrichment (`enrichment-types.ts`, `image-enrichment.ts`, `x-thread.ts`, and social adapters), reading preferences and option precedence (`reading-preferences.ts`; bounds and defaults shared with the browser in `src/lib/reading-options.ts`), file conversion (`document.ts`) |
+| `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, bounded enrichment (`enrichment-types.ts`, `image-enrichment.ts`, `x-thread.ts`, and social adapters), social search across X, Facebook, Instagram, Threads and LinkedIn (`social-search.ts` for validation, credits and usage; `social-search-providers.ts` for provider calls and result normalization), reading preferences and option precedence (`reading-preferences.ts`; bounds and defaults shared with the browser in `src/lib/reading-options.ts`), file conversion (`document.ts`) |
 | `src/library/` | Library persistence and embeddings (`store.ts`), search modes, fan-out and RRF (`search.ts`), Jev tie-break (`jev.ts`) |
 | `src/auth/` | Principal resolution, scope guards, same-origin writes (`middleware.ts`), users/sessions/API keys (`identity.ts`), role templates and key presets (`roles.ts`) |
 | `src/billing/` | Plans, credit table, offers (`plans.ts`); `provider.ts` routes checkout and portal to the provider named by `BILLING_PROVIDER`: Creem (`creem.ts`: checkout, portal, webhooks) or Polar (`polar.ts`: also usage ingest for metered overage) |
