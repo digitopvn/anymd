@@ -38,6 +38,14 @@ export interface Env {
   TYPESAFE_API_KEY?: string;
   VIDCAP_API_KEY?: string;
   GITHUB_TOKEN?: string;
+  /** Issues:write on the feedback repo only. Without it feedback submission is unavailable (503), nothing else changes. */
+  GITHUB_FEEDBACK_TOKEN?: string;
+  /** Optional feedback limits (integers as strings): per-account per day / per week, and the global publisher budget per hour. */
+  FEEDBACK_DAILY_LIMIT?: string;
+  FEEDBACK_WEEKLY_LIMIT?: string;
+  FEEDBACK_GLOBAL_HOURLY_LIMIT?: string;
+  /** Optional: accounts younger than this many hours have feedback held as needs_review instead of published. */
+  FEEDBACK_MIN_ACCOUNT_AGE_HOURS?: string;
   OPENROUTER_API_KEY?: string;
   RESEND_API_KEY?: string;
   RAPIDAPI_KEY?: string;
@@ -82,6 +90,7 @@ export type Scope =
   | 'library:read'
   | 'library:write'
   | 'usage:read'
+  | 'feedback:write'
   | 'keys:manage'
   | 'content:read'
   | 'content:write'

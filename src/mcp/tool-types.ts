@@ -23,6 +23,8 @@ export interface ToolDef {
   scope: Scope;
   input: z.ZodObject<z.ZodRawShape>;
   annotations?: ToolAnnotations;
+  /** Counts against the mutation rate limit even though the tool reaches the open world (e.g. publishing feedback). */
+  mutation?: boolean;
   // Arguments are validated against `input` before `run` is called; each tool narrows them itself.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   run: (args: any, t: ToolContext) => Promise<unknown>;
@@ -51,6 +53,7 @@ export const DESTRUCTIVE: ToolAnnotations = { readOnlyHint: false, destructiveHi
  * Tools that change anymd's own state count against the stricter MCP mutation bucket. Reading a URL
  * (open world) is metered by credits and the per-site budget instead.
  */
-export function isMutation(tool: Pick<ToolDef, 'annotations'>): boolean {
+export function isMutation(tool: Pick<ToolDef, 'annotations' | 'mutation'>): boolean {
+  if (tool.mutation) return true;
   return tool.annotations?.readOnlyHint !== true && tool.annotations?.openWorldHint !== true;
 }

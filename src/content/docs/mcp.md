@@ -79,6 +79,15 @@ Any client that speaks Streamable HTTP can use the same shape: URL `https://anym
 
 Tools are listed only when the caller holds the scope they need.
 
+### Feedback
+
+| Tool | Input | Needs |
+|---|---|---|
+| `submit_feedback` | `{ type, title, description, steps_to_reproduce?, expected_behavior?, actual_behavior?, reference_url?, context_page?, confirm_public, idempotency_key }` | `feedback:write` |
+| `list_my_feedback` | `{ limit? }` | `feedback:write` |
+
+`submit_feedback` publishes a public GitHub issue and cannot be undone: call it only when your user asked to send feedback and approved the text. See [Send feedback](/docs/feedback).
+
 ### Conversion and library
 
 | Tool | Input | Needs |

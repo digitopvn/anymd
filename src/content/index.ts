@@ -32,6 +32,7 @@ import docsKeys from './docs/api-keys-roles.md';
 import docsPages from './docs/page-builder.md';
 import docsBilling from './docs/billing.md';
 import docsSelfHost from './docs/self-host.md';
+import docsFeedback from './docs/feedback.md';
 
 export interface BlogPost {
   slug: string;
@@ -113,6 +114,7 @@ export const DOCS_PAGES: ContentPage[] = [
   contentPage('api-keys-roles', docsKeys),
   contentPage('billing', docsBilling),
   contentPage('self-host', docsSelfHost),
+  contentPage('feedback', docsFeedback),
 ];
 
 /** Operator guide for the page builder. Served inside /admin only, so it stays out of docs, sitemap and llms.txt. */

@@ -24,6 +24,7 @@ import { AdminError } from '../services/admin/shared';
 import { ACCOUNT_TOOLS } from './account-tools';
 import { ADMIN_TOOLS } from './admin-tools';
 import { CMS_PARITY_TOOLS } from './cms-parity-tools';
+import { FEEDBACK_TOOLS } from './feedback-tools';
 import {
   isModernRequest,
   LEGACY_VERSIONS,
@@ -343,7 +344,7 @@ const TOOLS: ToolDef[] = [
 // ─── Admin control plane, account and CMS parity tools ──────────────────────
 // Defined in their own modules; appended after the core tools so existing tool order is unchanged.
 
-const ALL_TOOLS: ToolDef[] = [...TOOLS, ...CMS_PARITY_TOOLS, ...ACCOUNT_TOOLS, ...ADMIN_TOOLS];
+const ALL_TOOLS: ToolDef[] = [...TOOLS, ...CMS_PARITY_TOOLS, ...ACCOUNT_TOOLS, ...FEEDBACK_TOOLS, ...ADMIN_TOOLS];
 const TOOL_BY_NAME = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 const inputSchemas = new Map(ALL_TOOLS.map((t) => [t.name, z.toJSONSchema(t.input, { io: 'input' })]));
 

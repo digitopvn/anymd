@@ -40,6 +40,7 @@ Code review checklist for anymd. Check the sections your change touches; securit
 - [ ] Tokens and keys are stored as SHA-256 hashes; full API keys are returned once.
 - [ ] Data sent to third parties is minimised (Jev masks emails and key-like strings; fan-out sends only the query).
 - [ ] New secrets are optional in `src/env.ts` and the feature degrades gracefully without them.
+- [ ] Feedback (`src/services/feedback.ts`) stays consent-gated: nothing is published without `confirm_public`, secrets are blocked before storage, and the repo and label are constants.
 
 ## Correctness and contracts
 

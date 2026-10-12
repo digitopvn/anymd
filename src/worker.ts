@@ -25,6 +25,7 @@ import { convertRoutes } from './routes/convert';
 import { dashboardRoutes } from './routes/dashboard';
 import { publicRoutes } from './routes/public';
 import { renderMessage } from './routes/shared';
+import { processPendingFeedback } from './services/feedback';
 import { recordAudit } from './services/admin/audit';
 
 export const app = new Hono<AppBindings>();
@@ -217,5 +218,9 @@ export default {
   /** Background YouTube video downloads (see `src/convert/youtube-video.ts`). */
   async queue(batch: MessageBatch<VideoJobMessage>, env: Env): Promise<void> {
     await handleVideoQueue(batch, env);
+  },
+  /** Settles feedback waiting on GitHub (rate limits, lost responses); see `src/services/feedback.ts`. */
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(processPendingFeedback(env).then(() => undefined, (err) => console.error('feedback retry failed', err instanceof Error ? err.message : String(err))));
   },
 } satisfies ExportedHandler<Env, VideoJobMessage>;

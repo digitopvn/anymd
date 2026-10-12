@@ -1,7 +1,7 @@
 import type { RoleName, Scope } from '../env';
 
 /** Scopes every customer account holds. Anything outside this set is "elevated" (staff) access. */
-const CUSTOMER: Scope[] = ['convert', 'library:read', 'library:write', 'usage:read', 'keys:manage'];
+const CUSTOMER: Scope[] = ['convert', 'library:read', 'library:write', 'usage:read', 'keys:manage', 'feedback:write'];
 const CONTENT_READ: Scope[] = ['content:read', 'pages:read'];
 const CONTENT_WRITE: Scope[] = ['content:write', 'pages:write'];
 const CONTENT_PUBLISH: Scope[] = ['content:publish', 'pages:publish'];
@@ -54,9 +54,11 @@ export const ALL_SCOPES: Scope[] = ROLE_TEMPLATES.owner.scopes;
 
 /**
  * Scopes shown as elevated on the consent screen: everything that reaches other users' data or
- * site-wide state, plus `keys:manage`, which manages long-lived credentials of the account.
+ * site-wide state, plus `keys:manage`, which manages long-lived credentials of the account, and
+ * `feedback:write`, which publishes a permanent public GitHub issue and so is never granted silently
+ * (grants and keys made before it existed never hold it).
  */
-export const ELEVATED_SCOPES: ReadonlySet<Scope> = new Set([...ALL_SCOPES.filter((s) => !CUSTOMER.includes(s)), 'keys:manage']);
+export const ELEVATED_SCOPES: ReadonlySet<Scope> = new Set([...ALL_SCOPES.filter((s) => !CUSTOMER.includes(s)), 'keys:manage', 'feedback:write']);
 
 /** Admin control-plane scopes (everything outside customer and content work). */
 export const ADMIN_SCOPES: ReadonlySet<Scope> = new Set([...ADMIN_READ, ...ADMIN_WRITE, ...OWNER_ONLY]);
@@ -73,6 +75,7 @@ export const SCOPE_LABELS: Record<Scope, string> = {
   'library:read': 'Read and search your library',
   'library:write': 'Save and delete library documents',
   'usage:read': 'Read your usage and traces',
+  'feedback:write': 'Publish product feedback as a public GitHub issue (permanent, visible to everyone)',
   'keys:manage': 'Manage your API keys, connected apps and saved reading defaults',
   'content:read': 'Read blog posts',
   'content:write': 'Write blog posts',
@@ -100,6 +103,7 @@ export const SCOPE_LABELS: Record<Scope, string> = {
 export const KEY_PRESETS: { id: string; label: string; scopes: Scope[] }[] = [
   { id: 'convert-only', label: 'Convert only', scopes: ['convert'] },
   { id: 'library', label: 'Convert + library (agents)', scopes: ['convert', 'library:read', 'library:write'] },
+  { id: 'feedback', label: 'Product feedback (public GitHub issues)', scopes: ['feedback:write'] },
   { id: 'read-only', label: 'Read-only', scopes: ['library:read', 'usage:read'] },
   { id: 'content-editor', label: 'Content editor (AI CMS)', scopes: ['content:read', 'content:write', 'content:publish', 'pages:read', 'pages:write', 'pages:publish'] },
   { id: 'admin-read-only', label: 'Admin read-only (monitoring agent)', scopes: [...ADMIN_READ, ...CONTENT_READ] },

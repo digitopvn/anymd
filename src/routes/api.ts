@@ -42,6 +42,7 @@ import { newId } from '../lib/util';
 import { convertPayload, searchForPrincipal, usageSummary } from '../services';
 import { buildOpenApi } from '../openapi';
 import { createOwnKey, listOwnKeys, revokeOwnKey } from '../services/admin/credentials';
+import { FeedbackDraftSchema, FeedbackError, FeedbackInputSchema, getFeedback, listFeedback, previewFeedback, submitFeedback, type FeedbackChannel } from '../services/feedback';
 import { getOwnTrace, listOwnTraces } from '../services/admin/observability';
 import { AdminError } from '../services/admin/shared';
 import { adminControlPlane } from './api-admin-control-plane';
@@ -70,6 +71,11 @@ api.notFound((c) => apiError(c, 404, 'not_found', `No route for ${c.req.method} 
 export function handleApiError(c: AppContext, err: unknown) {
   if (err instanceof AdminError) {
     if (err.status === 429) c.header('Retry-After', '60');
+    return apiError(c, err.status, err.code, err.message, err.details !== undefined ? { details: err.details } : {});
+  }
+  if (err instanceof FeedbackError) {
+    if (err.retryAfter) c.header('Retry-After', String(err.retryAfter));
+    c.header('Cache-Control', 'no-store');
     return apiError(c, err.status, err.code, err.message, err.details !== undefined ? { details: err.details } : {});
   }
   if (err instanceof PageError) return apiError(c, err.status, err.code, err.message, err.details ? { details: err.details } : {});
@@ -164,6 +170,61 @@ api.put('/account/reading-preferences', requireAccount, requirePreferencesWriter
 api.delete('/account/reading-preferences', requireAccount, requirePreferencesWriter, async (c) => {
   c.header('Cache-Control', 'no-store');
   return c.json(preferencesBody(await resetReadingPreferences(c.env, c.get('principal'))));
+});
+
+// ─── Feedback ───────────────────────────────────────────────────────────────
+
+/** Product feedback becomes a public GitHub issue, so it needs its own explicit scope, never `convert`. */
+const feedbackWriter = requireScope('feedback:write');
+
+function feedbackChannel(c: AppContext): FeedbackChannel {
+  const channel = channelFor(c);
+  return channel === 'web' ? 'dashboard' : channel;
+}
+
+/** The Idempotency-Key header and the body field name the same key; both present must agree. */
+async function feedbackBody(c: AppContext): Promise<Record<string, unknown>> {
+  const raw = await c.req.json().catch(() => {
+    throw Object.assign(new Error('Body must be JSON'), { status: 400, code: 'invalid_json' });
+  });
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Object.assign(new Error('Body must be a JSON object'), { status: 400, code: 'invalid_json' });
+  const input = raw as Record<string, unknown>;
+  const header = c.req.header('Idempotency-Key')?.trim();
+  if (header) {
+    if (input.idempotency_key !== undefined && input.idempotency_key !== header) throw Object.assign(new Error('Idempotency-Key header and idempotency_key field differ'), { status: 400, code: 'idempotency_key_mismatch' });
+    input.idempotency_key = header;
+  }
+  return input;
+}
+
+api.post('/feedback/preview', feedbackWriter, async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const input = await feedbackBody(c);
+  const draft = FeedbackDraftSchema.parse(input);
+  const key = typeof input.idempotency_key === 'string' ? input.idempotency_key : undefined;
+  const { feedback_id, ...issue } = await previewFeedback(me(c), draft, feedbackChannel(c), key);
+  return c.json({ feedback_id, ...issue });
+});
+
+api.post('/feedback', feedbackWriter, async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const input = FeedbackInputSchema.parse(await feedbackBody(c));
+  const out = await submitFeedback(c.env, c.get('principal'), input, feedbackChannel(c));
+  if (out.replayed) c.header('Idempotent-Replayed', 'true');
+  if (out.http === 202 && out.retryAfter) c.header('Retry-After', String(out.retryAfter));
+  return c.json(out.record, out.http);
+});
+
+api.get('/feedback', feedbackWriter, async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const limit = Number(c.req.query('limit') ?? 20);
+  const before = Number(c.req.query('before'));
+  return c.json(await listFeedback(c.env, me(c).userId, { limit: Number.isFinite(limit) ? limit : 20, before: Number.isFinite(before) && before > 0 ? before : undefined }));
+});
+
+api.get('/feedback/:id', feedbackWriter, async (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(await getFeedback(c.env, me(c).userId, c.req.param('id')));
 });
 
 // ─── Convert ────────────────────────────────────────────────────────────────

@@ -76,6 +76,8 @@ Read `code`, not `message`. Messages are for humans and may change.
 | GET | `/me` | any signed-in caller |
 | GET | `/account/reading-preferences` | `convert` (signed-in callers) |
 | PUT, DELETE | `/account/reading-preferences` | `keys:manage` for API keys and OAuth clients; any signed-in session |
+| POST | `/feedback/preview`, `/feedback` | `feedback:write` ([Send feedback](/docs/feedback)) |
+| GET | `/feedback`, `/feedback/:id` | `feedback:write` |
 | POST | `/billing/checkout`, `/billing/portal` | browser session |
 | * | `/admin/pages…`, `/admin/blocks`, `/admin/templates` | `pages:*` (admins: [builder guide](/admin/docs/page-builder)) |
 | * | `/admin/posts…` | `content:*` |
