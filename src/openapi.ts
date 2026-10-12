@@ -6,6 +6,7 @@ import { DEFAULT_READING_PREFERENCES as READ_DEFAULTS, READING_LIMITS as LIMITS 
 import { SOCIAL_SEARCH_CREDITS } from './billing/plans';
 import { SOCIAL_PLATFORMS } from './convert/social-search-providers';
 import { SOCIAL_SEARCH_ALL_MAX, SOCIAL_SEARCH_TARGETS } from './convert/social-search';
+import { FEEDBACK_LIMITS, FEEDBACK_TYPES } from './services/feedback';
 
 const ERROR_TEXT: Record<number, string> = {
   400: 'Bad request',
@@ -65,6 +66,52 @@ const OPS: Record<string, Record<string, Op>> = {
       tag: 'Account',
       scope: 'keys:manage',
       ...READING_PREFERENCES_BODY,
+    },
+  },
+  '/feedback': {
+    post: {
+      summary: 'Submit product feedback (creates a public GitHub issue)',
+      description:
+        'Publishes feedback about anymd itself as a PERMANENT, PUBLIC GitHub issue on digitopvn/anymd with the `ai-handle` label. The repository and label are fixed server-side. Requires `confirm_public: true` and a stable `idempotency_key` (or the `Idempotency-Key` header; both must match): a retry with the same key and content never creates a second issue, a different payload under the same key is 409. **201** only once GitHub created and validated the issue; **202** when it is persisted but not published yet (`pending`, retried automatically) or held as `needs_review`: never treat 202 as published. Reports containing credentials are refused (422 `secret_detected`); emails, private URLs and token-bearing query strings are redacted. Free; no credits. Not related to the search-result ratings of the library. Responses are `Cache-Control: no-store`.',
+      tag: 'Feedback',
+      scope: 'feedback:write',
+      params: [{ name: 'Idempotency-Key', in: 'header', schema: str('Same as the idempotency_key field') }],
+      body: ref('FeedbackInput'),
+      ok: ref('Feedback'),
+      status: 201,
+      errors: [400, 409, 422, 502, 503],
+    },
+    get: {
+      summary: 'List my feedback',
+      description: 'Your own submissions, newest first. Other accounts\' records are never visible.',
+      tag: 'Feedback',
+      scope: 'feedback:write',
+      params: [
+        { name: 'limit', in: 'query', schema: int(undefined, { minimum: 1, maximum: 100, default: 20 }) },
+        { name: 'before', in: 'query', schema: int('Cursor: `next_cursor` from the previous page') },
+      ],
+      ok: obj({ items: arr(ref('Feedback')), next_cursor: nullable(int()) }, ['items']),
+    },
+  },
+  '/feedback/preview': {
+    post: {
+      summary: 'Preview the public issue',
+      description: 'Returns the exact title and Markdown body that would be published, after redaction, without storing or sending anything. `blocked` lists fields holding a high-confidence credential that must be removed before submitting. Pass `idempotency_key` to get the exact Feedback ID.',
+      tag: 'Feedback',
+      scope: 'feedback:write',
+      body: ref('FeedbackDraft'),
+      ok: obj({ feedback_id: nullable(str()), title: str(), body: str(), repo: str(), label: str(), blocked: arr(obj({ field: str(), kinds: arr(str()) })), redacted: arr(str()) }, ['title', 'body', 'repo', 'label', 'blocked', 'redacted']),
+      errors: [422],
+    },
+  },
+  '/feedback/{id}': {
+    get: {
+      summary: 'Get one of my feedback submissions',
+      tag: 'Feedback',
+      scope: 'feedback:write',
+      params: [idParam('Feedback')],
+      ok: ref('Feedback'),
+      errors: [404],
     },
   },
   '/convert': {
@@ -284,6 +331,39 @@ const OPS: Record<string, Record<string, Op>> = {
 };
 
 const SCHEMAS: Record<string, Schema> = {
+  FeedbackDraft: obj(
+    {
+      type: str(undefined, { enum: [...FEEDBACK_TYPES] }),
+      title: str(undefined, { minLength: FEEDBACK_LIMITS.title[0], maxLength: FEEDBACK_LIMITS.title[1] }),
+      description: str(undefined, { minLength: FEEDBACK_LIMITS.description[0], maxLength: FEEDBACK_LIMITS.description[1] }),
+      steps_to_reproduce: str(undefined, { maxLength: FEEDBACK_LIMITS.section }),
+      expected_behavior: str(undefined, { maxLength: FEEDBACK_LIMITS.section }),
+      actual_behavior: str(undefined, { maxLength: FEEDBACK_LIMITS.section }),
+      reference_url: str('Public http(s) URL; query and fragment are removed', { maxLength: FEEDBACK_LIMITS.referenceUrl }),
+      context_page: str('Page of anymd the report is about', { maxLength: FEEDBACK_LIMITS.contextPage }),
+    },
+    ['type', 'title', 'description'],
+  ),
+  FeedbackInput: {
+    allOf: [
+      ref('FeedbackDraft'),
+      obj({ confirm_public: { const: true, description: 'Must be true: the report becomes a public GitHub issue' }, idempotency_key: str('Client-generated stable key, 8–128 chars of letters, digits and . _ : -', { minLength: 8, maxLength: 128 }) }, ['confirm_public', 'idempotency_key']),
+    ],
+  },
+  Feedback: obj(
+    {
+      id: str('Opaque id, e.g. fb_…'),
+      status: str('created = published; pending = persisted, not published yet; needs_review = held for a person; failed', { enum: ['created', 'pending', 'needs_review', 'failed'] }),
+      type: str(undefined, { enum: [...FEEDBACK_TYPES] }),
+      title: str(),
+      channel: str(undefined, { enum: ['dashboard', 'api', 'mcp', 'cli'] }),
+      github: nullable(obj({ repo: str(), number: int(), url: str() }, ['repo', 'number', 'url'])),
+      error: nullable(str()),
+      created_at: str(undefined, { format: 'date-time' }),
+      updated_at: str(undefined, { format: 'date-time' }),
+    },
+    ['id', 'status', 'type', 'title', 'channel', 'github', 'created_at'],
+  ),
   Error: obj({ error: obj({ code: str(), message: str() }, ['code', 'message']) }, ['error']),
   Ok: obj({ ok: bool() }),
   Me: obj({ id: str(), email: str(), name: str(), role: str(), plan: str(), scopes: arr(str()), auth: str(undefined, { enum: ['session', 'api_key', 'oauth'] }), created_at: int() }),
@@ -451,6 +531,7 @@ export function buildOpenApi(origin: string) {
       { name: 'Usage', description: 'Credits, request logs and traces' },
       { name: 'Keys', description: 'API key management' },
       { name: 'Account', description: 'The authenticated account' },
+      { name: 'Feedback', description: 'Product feedback about anymd, published as public GitHub issues' },
       { name: 'Pages', description: 'Page builder (editor role and above)' },
       { name: 'Blog', description: 'Blog posts (author role and above)' },
       { name: 'Admin', description: 'System administration: users, roles, credentials, settings, opt-outs, credits, billing (read-only), audit and system health. Owner/admin scopes only.' },

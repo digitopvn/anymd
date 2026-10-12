@@ -45,6 +45,7 @@ Rule of thumb: give each integration its own key with the smallest preset that w
 | `library:read` | List, read and search your library |
 | `library:write` | Save conversions, tag and delete documents |
 | `usage:read` | Usage, credits and traces |
+| `feedback:write` | Send product feedback, which becomes a public GitHub issue, and read your own reports. Elevated: never part of the default OAuth grant ([Send feedback](/docs/feedback)) |
 | `keys:manage` | Create, list and revoke your API keys; lets a key or OAuth client change or reset your saved deep reading defaults (signed-in sessions of every role, including `viewer`, can always change their own) |
 | `content:read` · `content:write` · `content:publish` | Blog posts: read drafts, edit, publish |
 | `pages:read` · `pages:write` · `pages:publish` | Landing pages: read, edit, publish |

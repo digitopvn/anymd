@@ -34,6 +34,9 @@ import {
 import type { Child } from 'hono/jsx';
 import { activeKeyCount, createOwnKey, grantsOf, revokeOwnGrant, revokeOwnKey } from '../services/admin/credentials';
 import { AdminError } from '../services/admin/shared';
+import { FeedbackFormPage, FeedbackResultPage, MyFeedbackPage, type FeedbackFormValues } from '../views/feedback';
+import { assertPublishable, FeedbackDraftSchema, FeedbackError, FeedbackInputSchema, IDEMPOTENCY_KEY, listFeedback, previewFeedback, submitFeedback } from '../services/feedback';
+import { sha256 } from '../lib/util';
 import { formData, originOf, renderMessage, renderPage } from './shared';
 
 export const dashboardRoutes = new Hono<AppBindings>();
@@ -329,4 +332,67 @@ dashboardRoutes.post('/account/delete', async (c) => {
   await deleteAccount(c.env, user.id);
   deleteCookie(c, SESSION_COOKIE, { path: '/' });
   return c.redirect('/?account=deleted', 303);
+});
+
+// ─── Feedback ───────────────────────────────────────────────────────────────
+
+const FEEDBACK_FIELDS = ['type', 'title', 'description', 'steps_to_reproduce', 'expected_behavior', 'actual_behavior', 'reference_url', 'context_page'] as const;
+
+function feedbackValues(f: Record<string, string>): FeedbackFormValues {
+  const key = IDEMPOTENCY_KEY.safeParse(f.idempotency_key).success ? f.idempotency_key : crypto.randomUUID();
+  const v = (name: string) => (f[name] ?? '').replace(/\r\n?/g, '\n');
+  return { type: v('type') || 'bug', title: v('title'), description: v('description'), steps_to_reproduce: v('steps_to_reproduce'), expected_behavior: v('expected_behavior'), actual_behavior: v('actual_behavior'), reference_url: v('reference_url'), context_page: v('context_page'), idempotency_key: key };
+}
+
+/** Empty optional inputs mean "absent", as they do for the other channels. */
+function feedbackDraft(values: FeedbackFormValues) {
+  const raw: Record<string, string | undefined> = {};
+  for (const k of FEEDBACK_FIELDS) raw[k] = values[k] === '' ? undefined : values[k];
+  return FeedbackDraftSchema.safeParse(raw);
+}
+
+function feedbackPage(c: AppContext, values: FeedbackFormValues, opts: { preview?: Awaited<ReturnType<typeof previewFeedback>>; reviewed?: string; error?: string; status?: number } = {}) {
+  c.header('Cache-Control', 'no-store');
+  return shell(c, '/dashboard/feedback', 'Feedback', <FeedbackFormPage values={values} preview={opts.preview} reviewed={opts.reviewed} error={opts.error} />, { status: opts.status });
+}
+
+dashboardRoutes.get('/feedback', (c) => {
+  const from = c.req.query('from') ?? '';
+  const context = from.startsWith('/dashboard') && !from.startsWith('/dashboard/feedback') ? from.slice(0, 200) : '';
+  return feedbackPage(c, feedbackValues({ context_page: context }));
+});
+
+dashboardRoutes.post('/feedback', async (c) => {
+  markVia(c, 'web');
+  const f = await formData(c);
+  const values = feedbackValues(f);
+  const draft = feedbackDraft(values);
+  if (!draft.success) {
+    const issues = draft.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+    return feedbackPage(c, values, { error: `Check the form: ${issues}`, status: 422 });
+  }
+  try {
+    const issue = await previewFeedback(c.get('principal'), draft.data, 'dashboard', values.idempotency_key);
+    // The same checks run on publish; here they stop the preview so the user fixes the text first.
+    assertPublishable(issue);
+    const reviewed = await sha256(`${issue.feedback_id}\n${issue.title}\n${issue.body}`);
+    if (f.action !== 'submit') return feedbackPage(c, values, { preview: issue, reviewed });
+    if (f.confirm_public !== 'yes') return feedbackPage(c, values, { preview: issue, reviewed, error: 'Tick the box to confirm the report will be public.', status: 422 });
+    // Publish only what was shown: editing after the preview needs a new preview.
+    if (f.reviewed !== reviewed) return feedbackPage(c, values, { preview: issue, reviewed, error: 'The text changed after the preview. Review the updated issue below, then confirm.', status: 409 });
+    const input = FeedbackInputSchema.parse({ ...draft.data, confirm_public: true, idempotency_key: values.idempotency_key });
+    const out = await submitFeedback(c.env, c.get('principal'), input, 'dashboard');
+    c.header('Cache-Control', 'no-store');
+    return shell(c, '/dashboard/feedback', 'Feedback', <FeedbackResultPage record={out.record} />, { status: out.http });
+  } catch (err) {
+    if (!(err instanceof FeedbackError)) throw err;
+    return feedbackPage(c, values, { error: err.message, status: err.status });
+  }
+});
+
+dashboardRoutes.get('/feedback/mine', async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const before = Number(c.req.query('before'));
+  const page = await listFeedback(c.env, c.get('user')!.id, { before: Number.isFinite(before) && before > 0 ? before : undefined });
+  return shell(c, '/dashboard/feedback/mine', 'My feedback', <MyFeedbackPage items={page.items} nextCursor={page.next_cursor} />);
 });

@@ -53,6 +53,7 @@ Without a key the CLI works anonymously, with the same 50-per-day limit as the [
 | `anymd login [--key amd_…]` · `anymd logout` · `anymd whoami` | Manage credentials |
 | `anymd pages ls` · `get <id>` · `create --slug --title [--template]` · `ops <id> --file ops.json` · `publish <id>` · `blocks` | Page builder |
 | `anymd mcp` | Print MCP config snippets for your clients |
+| `anymd feedback submit --type bug --title <t> --message <m> [--confirm-public]` · `list` · `view <id>` | Send feedback as a public GitHub issue (asks first on a terminal; see [Send feedback](/docs/feedback)) |
 | `anymd prefs [show]` / `set <field>=<value>…` / `reset` | Show, change or reset your saved deep reading defaults |
 
 ## Recipes

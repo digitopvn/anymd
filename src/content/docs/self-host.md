@@ -113,6 +113,7 @@ npm run secrets:production   # pushes every known secret found in .env, without 
 | `RAPIDAPI_KEY`, `VIDCAP_API_KEY` | YouTube transcripts (either works; RapidAPI is tried first) and the opt-in video download (either works; VidCap is tried first, with `VIDEO_QUEUE`). `RAPIDAPI_KEY` also enables Facebook, Instagram, Threads (API4) and LinkedIn adapters and their provider-backed comments. |
 | `OPENROUTER_API_KEY` | Query fan-out and Jev via OpenRouter (Workers AI is the fan-out fallback), article-image OCR and descriptions using `qwen/qwen3.6-35b-a3b`, and the opt-in video analysis using `google/gemini-3.8-flash` |
 | `TYPESAFE_API_KEY` | Jev directly from TypeSafe, when OpenRouter isn't configured |
+| `GITHUB_FEEDBACK_TOKEN` | Publishing feedback as issues on `digitopvn/anymd`. Use a fine-grained token with only Issues: read and write on that repository, and create the `ai-handle` label there. A cron (every 10 minutes, in `wrangler.jsonc`) retries reports GitHub could not take. Optional vars: `FEEDBACK_DAILY_LIMIT`, `FEEDBACK_WEEKLY_LIMIT`, `FEEDBACK_GLOBAL_HOURLY_LIMIT`, `FEEDBACK_MIN_ACCOUNT_AGE_HOURS` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | "Continue with GitHub" sign-in |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | "Continue with Google" sign-in |
 

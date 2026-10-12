@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // anymd — convert any URL or file to clean Markdown with anymd.cc, search your library,
 // and manage pages. Zero dependencies; requires Node.js >= 18 (global fetch, FormData, Blob).
+import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { chmod, mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir as osHomedir } from 'node:os';
@@ -71,10 +72,11 @@ const LONG_VALUE = {
   key: 'key', base: 'base', output: 'output', mode: 'mode', limit: 'limit',
   domain: 'domain', slug: 'slug', title: 'title', template: 'template', file: 'file',
   tag: 'tag', add: 'add', remove: 'remove', set: 'set', cursor: 'cursor',
+  type: 'type', message: 'message', steps: 'steps', url: 'url', expected: 'expected', actual: 'actual', page: 'page', 'idempotency-key': 'idempotencyKey',
   'max-comments': 'maxComments', 'max-images': 'maxImages', 'max-credits': 'maxCredits', 'max-thread-posts': 'maxThreadPosts',
 };
 const LONG_BOOL = {
-  json: 'json', 'no-save': 'noSave', fresh: 'fresh', help: 'help', version: 'version',
+  json: 'json', 'confirm-public': 'confirmPublic', 'no-save': 'noSave', fresh: 'fresh', help: 'help', version: 'version',
   'expand-thread': 'expandThread', 'no-expand-thread': 'noExpandThread',
   'include-comments': 'includeComments', 'no-include-comments': 'noIncludeComments',
   'analyze-images': 'analyzeImages', 'no-analyze-images': 'noAnalyzeImages',
@@ -944,11 +946,90 @@ async function cmdPrefs(ctx, args) {
   ctx.out(formatPreferences(data, ctx.colors));
 }
 
+// ---------------------------------------------------------------------------
+// Feedback (public GitHub issues)
+// ---------------------------------------------------------------------------
+
+const FEEDBACK_TYPES = ['bug', 'feature', 'improvement', 'question', 'other'];
+const FEEDBACK_USAGE = 'anymd feedback submit --type bug --title "..." --message "..." [--steps "..."] [--expected "..."] [--actual "..."] [--url "..."] [--page "..."] [--confirm-public] [--json]';
+
+/** Same content, same key: running the identical command twice can never publish two issues. */
+function feedbackKey(body) {
+  return `cli-${createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 32)}`;
+}
+
+function formatFeedback(item, colors) {
+  const github = item.github ? `${colors.cyan(item.github.url)}` : colors.dim('not published yet');
+  return `${colors.bold(item.id)}  ${item.status}  ${item.type}  ${item.title}\n  ${github}\n`;
+}
+
+async function cmdFeedback(ctx, args) {
+  const [sub, ...rest] = args;
+  switch (sub) {
+    case 'submit': {
+      expectArgs(rest, 0, FEEDBACK_USAGE);
+      const { flags } = ctx;
+      if (!flags.title || !flags.message) throw usageError(`usage: ${FEEDBACK_USAGE}`);
+      const type = flags.type ?? 'other';
+      if (!FEEDBACK_TYPES.includes(type)) throw usageError(`--type must be one of: ${FEEDBACK_TYPES.join(', ')}`);
+      const draft = {
+        type,
+        title: flags.title,
+        description: flags.message,
+        ...(flags.steps ? { steps_to_reproduce: flags.steps } : {}),
+        ...(flags.expected ? { expected_behavior: flags.expected } : {}),
+        ...(flags.actual ? { actual_behavior: flags.actual } : {}),
+        ...(flags.url ? { reference_url: flags.url } : {}),
+        ...(flags.page ? { context_page: flags.page } : {}),
+      };
+      const idempotency_key = flags.idempotencyKey ?? feedbackKey(draft);
+      if (!flags.confirmPublic) {
+        if (!ctx.io.interactive) {
+          throw new CliError('confirmation_required', 'feedback becomes a public GitHub issue; pass --confirm-public to publish without a prompt', {
+            hint: 'Only pass --confirm-public when the person who owns this report approved publishing it.',
+          });
+        }
+        const preview = await readJson(await request(ctx, 'POST', '/api/v1/feedback/preview', { json: { ...draft, idempotency_key } }));
+        if (Array.isArray(preview.blocked) && preview.blocked.length) {
+          throw new CliError('secret_detected', `the report looks like it contains a credential (${preview.blocked.map((b) => b.field).join(', ')}); remove it and retry`);
+        }
+        ctx.err(`${ctx.colors.bold('This will be published PUBLICLY on GitHub')} (${preview.repo}, label ${preview.label}):\n\n${preview.title}\n\n${preview.body}\n\n`);
+        const answer = String(await ctx.io.prompt('Publish this report publicly? [y/N] ')).trim().toLowerCase();
+        if (answer !== 'y' && answer !== 'yes') throw new CliError('cancelled', 'not published');
+      }
+      const res = await request(ctx, 'POST', '/api/v1/feedback', { json: { ...draft, confirm_public: true, idempotency_key } });
+      const data = await readJson(res);
+      if (ctx.flags.json) ctx.out(toJson(data));
+      else if (data.status === 'created') ctx.out(`Published: ${data.github?.url}\n`);
+      else ctx.out(`Status: ${data.status} (id ${data.id}); check it later with \`anymd feedback view ${data.id}\`\n`);
+      if (data.status !== 'created') ctx.warn(`the report is ${data.status}, not published on GitHub yet`);
+      return;
+    }
+    case 'list':
+    case 'ls': {
+      expectArgs(rest, 0, 'anymd feedback list [--limit 20] [--json]');
+      const data = await readJson(await request(ctx, 'GET', '/api/v1/feedback', { query: { limit: parseLimit(ctx.flags.limit, 20, 100) } }));
+      if (ctx.flags.json) return ctx.out(toJson(data));
+      const items = pickArray(data, 'items');
+      if (!items.length) return ctx.out('No feedback yet.\n');
+      return ctx.out(items.map((item) => formatFeedback(item, ctx.colors)).join('\n'));
+    }
+    case 'view':
+    case 'get': {
+      const [id] = expectArgs(rest, 1, 'anymd feedback view <id> [--json]');
+      const data = await readJson(await request(ctx, 'GET', `/api/v1/feedback/${enc(id)}`));
+      return ctx.out(ctx.flags.json ? toJson(data) : formatFeedback(data, ctx.colors));
+    }
+    default:
+      throw usageError('usage: anymd feedback submit | list | view <id>');
+  }
+}
+
 const COMMANDS = {
   convert: cmdConvert, file: cmdFile, search: cmdSearch, social: cmdSocial, ls: cmdList, get: cmdGet, rm: cmdRemove,
   tag: cmdTag, tags: cmdTags,
   usage: cmdUsage, login: cmdLogin, logout: cmdLogout, whoami: cmdWhoami, pages: cmdPages, mcp: cmdMcp,
-  prefs: cmdPrefs, video: cmdVideo,
+  prefs: cmdPrefs, video: cmdVideo, feedback: cmdFeedback,
 };
 
 export function helpText(colors = makeColors(false)) {
@@ -980,6 +1061,11 @@ ${bold('Usage')}
   anymd mcp                            Print MCP client configuration snippets
   anymd prefs [show] | set <field>=<value>… | reset
                                        Show or change your saved reading defaults
+  anymd feedback submit --type bug --title <t> --message <m> [--steps s] [--expected e] [--actual a]
+                         [--url u] [--page p] [--confirm-public] [--json]
+                                       Send product feedback as a PUBLIC GitHub issue (shows a preview
+                                       and asks first; non-interactive runs need --confirm-public)
+  anymd feedback list | view <id>      Your own feedback and its status
   anymd video <id> [--json]            Check a YouTube video download and its AI analysis (convert --download-video / --analyze-video)
 
 ${bold('Options')}
@@ -1050,6 +1136,8 @@ export async function run(argv, io = {}) {
     platform: io.platform ?? process.platform,
     homedir: io.homedir ?? osHomedir(),
     prompt: io.prompt ?? ((question) => defaultPrompt(question, stdin, stderr)),
+    // A person is at the terminal: confirmations may be asked. Pipes and CI never are.
+    interactive: io.interactive ?? (Boolean(stdin.isTTY) && Boolean(stderr.isTTY)),
   };
   const colorAllowed = env.NO_COLOR === undefined;
   const colors = makeColors(colorAllowed && Boolean(stdout.isTTY));

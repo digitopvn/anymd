@@ -72,6 +72,8 @@ Secret names and their features are declared in the `Env` interface in `src/env.
 
 Staging uses Creem **test-mode** credentials (`CREEM_API_KEY`, `CREEM_WEBHOOK_SECRET`) and Polar **sandbox** credentials. Never put live payment credentials on staging.
 
+Feedback publishing uses the optional `GITHUB_FEEDBACK_TOKEN`: a fine-grained token with Issues read/write on `digitopvn/anymd` only. The `ai-handle` label must exist in that repository. Migration `0010_feedback_submissions.sql` adds the table, and the `*/10 * * * *` cron (`scheduled` in `src/worker.ts`) retries reports GitHub could not accept or whose response was lost; it looks the issue up by Feedback ID before it ever posts again. Rows stuck in `unknown_remote_state` or `needs_review` are reviewed in D1 (`feedback_submissions`).
+
 Social adapters use the optional `RAPIDAPI_KEY`; article-image OCR and descriptions use the optional `OPENROUTER_API_KEY`. Provider subscriptions and model availability are external prerequisites, so a configured secret alone is not evidence that an adapter is operational.
 
 The adapter source files own the fixed provider hosts and paths; callers never supply them:

@@ -25,6 +25,7 @@ const NAV: { href: string; label: string; icon: string; min?: RoleName }[] = [
   { href: '/dashboard/usage', label: 'Usage logs', icon: 'chart' },
   { href: '/dashboard/traces', label: 'Traces', icon: 'activity' },
   { href: '/dashboard/keys', label: 'API keys', icon: 'key' },
+  { href: '/dashboard/feedback', label: 'Feedback', icon: 'message' },
   { href: '/dashboard/billing', label: 'Billing', icon: 'card' },
   { href: '/dashboard/account', label: 'Account', icon: 'settings' },
 ];
@@ -41,7 +42,7 @@ export function DashShell({ user, current, title, actions, children }: { user: U
   const role = user.role as RoleName;
   const admin = ADMIN_NAV.filter((n) => roleAtLeast(role, n.min));
   const link = (n: { href: string; label: string; icon: string }) => (
-    <a href={n.href} aria-current={current === n.href ? 'page' : undefined}>
+    <a href={n.href === '/dashboard/feedback' ? `${n.href}?from=${encodeURIComponent(current)}` : n.href} aria-current={current === n.href || (n.href === '/dashboard/feedback' && current.startsWith(`${n.href}/`)) ? 'page' : undefined}>
       <Icon name={n.icon} size={17} /> {n.label}
     </a>
   );
