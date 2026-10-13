@@ -1,7 +1,7 @@
 ---
 title: "REST API"
 description: "The anymd REST API v1: authentication, errors, conversion, library, search, usage, keys and admin endpoints with curl, JavaScript and Python examples."
-updated: "2026-10-10"
+updated: "2026-10-13"
 ---
 
 Base URL: `https://anymd.cc/api/v1`. Everything is JSON unless noted.
@@ -38,13 +38,13 @@ Every error has the same shape and a matching HTTP status:
 
 | Status | Typical codes |
 |---|---|
-| 400 | `invalid_url`, `blocked_host`, `invalid_request` |
+| 400 | `invalid_url`, `blocked_host`, `invalid_request`, `cursor_expired` |
 | 401 | `unauthorized`, `invalid_api_key` |
 | 402 | `quota_exceeded` |
 | 408 | `processing_limit` |
 | 403 | `forbidden` (missing scope), `forbidden_rank`, `forbidden_self`, `bad_origin`, `oauth_key_creation_forbidden` |
 | 404 | `not_found`, `upstream_status` |
-| 409 | `revision_conflict`, `slug_taken`, `tag_conflict`, `role_conflict`, `status_conflict`, `settings_conflict`, `billing_owned`, `idempotency_in_progress` |
+| 409 | `revision_conflict`, `slug_taken`, `tag_conflict`, `role_conflict`, `status_conflict`, `settings_conflict`, `billing_owned`, `idempotency_in_progress`, `cursor_conflict` |
 | 413 | `too_large` |
 | 415 | `unsupported_type` |
 | 422 | `empty_content`, `document_failed`, `invalid_props`, `idempotency_mismatch`, `invalid_request`, `too_many_tags`, `invalid_preferences`, `invalid_setting`, `plan_managed_by_billing` |
@@ -359,13 +359,16 @@ How the modes, fan-out and Jev work, plus the response shape: [Library & search]
 
 ## Social search
 
-`POST /social/search` with `{ "platform": "all" | "x" | "facebook" | "instagram" | "threads" | "linkedin", "query": "…", "cursor"?: "…" }`. Scope: `convert`, and the caller must have an account. Each page that returns results costs 10 credits (100 on LinkedIn); `all` searches every platform and costs the sum for the platforms that returned results. Empty pages and provider failures are free. Pass `next_cursor` back as `cursor` for the next page.
+`POST /social/search` with `{ "platform": "all" | "x" | "facebook" | "instagram" | "threads" | "linkedin", "query": "…", "cursor"?: "…", "period"?: "24h" | "7d" | "30d", "since"?: "…", "until"?: "…" }`. Scope: `convert`, and the caller must have an account. `period`, or `since`/`until` (ISO-8601, half-open in UTC), limits results to a time range; results are de-duplicated by exact post identity across every page of the search. Each page where a platform returns posts costs 10 credits (100 on LinkedIn), even if filtering removes them all; `all` searches every platform and costs the sum for the platforms that returned posts. Pages where the platform returns nothing, and provider failures, are free. Pass `next_cursor` back as `cursor` for the next page: it keeps the time range, works once and expires after 24 hours (`409 cursor_conflict` on reuse, `400 cursor_expired` after expiry).
 
 ```bash
-curl https://anymd.cc/api/v1/social/search \n  -H "Authorization: Bearer $ANYMD_API_KEY" \n  -H "Content-Type: application/json" \n  -d '{"platform":"linkedin","query":"ai agents"}'
+curl https://anymd.cc/api/v1/social/search \
+  -H "Authorization: Bearer $ANYMD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"linkedin","query":"ai agents","period":"7d"}'
 ```
 
-Response shape, errors and per-platform notes: [Social search](/docs/social-search).
+Response shape, time filters, paging, errors and per-platform notes: [Social search](/docs/social-search).
 
 ## Usage and traces
 

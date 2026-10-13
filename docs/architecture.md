@@ -26,7 +26,7 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 
 | Path | Owns |
 |---|---|
-| `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, bounded enrichment (`enrichment-types.ts`, `image-enrichment.ts`, `x-thread.ts`, and social adapters), social search across X, Facebook, Instagram, Threads and LinkedIn (`social-search.ts` for validation, credits and usage; `social-search-providers.ts` for provider calls and result normalization), reading preferences and option precedence (`reading-preferences.ts`; bounds and defaults shared with the browser in `src/lib/reading-options.ts`), file conversion (`document.ts`) |
+| `src/convert/` | URL normalisation + SSRF guard (`index.ts`), adapter registry and order, the single conversion pipeline (`service.ts`), per-source adapters, bounded enrichment (`enrichment-types.ts`, `image-enrichment.ts`, `x-thread.ts`, and social adapters), social search across X, Facebook, Instagram, Threads and LinkedIn (`social-search.ts` for validation, credits, usage and history; `social-search-providers.ts` for provider calls, result normalization and which providers filter by date natively (`SOCIAL_DATE_FILTER`); `social-search-results.ts` for time ranges, exact post identity, de-duplication and date filtering as pure functions; `social-search-session.ts` for single-use paging cursors), reading preferences and option precedence (`reading-preferences.ts`; bounds and defaults shared with the browser in `src/lib/reading-options.ts`), file conversion (`document.ts`) |
 | `src/library/` | Library persistence and embeddings (`store.ts`), search modes, fan-out and RRF (`search.ts`), Jev tie-break (`jev.ts`) |
 | `src/auth/` | Principal resolution, scope guards, same-origin writes (`middleware.ts`), users/sessions/API keys (`identity.ts`), role templates and key presets (`roles.ts`) |
 | `src/billing/` | Plans, credit table, offers (`plans.ts`); `provider.ts` routes checkout and portal to the provider named by `BILLING_PROVIDER`: Creem (`creem.ts`: checkout, portal, webhooks) or Polar (`polar.ts`: also usage ingest for metered overage) |
@@ -69,6 +69,12 @@ Why a caller-independent cache: identical URLs are converted once per hour for e
 
 Why RRF: it fuses BM25 and cosine rankings without normalising incomparable scores. Why Jev is advisory only: it sees already-scoped candidates, has a hard timeout, a confidence floor and a margin, and any failure keeps the fused order.
 
+### Social search paging
+
+`runSocialSearch` (`src/convert/social-search.ts`) resolves a `period` to an absolute UTC range once, on the first page, and stores it with the provider cursors and the post identities already returned in a `social_search_sessions` row. The public `next_cursor` is only a handle to that row plus its `version`; each page claims the row with a compare-and-swap on `version`, and a page that fails before returning anything releases the claim so the same cursor can be retried.
+
+Why server-side sessions instead of a self-describing cursor: cross-page de-duplication needs the identities of every post already returned (up to the session's remembered-post limit), which a client-held cursor could not carry or be trusted with, and the version check makes a replayed or concurrent cursor fail with `409` instead of charging twice. Why billing ignores filtering: the provider is paid for every page it returns, so a platform that returned posts is charged even when de-duplication or the range removes all of them.
+
 ### Pages
 
 `applyPageOps` (`src/cms/pages.ts`) is shared by the editor UI, REST, CLI, MCP and WebMCP. Ops apply to a clone, validate per block against the zod schemas in `blocks.ts`, and persist with `UPDATE … WHERE revision = ?` so concurrent writers can't both win. Idempotency keys are stored per principal with a payload hash. See `docs/page-builder-operations.md`.
@@ -83,7 +89,7 @@ The schema is owned by `migrations/`. Tables group as:
 | Library | `documents`, `documents_fts` | Unique per `(user_id, url_hash)`. FTS5 is an external-content table kept in sync by triggers. `embedded_chunks` tracks vectors `<doc_id>#<n>` in Vectorize. |
 | Video | `video_jobs` | One row per background YouTube download: status, CDN URL, credits charged at `ready`. |
 | Metering | `usage_events`, `traces` | Monthly credit use is summed from `usage_events` since the UTC month start. |
-| Social search | `social_searches` | Saved search pages with their results (JSON) for the dashboard history; the newest 200 per user are kept. |
+| Social search | `social_searches`, `social_search_sessions` | `social_searches`: saved search pages with their results (JSON) for the dashboard history, plus `filters_json` (time range, removal counts, coverage; `NULL` on rows saved before filters); the newest 200 per user are kept. `social_search_sessions`: paging state per search (provider cursors, resolved range, identities of posts already returned), expiring after 24 hours and swept by the scheduled handler. |
 | Billing | `subscriptions`, `credit_grants`, `webhook_events` | `webhook_events` makes Creem and Polar webhook handling idempotent and records the provider and outcome. `users.creem_customer_id` opens the Creem portal. Credit grants carry reason, actor, idempotency key and revocation; only active grants raise the allowance. Plans are owned by the billing provider. |
 | Content | `posts`, `pages`, `page_revisions`, `idempotency_keys` | Page `draft`/`published` are JSON page documents. |
 | Admin | `audit_log`, `settings`, `settings_state`, `site_optouts`, `stats` | Every privileged change writes `audit_log` with actor, auth kind, credential, `via`, request id and a scrubbed diff. `settings_state.version` makes settings writes optimistic. |

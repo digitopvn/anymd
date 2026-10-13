@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOCIAL_SEARCH_CREDITS } from '../src/billing/plans';
-import { getSocialSearch, listSocialSearches, runSocialSearch, SOCIAL_SEARCH_ALL_MAX, socialSearchPayload } from '../src/convert/social-search';
+import { getSocialSearch, listSocialSearches, runSocialSearch, SOCIAL_SEARCH_ALL_MAX, socialSearchPayload, type SocialPlatform, type SocialPlatformStatus } from '../src/convert/social-search';
 import {
   parseFacebookSearch,
   parseInstagramSearch,
@@ -107,7 +107,7 @@ describe('runSocialSearch', () => {
     const fetch = providerReturns(200, { timeline: [tweet('1'), tweet('2')], next_cursor: 'next' });
     const r = await runSocialSearch(env, ctx, { platform: 'x', query: ' cloudflare ', channel: 'api', principal });
     await flush();
-    expect(r).toMatchObject({ platform: 'x', query: 'cloudflare', nextCursor: 'next', credits: SOCIAL_SEARCH_CREDITS.x });
+    expect(r).toMatchObject({ platform: 'x', query: 'cloudflare', nextCursor: expect.stringMatching(/^amdss2\.sss_[a-z0-9]+\.1$/), nextPageCredits: SOCIAL_SEARCH_CREDITS.x, credits: SOCIAL_SEARCH_CREDITS.x, coverage: 'unfiltered', timeRange: null });
     expect(r.results).toHaveLength(2);
     const [url, init] = fetch.mock.calls[0];
     expect(String(url)).toBe('https://twitter-api45.p.rapidapi.com/search.php?query=cloudflare&search_type=Latest');
@@ -115,7 +115,8 @@ describe('runSocialSearch', () => {
     expect(await creditsUsedThisMonth(env, user.id)).toBe(SOCIAL_SEARCH_CREDITS.x);
     expect(t!.db.prepare("SELECT kind, target, credits, status FROM usage_events").all()).toEqual([{ kind: 'social_search', target: 'x:cloudflare', credits: SOCIAL_SEARCH_CREDITS.x, status: 'ok' }]);
     expect(t!.db.prepare('SELECT COUNT(*) AS n FROM traces').get()).toEqual({ n: 1 });
-    expect(socialSearchPayload(r)).toMatchObject({ count: 2, next_cursor: 'next', credits: SOCIAL_SEARCH_CREDITS.x, platforms: [{ platform: 'x', count: 2, credits: SOCIAL_SEARCH_CREDITS.x, error: null }] });
+    expect(socialSearchPayload(r)).toMatchObject({ count: 2, raw_count: 2, duplicate_count: 0, next_cursor: r.nextCursor, next_page_credits: SOCIAL_SEARCH_CREDITS.x, credits: SOCIAL_SEARCH_CREDITS.x, coverage: 'unfiltered', time_range: null, session_limit_reached: false,
+      platforms: [{ platform: 'x', count: 2, credits: SOCIAL_SEARCH_CREDITS.x, error: null, raw_count: 2, duplicate_count: 0, out_of_range_count: 0, missing_timestamp_count: 0, filter_mode: 'none' }] });
     expect(socialSearchPayload(r).results[0]).toMatchObject({ published_at: '2026-10-10T08:18:31.000Z' });
   });
 
@@ -196,13 +197,15 @@ describe('runSocialSearch', () => {
     const r = await runSocialSearch(env, ctx, { platform: 'all', query: 'cats', channel: 'api', principal });
     await flush();
     expect(r.results.map((x) => x.id)).toEqual(['IG1', '1']);
+    const counts = (raw: number) => ({ rawCount: raw, duplicateCount: 0, outOfRangeCount: 0, missingTimestampCount: 0, filterMode: 'none' });
     expect(r.platforms).toEqual([
-      { platform: 'x', count: 1, credits: SOCIAL_SEARCH_CREDITS.x, error: null },
-      { platform: 'facebook', count: 0, credits: 0, error: expect.stringMatching(/^upstream_error: /) },
-      { platform: 'instagram', count: 1, credits: SOCIAL_SEARCH_CREDITS.instagram, error: null },
-      { platform: 'threads', count: 0, credits: 0, error: null },
-      { platform: 'linkedin', count: 0, credits: 0, error: null },
+      { platform: 'x', count: 1, credits: SOCIAL_SEARCH_CREDITS.x, error: null, ...counts(1) },
+      { platform: 'facebook', count: 0, credits: 0, error: expect.stringMatching(/^upstream_error: /), ...counts(0) },
+      { platform: 'instagram', count: 1, credits: SOCIAL_SEARCH_CREDITS.instagram, error: null, ...counts(1) },
+      { platform: 'threads', count: 0, credits: 0, error: null, ...counts(0) },
+      { platform: 'linkedin', count: 0, credits: 0, error: null, ...counts(0) },
     ]);
+    expect(r.nextPageCredits).toBe(SOCIAL_SEARCH_CREDITS.x + SOCIAL_SEARCH_CREDITS.instagram);
     expect(r.credits).toBe(SOCIAL_SEARCH_CREDITS.x + SOCIAL_SEARCH_CREDITS.instagram);
     expect(await creditsUsedThisMonth(env, user.id)).toBe(r.credits);
     expect(t!.db.prepare("SELECT target, credits FROM usage_events").all()).toEqual([{ target: 'all:cats', credits: r.credits }]);
@@ -216,7 +219,9 @@ describe('runSocialSearch', () => {
     expect(asked.find((u) => u.hostname.startsWith('twitter'))!.searchParams.get('cursor')).toBe('x2');
     expect(asked.find((u) => u.hostname.startsWith('instagram'))!.searchParams.get('cursor')).toBe('i2');
     expect(next.platforms.map((p) => p.platform)).toEqual(['x', 'instagram']);
-    expect(next.results.map((x) => x.id)).toEqual(['IG1', '3']);
+    // IG1 came back on the second page too: it was already returned, so only the new X post is kept.
+    expect(next.results.map((x) => x.id)).toEqual(['3']);
+    expect(next.platforms.find((p) => p.platform === 'instagram')).toMatchObject({ count: 0, rawCount: 1, duplicateCount: 1, credits: SOCIAL_SEARCH_CREDITS.instagram });
   });
 
   it('rejects a foreign "all" cursor, fails when every platform fails, and refuses "all" without enough credits', async () => {
@@ -249,7 +254,7 @@ describe('runSocialSearch', () => {
     ]);
     expect(history[1].id).toBe(first.traceId);
     const saved = await getSocialSearch(env, user.id, first.traceId);
-    expect(saved).toMatchObject({ platform: 'x', query: 'first', nextCursor: 'n2', credits: SOCIAL_SEARCH_CREDITS.x, channel: 'cli', paged: false });
+    expect(saved).toMatchObject({ platform: 'x', query: 'first', nextCursor: first.nextCursor, nextPageCredits: SOCIAL_SEARCH_CREDITS.x, credits: SOCIAL_SEARCH_CREDITS.x, channel: 'cli', paged: false, timeRange: null, coverage: 'unfiltered' });
     expect(saved!.results).toEqual(first.results);
     expect(saved!.platforms).toEqual(first.platforms);
     const other = await seedUser(t!, 'user');
@@ -283,8 +288,11 @@ describe('runSocialSearch', () => {
 });
 
 describe('dashboard social search page', () => {
+  const status = (platform: SocialPlatform, count: number, credits: number, error: string | null = null): SocialPlatformStatus =>
+    ({ platform, count, credits, error, rawCount: count, duplicateCount: 0, outOfRangeCount: 0, missingTimestampCount: 0, filterMode: 'none' });
+  const unfiltered = { rawCount: 1, duplicateCount: 0, outOfRangeCount: 0, missingTimestampCount: 0, timeRange: null, coverage: 'unfiltered' as const, sessionLimitReached: false };
   it('renders results with escaped text, safe links and a next-page form', () => {
-    const result = { platform: 'x' as const, query: 'cats', credits: 10, traceId: 't', durationMs: 5, nextCursor: 'c"2', platforms: [{ platform: 'x' as const, count: 1, credits: 10, error: null }],
+    const result = { platform: 'x' as const, query: 'cats', credits: 10, traceId: 't', durationMs: 5, nextCursor: 'c"2', nextPageCredits: SOCIAL_SEARCH_CREDITS.x, ...unfiltered, platforms: [status('x', 1, 10)],
       results: [{ platform: 'x' as const, id: '1', url: 'https://x.com/a/status/1', author: { name: 'A', handle: 'a', url: 'https://x.com/a' }, text: '<script>alert(1)</script>', publishedAt: null, stats: { likes: 2, replies: null, reposts: null, views: null }, media: [] }] };
     const html = String(<SocialSearchPage platform="x" q="cats" result={result} />);
     expect(html.includes('<script>alert')).toBe(false);
@@ -298,10 +306,11 @@ describe('dashboard social search page', () => {
     const post = (platform: 'x' | 'linkedin', id: string) => ({ platform, id, url: `https://example.com/${id}`, author: { name: 'A', handle: null, url: null }, text: 't', publishedAt: null, stats: { likes: null, replies: null, reposts: null, views: null }, media: [] });
     const nextCursor = btoa(JSON.stringify({ x: 'c2' })).replace(/=+$/, '');
     const result = { platform: 'all' as const, query: 'cats', credits: 110, traceId: 'trc_1', durationMs: 5, nextCursor, results: [post('linkedin', 'L1'), post('x', 'X1')],
-      platforms: [{ platform: 'x' as const, count: 1, credits: 10, error: null }, { platform: 'facebook' as const, count: 0, credits: 0, error: 'upstream_error: down' }, { platform: 'linkedin' as const, count: 1, credits: 100, error: null }] };
+      nextPageCredits: SOCIAL_SEARCH_CREDITS.x, ...unfiltered, rawCount: 2,
+      platforms: [status('x', 1, 10), status('facebook', 0, 0, 'upstream_error: down'), status('linkedin', 1, 100)] };
     const history = [
-      { id: 'trc_1', platform: 'all' as const, query: 'cats', channel: 'web', paged: false, resultCount: 2, credits: 110, createdAt: Date.now() },
-      { id: 'trc_0', platform: 'x' as const, query: 'older <b>', channel: 'cli', paged: true, resultCount: 0, credits: 0, createdAt: Date.now() - 60_000 },
+      { id: 'trc_1', platform: 'all' as const, query: 'cats', channel: 'web', paged: false, resultCount: 2, credits: 110, timeRange: null, createdAt: Date.now() },
+      { id: 'trc_0', platform: 'x' as const, query: 'older <b>', channel: 'cli', paged: true, resultCount: 0, credits: 0, timeRange: { period: '7d', since: '2026-10-06T00:00:00.000Z', until: null }, createdAt: Date.now() - 60_000 },
     ];
     const html = String(<SocialSearchPage platform="all" q="cats" result={result} history={history} saved={{ channel: 'web', createdAt: Date.now() }} />);
     expect(html.includes('value="all" checked')).toBe(true);

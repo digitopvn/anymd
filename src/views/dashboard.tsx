@@ -492,6 +492,22 @@ const authorLabel = (a: SocialSearchResponse['results'][number]['author']) => a.
 const statLine = (s: SocialSearchResponse['results'][number]['stats']) =>
   ([['likes', s.likes], ['replies', s.replies], ['reposts', s.reposts], ['views', s.views]] as const).filter(([, n]) => n !== null).map(([label, n]) => `${formatNumber(n!)} ${label}`);
 
+/** The dashboard's time filter fields. `period` is '', a preset, or 'custom' with whole-day `from`/`to` in time zone `tz`. */
+export interface SocialFilterForm {
+  period: string;
+  from: string;
+  to: string;
+  tz: string;
+}
+const NO_FILTER: SocialFilterForm = { period: '', from: '', to: '', tz: 'UTC' };
+const PERIOD_LABELS: Record<string, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
+const utcMinute = (iso: string) => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
+/** "Last 7 days" or "Custom range", for chips. */
+const rangeLabel = (r: SocialSearchResponse['timeRange']) => (r ? (r.period ? PERIOD_LABELS[r.period] ?? r.period : 'Custom range') : null);
+/** The exact UTC interval searched, e.g. "2026-10-06 03:40 UTC → 2026-10-13 03:40 UTC". */
+const rangeSpan = (r: NonNullable<SocialSearchResponse['timeRange']>) => `${r.since ? utcMinute(r.since) : 'any time'} → ${r.until ? utcMinute(r.until) : 'now'}`;
+const plural = (n: number, one: string, many = `${one}s`) => `${formatNumber(n)} ${n === 1 ? one : many}`;
+
 /** Past searches; each link reopens the saved results without spending credits. */
 function SocialHistory({ history, current }: { history: SocialSearchHistoryItem[]; current?: string }) {
   if (!history.length) return null;
@@ -511,6 +527,7 @@ function SocialHistory({ history, current }: { history: SocialSearchHistoryItem[
               <span class="min-w-0 max-w-full truncate font-medium">{h.query}</span>
               <span class="chip !py-0 !text-[11px]">{socialLabel(h.platform)}</span>
               {h.paged ? <span class="chip !py-0 !text-[11px]">next page</span> : null}
+              {h.timeRange ? <span class="chip !py-0 !text-[11px]">{rangeLabel(h.timeRange)}</span> : null}
               {h.channel !== 'web' ? <span class="chip !py-0 !text-[11px]">{h.channel.toUpperCase()}</span> : null}
               <span class="flex-1" />
               <span class="text-muted">
@@ -524,10 +541,38 @@ function SocialHistory({ history, current }: { history: SocialSearchHistoryItem[
   );
 }
 
+/** What filtering did on this page: the range searched, what was removed, and whether coverage is partial. */
+function SocialFilterSummary({ result }: { result: SocialSearchResponse }) {
+  const removed = [
+    result.duplicateCount ? `${plural(result.duplicateCount, 'duplicate')} removed` : '',
+    result.outOfRangeCount ? `${formatNumber(result.outOfRangeCount)} outside the range` : '',
+    result.missingTimestampCount ? `${formatNumber(result.missingTimestampCount)} without a date` : '',
+  ].filter(Boolean);
+  const postFiltered = result.platforms.filter((p) => p.filterMode === 'post_filter').map((p) => socialLabel(p.platform));
+  if (!result.timeRange && !removed.length) return null;
+  return (
+    <div class="mt-1 space-y-1 text-xs text-muted">
+      {result.timeRange ? (
+        <p>
+          <span class="font-medium text-ink-2">{rangeLabel(result.timeRange)}</span>: {rangeSpan(result.timeRange)}
+        </p>
+      ) : null}
+      {removed.length ? <p>{removed.join(' · ')}</p> : null}
+      {result.coverage === 'provider_limited' && postFiltered.length ? (
+        <p>
+          Partial coverage: {postFiltered.join(', ')} {postFiltered.length === 1 ? 'is' : 'are'} filtered by date after fetching, so posts from this range may be missing and a page
+          can come back empty while more results remain.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** Posted form: every search can spend credits, so it is never a bookmarkable GET. Saved searches reopen from the history for free. */
-export function SocialSearchPage({ platform, q, result, error, history = [], saved }: {
+export function SocialSearchPage({ platform, q, filters = NO_FILTER, result, error, history = [], saved }: {
   platform: SocialSearchTarget;
   q: string;
+  filters?: SocialFilterForm;
   result: SocialSearchResponse | null;
   error?: string;
   history?: SocialSearchHistoryItem[];
@@ -555,9 +600,41 @@ export function SocialSearchPage({ platform, q, result, error, history = [], sav
             </label>
           ))}
         </div>
+        <fieldset class="mt-3 flex flex-wrap items-end gap-2 text-sm">
+          <legend class="sr-only">Time range</legend>
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-muted">Time range</span>
+            <select name="period" class="input !h-10 !py-1" data-social-period>
+              <option value="" selected={!filters.period}>
+                Any time
+              </option>
+              {Object.entries(PERIOD_LABELS).map(([value, label]) => (
+                <option value={value} selected={filters.period === value}>
+                  {label}
+                </option>
+              ))}
+              <option value="custom" selected={filters.period === 'custom'}>
+                Custom range
+              </option>
+            </select>
+          </label>
+          <label class="flex flex-col gap-1" data-social-custom>
+            <span class="text-xs text-muted">From</span>
+            <input type="date" name="from" value={filters.from} class="input !h-10 !py-1" />
+          </label>
+          <label class="flex flex-col gap-1" data-social-custom>
+            <span class="text-xs text-muted">To (inclusive)</span>
+            <input type="date" name="to" value={filters.to} class="input !h-10 !py-1" />
+          </label>
+          <input type="hidden" name="tz" value={filters.tz} data-social-tz />
+        </fieldset>
+        <p class="mt-2 text-xs text-muted" data-social-custom>
+          Custom dates are whole days in your time zone (<span data-social-tz-label>{filters.tz}</span>). Presets count back from when you press Search and stay fixed while you page.
+        </p>
         <p class="mt-2 text-xs text-muted">
-          Per page with results: {SOCIAL_SEARCH_CREDITS.x} credits for X, Facebook, Instagram or Threads, {SOCIAL_SEARCH_CREDITS.linkedin} for LinkedIn. All adds up the platforms that
-          return results (at most {SOCIAL_SEARCH_ALL_MAX}). Empty pages are free.
+          A page costs {SOCIAL_SEARCH_CREDITS.x} credits for X, Facebook, Instagram or Threads and {SOCIAL_SEARCH_CREDITS.linkedin} for LinkedIn when the platform returns posts, even if
+          they are all removed as duplicates or outside the time range. All adds up the platforms that return posts (at most {SOCIAL_SEARCH_ALL_MAX}). Pages where the platform returns
+          nothing are free.
         </p>
       </form>
       {error ? <p class="mt-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">{error}</p> : null}
@@ -572,11 +649,12 @@ export function SocialSearchPage({ platform, q, result, error, history = [], sav
           <p class="text-sm text-muted">
             {result.results.length} results · {result.credits} credits · {result.durationMs} ms
           </p>
+          <SocialFilterSummary result={result} />
           {all ? (
             <p class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
               {result.platforms.map((p) => (
                 <span class={p.error ? 'text-danger' : ''} title={p.error ?? undefined}>
-                  {socialLabel(p.platform)}: {p.error ? 'unavailable' : String(p.count)}
+                  {socialLabel(p.platform)}: {p.error ? 'unavailable' : p.rawCount > p.count ? `${p.count} of ${p.rawCount}` : String(p.count)}
                 </span>
               ))}
             </p>
@@ -615,14 +693,30 @@ export function SocialSearchPage({ platform, q, result, error, history = [], sav
             </ol>
           ) : (
             <div class="mt-3">
-              <Empty icon="search" title="No posts found" body="Try other keywords or another platform. Empty searches are free." />
+              {result.rawCount ? (
+                <Empty
+                  icon="search"
+                  title="No new posts on this page"
+                  body={`The platform returned ${plural(result.rawCount, 'post')}, but each was a duplicate or outside the time range.${result.nextCursor ? ' Load more results to keep looking.' : ''}`}
+                />
+              ) : (
+                <Empty icon="search" title="No posts found" body="Try other keywords, another platform or a wider time range. Searches where the platform returns nothing are free." />
+              )}
             </div>
           )}
+          {result.sessionLimitReached ? (
+            <p class="mt-4 text-center text-sm text-muted">This search has reached its paging limit. Narrow the query or time range for more posts.</p>
+          ) : null}
           {result.nextCursor ? (
             <form method="post" action="/dashboard/social" class="mt-4 flex justify-center">
               <input type="hidden" name="q" value={result.query} />
               <input type="hidden" name="platform" value={result.platform} />
               <input type="hidden" name="cursor" value={result.nextCursor} />
+              {/* Shown again in the form on the next page; the cursor alone decides the range searched. */}
+              <input type="hidden" name="period" value={filters.period} />
+              <input type="hidden" name="from" value={filters.from} />
+              <input type="hidden" name="to" value={filters.to} />
+              <input type="hidden" name="tz" value={filters.tz} />
               <button class="btn btn-ghost" type="submit">
                 More results ({all ? 'up to ' : ''}
                 {more} credits)

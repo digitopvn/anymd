@@ -24,6 +24,26 @@ export interface SocialSearchPage {
   nextCursor: string | null;
 }
 type SearchContext = Pick<ConvertContext, 'env' | 'tracer' | 'budget'>;
+/** A UTC half-open `[since, until)` interval in milliseconds; null ends are open. */
+export interface SearchWindow {
+  since: number | null;
+  until: number | null;
+}
+
+/**
+ * How each provider honours a time range. `native`: the range is sent to the provider (verified against its live API),
+ * so paging walks inside the window. `post_filter`: the provider has no verified date filter, so posts are filtered
+ * after fetching and a page may hold few or no posts from the range. Every result is re-checked against the range either way.
+ */
+export const SOCIAL_DATE_FILTER: Record<SocialPlatform, 'native' | 'post_filter'> = {
+  // X search operators since_time/until_time take Unix seconds and bound results exactly in UTC (checked 2026-10-13).
+  x: 'native',
+  facebook: 'post_filter',
+  instagram: 'post_filter',
+  threads: 'post_filter',
+  // The provider takes a `date_posted` field, but its accepted values are undocumented and unverified.
+  linkedin: 'post_filter',
+};
 
 const MAX_TEXT = 5000;
 const MAX_MEDIA = 4;
@@ -149,11 +169,21 @@ async function searchThreads(query: string, ctx: SearchContext): Promise<SocialS
   return parseThreadsSearch(await rapidJson(THREADS_HOST, '/api/v1/search/top', { query }, ctx, { allowEmpty: true }));
 }
 
-export async function searchPlatform(platform: SocialPlatform, query: string, cursor: string | undefined, ctx: SearchContext): Promise<SocialSearchPage> {
+/** X search operators for a window, widened to whole seconds; the caller re-checks exact bounds. */
+export function xWindowOperators(window: SearchWindow | null): string {
+  if (!window) return '';
+  const ops = [
+    window.since !== null ? `since_time:${Math.floor(window.since / 1000)}` : '',
+    window.until !== null ? `until_time:${Math.ceil(window.until / 1000)}` : '',
+  ].filter(Boolean);
+  return ops.length ? ` ${ops.join(' ')}` : '';
+}
+
+export async function searchPlatform(platform: SocialPlatform, query: string, cursor: string | undefined, ctx: SearchContext, window: SearchWindow | null = null): Promise<SocialSearchPage> {
   if (cursor && SINGLE_PAGE.has(platform)) return { results: [], nextCursor: null };
   switch (platform) {
     case 'x':
-      return parseXSearch(await rapidJson('twitter-api45.p.rapidapi.com', '/search.php', { query, search_type: 'Latest', ...(cursor ? { cursor } : {}) }, ctx, { allowEmpty: true }));
+      return parseXSearch(await rapidJson('twitter-api45.p.rapidapi.com', '/search.php', { query: `${query}${xWindowOperators(window)}`, search_type: 'Latest', ...(cursor ? { cursor } : {}) }, ctx, { allowEmpty: true }));
     case 'facebook':
       return parseFacebookSearch(await rapidJson('facebook-scraper3.p.rapidapi.com', '/search/posts', { query, ...(cursor ? { cursor } : {}) }, ctx, { allowEmpty: true }));
     case 'instagram':
