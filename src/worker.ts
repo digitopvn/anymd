@@ -26,6 +26,7 @@ import { dashboardRoutes } from './routes/dashboard';
 import { publicRoutes } from './routes/public';
 import { renderMessage } from './routes/shared';
 import { processPendingFeedback } from './services/feedback';
+import { sweepExpiredSessions } from './convert/social-search-session';
 import { recordAudit } from './services/admin/audit';
 
 export const app = new Hono<AppBindings>();
@@ -219,8 +220,9 @@ export default {
   async queue(batch: MessageBatch<VideoJobMessage>, env: Env): Promise<void> {
     await handleVideoQueue(batch, env);
   },
-  /** Settles feedback waiting on GitHub (rate limits, lost responses); see `src/services/feedback.ts`. */
+  /** Settles feedback waiting on GitHub (rate limits, lost responses; see `src/services/feedback.ts`) and sweeps expired social search sessions. */
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(processPendingFeedback(env).then(() => undefined, (err) => console.error('feedback retry failed', err instanceof Error ? err.message : String(err))));
+    ctx.waitUntil(sweepExpiredSessions(env, Date.now()).then(() => undefined, (err) => console.error('social search session sweep failed', err instanceof Error ? err.message : String(err))));
   },
 } satisfies ExportedHandler<Env, VideoJobMessage>;

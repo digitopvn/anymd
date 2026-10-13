@@ -15,6 +15,8 @@ import type { ReadingFormValues } from '../views/components/reading-options-fiel
 import { getDocument, librarySummary, listDocuments, listTags, normalizeTag } from '../library/store';
 import { searchForPrincipal, parseMode, usageSummary } from '../services';
 import { getSocialSearch, listSocialSearches, runSocialSearch, SOCIAL_SEARCH_TARGETS, type SocialSearchTarget } from '../convert/social-search';
+import { safeTimeZone, SOCIAL_SEARCH_PERIODS, zonedDayStart } from '../convert/social-search-results';
+import type { SocialFilterForm } from '../views/dashboard';
 import { ConvertError } from '../convert/types';
 import {
   AccountPage,
@@ -126,6 +128,27 @@ dashboardRoutes.get('/search', async (c) => {
   return shell(c, '/dashboard/search', 'Search', <SearchPage q={q} mode={mode} fanout={fanout} decide={decide} result={result} error={error} />);
 });
 
+/** Dashboard time filter fields → the search request. Custom dates are whole days in the browser's time zone (`tz`), `to` inclusive. */
+function socialFiltersFromForm(form: Record<string, string>): { request: { period?: string; since?: string; until?: string }; form: SocialFilterForm } {
+  const tz = safeTimeZone(form.tz);
+  const from = (form.from ?? '').slice(0, 10);
+  const to = (form.to ?? '').slice(0, 10);
+  const period = (SOCIAL_SEARCH_PERIODS as readonly string[]).includes(form.period) || form.period === 'custom' ? form.period : '';
+  const filters: SocialFilterForm = { period, from, to, tz };
+  if (period !== 'custom') return { request: period ? { period } : {}, form: filters };
+  return {
+    request: { since: from ? (zonedDayStart(from, tz) ?? from) : undefined, until: to ? (zonedDayStart(to, tz, 1) ?? to) : undefined },
+    form: filters,
+  };
+}
+
+/** A resolved range shown back in the form: presets as-is, custom ranges as UTC calendar days. */
+function socialFiltersFromRange(range: { period: string | null; since: string | null; until: string | null } | null): SocialFilterForm {
+  if (!range) return { period: '', from: '', to: '', tz: 'UTC' };
+  if (range.period) return { period: range.period, from: '', to: '', tz: 'UTC' };
+  return { period: 'custom', from: range.since?.slice(0, 10) ?? '', to: range.until ? new Date(Date.parse(range.until) - 1).toISOString().slice(0, 10) : '', tz: 'UTC' };
+}
+
 const socialHistory = (c: AppContext) => listSocialSearches(c.env, c.get('principal').userId!);
 
 dashboardRoutes.get('/social', async (c) =>
@@ -135,23 +158,29 @@ dashboardRoutes.get('/social', async (c) =>
 dashboardRoutes.get('/social/:id', async (c) => {
   const saved = await getSocialSearch(c.env, c.get('principal').userId!, c.req.param('id'));
   if (!saved) return renderMessage(c, 404, 'Search not found', 'Only your most recent searches are kept.', <a class="btn btn-dark" href="/dashboard/social">Social search</a>);
-  return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={saved.platform} q={saved.query} result={saved} saved={saved} history={await socialHistory(c)} />);
+  return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={saved.platform} q={saved.query} filters={socialFiltersFromRange(saved.timeRange)} result={saved} saved={saved} history={await socialHistory(c)} />);
 });
 
 dashboardRoutes.post('/social', async (c) => {
   const form = await formData(c);
   const platform: SocialSearchTarget = (SOCIAL_SEARCH_TARGETS as readonly string[]).includes(form.platform) ? (form.platform as SocialSearchTarget) : 'x';
   const q = (form.q ?? '').trim().slice(0, 200);
+  const filters = socialFiltersFromForm(form);
   try {
-    const result = await runSocialSearch(c.env, c.executionCtx, { platform, query: q, cursor: form.cursor, channel: 'web', principal: c.get('principal') });
-    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} result={result} history={await socialHistory(c)} />);
+    // A "More results" post carries only the cursor: the paging session keeps the original time range.
+    const range = form.cursor ? {} : filters.request;
+    const result = await runSocialSearch(c.env, c.executionCtx, { platform, query: q, cursor: form.cursor, ...range, channel: 'web', principal: c.get('principal') });
+    // A next page shows the filter it was posted with, unless that no longer describes the range the cursor kept.
+    const shown = form.cursor && (Boolean(filters.form.period) !== Boolean(result.timeRange)) ? socialFiltersFromRange(result.timeRange) : filters.form;
+    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} filters={shown} result={result} history={await socialHistory(c)} />);
   } catch (e) {
     const known = e instanceof ConvertError;
-    const error = known && e.status < 500 ? e.message
+    const error = known && e.code === 'cursor_conflict' ? `${e.message} Pages that loaded are listed under Recent searches.`
+      : known && e.status < 500 ? e.message
       : known && e.code === 'provider_unavailable' ? 'The search provider for this platform is unavailable right now. Try again later or pick another platform.'
       : 'Search failed. Try again in a moment.';
     if (!known) console.error('dashboard social search', e);
-    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} result={null} error={error} history={await socialHistory(c)} />, { status: known ? e.status : 500 });
+    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} filters={filters.form} result={null} error={error} history={await socialHistory(c)} />, { status: known ? e.status : 500 });
   }
 });
 

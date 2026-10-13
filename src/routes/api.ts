@@ -321,8 +321,13 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
 
 /** Search public posts on X, Facebook, Instagram, Threads or LinkedIn. Each non-empty page costs credits. */
 api.post('/social/search', requireScope('convert'), async (c) => {
-  const b = await body(c, z.object({ platform: z.unknown(), query: z.unknown().optional(), q: z.unknown().optional(), cursor: z.unknown().optional() }));
-  const r = await runSocialSearch(c.env, c.executionCtx, { platform: b.platform, query: b.query ?? b.q, cursor: b.cursor, channel: channelFor(c), principal: c.get('principal') });
+  const b = await body(c, z.object({
+    platform: z.unknown(), query: z.unknown().optional(), q: z.unknown().optional(), cursor: z.unknown().optional(),
+    period: z.unknown().optional(), since: z.unknown().optional(), until: z.unknown().optional(),
+  }));
+  const r = await runSocialSearch(c.env, c.executionCtx, {
+    platform: b.platform, query: b.query ?? b.q, cursor: b.cursor, period: b.period, since: b.since, until: b.until, channel: channelFor(c), principal: c.get('principal'),
+  });
   c.header('X-Anymd-Credits', String(r.credits));
   c.header('X-Anymd-Trace', r.traceId);
   return c.json(socialSearchPayload(r));

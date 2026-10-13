@@ -5,7 +5,7 @@ import { arr, bool, idParam, int, nullable, obj, ref, str, type Op, type Schema 
 import { DEFAULT_READING_PREFERENCES as READ_DEFAULTS, READING_LIMITS as LIMITS } from './lib/reading-options';
 import { SOCIAL_SEARCH_CREDITS } from './billing/plans';
 import { SOCIAL_PLATFORMS } from './convert/social-search-providers';
-import { SOCIAL_SEARCH_ALL_MAX, SOCIAL_SEARCH_TARGETS } from './convert/social-search';
+import { SOCIAL_SEARCH_ALL_MAX, SOCIAL_SEARCH_PERIODS, SOCIAL_SEARCH_TARGETS } from './convert/social-search';
 import { FEEDBACK_LIMITS, FEEDBACK_TYPES } from './services/feedback';
 
 const ERROR_TEXT: Record<number, string> = {
@@ -215,19 +215,22 @@ const OPS: Record<string, Record<string, Op>> = {
   '/social/search': {
     post: {
       summary: 'Search social media posts',
-      description: `Searches public posts on X, Facebook, Instagram, Threads, LinkedIn, or all of them with \`platform: "all"\` (results merged newest first), and returns normalized results with a per-platform status. Requires an account. Each page that returns results costs ${SOCIAL_SEARCH_CREDITS.x} credits on X, Facebook, Instagram or Threads and ${SOCIAL_SEARCH_CREDITS.linkedin} on LinkedIn; \`all\` searches every platform at once and costs the sum for the platforms that returned results (at most ${SOCIAL_SEARCH_ALL_MAX}). Empty pages and provider failures cost nothing. Pass \`next_cursor\` as \`cursor\` for the next page. Searches appear in the dashboard history; they are not saved to the library, so convert a result URL to keep it.`,
+      description: `Searches public posts on X, Facebook, Instagram, Threads, LinkedIn, or all of them with \`platform: "all"\` (results merged newest first), and returns normalized results with a per-platform status. Requires an account. Optional time filter: \`period\` (24h, 7d, 30d, anchored when the search starts) or \`since\`/\`until\` (ISO-8601, half-open \`[since, until)\` in UTC); posts without a date are excluded while it is active. Posts are de-duplicated by exact post identity within a page and across every page of one search. X filters by date at the provider; the others are filtered after fetching, so \`coverage\` is \`provider_limited\`. Each page where a platform returns posts costs ${SOCIAL_SEARCH_CREDITS.x} credits on X, Facebook, Instagram or Threads and ${SOCIAL_SEARCH_CREDITS.linkedin} on LinkedIn, even if filtering removes every post; \`all\` costs the sum for the platforms that returned posts (at most ${SOCIAL_SEARCH_ALL_MAX}). Pages where the platform returns nothing, and provider failures, cost nothing. Pass \`next_cursor\` as \`cursor\` for the next page: it keeps the time range, works once, and expires after 24 hours. Searches appear in the dashboard history; they are not saved to the library, so convert a result URL to keep it.`,
       tag: 'Search',
       scope: 'convert',
       body: obj(
         {
           platform: str('Platform to search, or all of them', { enum: [...SOCIAL_SEARCH_TARGETS] }),
           query: str('Keywords, hashtags or a phrase (1-200 characters)', { examples: ['cloudflare workers'] }),
-          cursor: str('next_cursor from the previous page'),
+          cursor: str('next_cursor from the previous page; it keeps the time range of the first page'),
+          period: str('Only posts from the last 24h, 7d or 30d. Not with since/until', { enum: [...SOCIAL_SEARCH_PERIODS] }),
+          since: str('Only posts published at or after this time (ISO-8601 with a zone, or YYYY-MM-DD for UTC midnight)', { format: 'date-time', examples: ['2026-10-01T00:00:00Z'] }),
+          until: str('Only posts published before this time (exclusive)', { format: 'date-time', examples: ['2026-10-13T00:00:00Z'] }),
         },
         ['platform', 'query'],
       ),
       ok: ref('SocialSearchResponse'),
-      errors: [400, 402, 422, 502, 503],
+      errors: [400, 402, 409, 422, 502, 503],
     },
   },
   '/search': {
@@ -451,16 +454,29 @@ const SCHEMAS: Record<string, Schema> = {
   }),
   SocialPlatformStatus: obj({
     platform: str(undefined, { enum: [...SOCIAL_PLATFORMS] }),
-    count: int('Results from this platform'),
+    count: int('Results from this platform after de-duplication and the time filter'),
     credits: int('Credits charged for this platform'),
     error: nullable(str('Why this platform failed; the other platforms still answer')),
+    raw_count: int('Posts the platform returned; raw_count = count + duplicate_count + out_of_range_count + missing_timestamp_count'),
+    duplicate_count: int('Posts already returned on this page or an earlier page of the search'),
+    out_of_range_count: int('Dated posts outside the time range'),
+    missing_timestamp_count: int('Posts without a date, excluded while a time range is active'),
+    filter_mode: str('How the time range was applied', { enum: ['none', 'native', 'post_filter'] }),
   }),
   SocialSearchResponse: obj({
     platform: str(undefined, { enum: [...SOCIAL_SEARCH_TARGETS] }),
     query: str(),
     count: int(),
+    raw_count: int('Posts the platforms returned before de-duplication and the time filter'),
+    duplicate_count: int(),
+    out_of_range_count: int(),
+    missing_timestamp_count: int(),
+    time_range: nullable(obj({ period: nullable(str(undefined, { enum: [...SOCIAL_SEARCH_PERIODS] })), since: nullable(str(undefined, { format: 'date-time' })), until: nullable(str(undefined, { format: 'date-time' })) }, undefined, 'The resolved UTC range [since, until); null without a filter')),
+    coverage: str('unfiltered (no range), native (filtered by every provider) or provider_limited (some platform filtered after fetching; posts in range may be missing)', { enum: ['unfiltered', 'native', 'provider_limited'] }),
     results: arr(ref('SocialPost')),
-    next_cursor: nullable(str()),
+    next_cursor: nullable(str('Single-use cursor for the next page, valid for 24 hours')),
+    next_page_credits: int('Most the next page can cost; 0 without a next page'),
+    session_limit_reached: { type: 'boolean', description: 'Paging stopped at the search page or remembered-post limit' },
     credits: int(),
     platforms: arr(ref('SocialPlatformStatus'), 'One entry per platform searched'),
     trace_id: str(),
