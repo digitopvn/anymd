@@ -18,7 +18,7 @@ import { ConversionBudget } from './enrichment-types';
 import { searchPlatform, SOCIAL_DATE_FILTER, SOCIAL_PLATFORMS, type SocialPlatform, type SocialSearchPage, type SocialSearchResult } from './social-search-providers';
 import { filterPage, mergeNewestFirst, rangeIso, resolveTimeRange, sameRequestedRange, SOCIAL_SEARCH_PERIODS, type TimeRange } from './social-search-results';
 import {
-  advanceSession, claimSession, createSession, deleteSession, isSessionCursor, loadSession, parseSessionCursor, queryKey, releaseSession,
+  advanceSession, claimSession, createSession, cursorUsed, deleteSession, isSessionCursor, loadSession, parseSessionCursor, queryKey, releaseSession,
   SESSION_MAX_PAGES, SESSION_MAX_SEEN, type ProviderCursors, type SearchSession,
 } from './social-search-session';
 import { ConvertError } from './types';
@@ -163,7 +163,7 @@ export async function runSocialSearch(env: Env, ctx: WaitUntil, req: SocialSearc
       if (!sameRequestedRange(filters, session.range)) {
         throw new ConvertError('Invalid social search: cursor belongs to a search with a different time range; omit period/since/until to keep the original range', 400, 'invalid_request');
       }
-      if (handle.version !== session.version) throw new ConvertError('This page was already requested with this cursor. Continue from the latest next_cursor, or start the search again.', 409, 'cursor_conflict');
+      if (handle.version !== session.version) throw cursorUsed();
       range = session.range;
       targets = SOCIAL_PLATFORMS.flatMap((p) => (session!.cursors[p] ? [{ platform: p, cursor: session!.cursors[p] }] : []));
     } else if (cursor) {
@@ -185,8 +185,8 @@ export async function runSocialSearch(env: Env, ctx: WaitUntil, req: SocialSearc
     reserved = true;
     if (allowance < price) throw new ConvertError(`This social search needs ${price} credits; fewer are left this month. Upgrade at https://anymd.cc/pricing`, 402, 'quota_exceeded');
     if (session) {
-      await claimSession(env, principal.userId, session.id, session.version, now);
-      claimed = { id: session.id, version: session.version + 1 };
+      await claimSession(env, principal.userId, session.id, session.version, tracer.id, now);
+      claimed = { id: session.id, version: session.version };
     }
 
     const window = range ? { since: range.since, until: range.until } : null;
@@ -229,25 +229,28 @@ export async function runSocialSearch(env: Env, ctx: WaitUntil, req: SocialSearc
 
     // A provider keeps paging while it returned posts and a new cursor, even if every post was filtered out.
     // A provider that hands back the cursor it was given would loop forever, so it stops.
-    const nextCursors: ProviderCursors = Object.fromEntries(
-      outcomes.filter((o) => o.page.nextCursor && o.page.results.length && o.page.nextCursor !== o.cursor).map((o) => [o.platform, o.page.nextCursor!]),
-    );
+    // In "all", a platform that failed mid-search keeps its cursor and is asked again on the next page (failed calls are free).
+    const nextCursors: ProviderCursors = Object.fromEntries(outcomes.flatMap((o): [SocialPlatform, string][] => {
+      if (o.error) return o.cursor ? [[o.platform, o.cursor]] : [];
+      return o.page.nextCursor && o.page.results.length && o.page.nextCursor !== o.cursor ? [[o.platform, o.page.nextCursor]] : [];
+    }));
     const seenNext = [...seen, ...filtered.flatMap((o) => o.keys)];
     const pages = (session?.pages ?? 0) + 1;
     const hasMore = Object.keys(nextCursors).length > 0;
     const sessionLimitReached = hasMore && (pages >= SESSION_MAX_PAGES || seenNext.length > SESSION_MAX_SEEN);
+
+    // Settle first: a billing failure must leave the cursor the client holds usable (the catch releases the lease).
+    await settleConversion(env, tracer.id, credits);
+    settled = true;
     let nextCursor: string | null = null;
     if (hasMore && !sessionLimitReached) {
       nextCursor = claimed
-        ? await advanceSession(env, claimed.id, claimed.version, { cursors: nextCursors, seen: seenNext, pages }, now)
+        ? await advanceSession(env, claimed.id, claimed.version, tracer.id, { cursors: nextCursors, seen: seenNext, pages }, now)
         : await createSession(env, principal.userId, { platform, queryKey: queryKey(query), range, cursors: nextCursors, seen: seenNext }, now);
     } else if (claimed) {
-      await deleteSession(env, claimed.id);
+      await deleteSession(env, claimed.id, tracer.id);
     }
     completed = true;
-
-    await settleConversion(env, tracer.id, credits);
-    settled = true;
 
     const sum = (key: 'rawCount' | 'duplicateCount' | 'outOfRangeCount' | 'missingTimestampCount') => platforms.reduce((n, p) => n + p[key], 0);
     const coverage: SocialCoverage = !range ? 'unfiltered' : platforms.every((p) => p.filterMode === 'native') ? 'native' : 'provider_limited';
@@ -273,7 +276,7 @@ export async function runSocialSearch(env: Env, ctx: WaitUntil, req: SocialSearc
   } catch (err) {
     if (reserved && !settled) await settleConversion(env, tracer.id, 0).catch(() => undefined);
     // Nothing was returned for this cursor, so it stays usable for a retry.
-    if (claimed && !completed) await releaseSession(env, claimed.id, claimed.version).catch(() => undefined);
+    if (claimed && !completed) await releaseSession(env, claimed.id, tracer.id).catch(() => undefined);
     const e = err instanceof ConvertError ? err : new ConvertError('Social search failed', 500, 'internal');
     if (principal.userId) {
       ctx.waitUntil(

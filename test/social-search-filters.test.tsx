@@ -1,18 +1,25 @@
 import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { settleConversion } from '../src/lib/conversion-budget';
 import { SOCIAL_SEARCH_CREDITS } from '../src/billing/plans';
 import { getSocialSearch, listSocialSearches, runSocialSearch, socialSearchPayload, type SocialSearchResponse } from '../src/convert/social-search';
-import type { SocialSearchResult } from '../src/convert/social-search-providers';
+import { type SocialSearchResult, xQuery } from '../src/convert/social-search-providers';
 import {
   canonicalPostUrl, filterPage, MAX_RANGE_DAYS, parseTimestamp, postKey, resolveTimeRange, sameRequestedRange, zonedDayStart,
 } from '../src/convert/social-search-results';
-import { parseSessionCursor, SESSION_MAX_PAGES, SESSION_TTL_MS, sweepExpiredSessions } from '../src/convert/social-search-session';
+import { claimSession, createSession, parseSessionCursor, SESSION_LEASE_MS, SESSION_MAX_PAGES, SESSION_TTL_MS, sweepExpiredSessions } from '../src/convert/social-search-session';
 import type { AppBindings, Principal } from '../src/env';
 import { creditsUsedThisMonth } from '../src/lib/usage';
 import { api } from '../src/routes/api';
 import { SocialSearchPage } from '../src/views/dashboard';
 import { callTool } from './helpers/mcp-client';
 import { createTestEnv, seedUser, type TestEnv } from './helpers/sqlite-env';
+
+// Pass-through, so a test can make one settlement fail.
+vi.mock('../src/lib/conversion-budget', async (original) => {
+  const m = await original<typeof import('../src/lib/conversion-budget')>();
+  return { ...m, settleConversion: vi.fn(m.settleConversion) };
+});
 
 const NOW = Date.parse('2026-10-13T12:00:00Z');
 const DAY = 86_400_000;
@@ -70,6 +77,9 @@ describe('time ranges', () => {
     expect(zonedDayStart('2026-11-01', 'America/New_York')).toBe('2026-11-01T04:00:00.000Z');
     expect(zonedDayStart('2026-11-02', 'America/New_York')).toBe('2026-11-02T05:00:00.000Z');
     expect(zonedDayStart('not-a-date', 'UTC')).toBeNull();
+    expect(zonedDayStart('2026-02-30', 'UTC')).toBeNull();
+    expect(zonedDayStart('2026-13-45', 'UTC')).toBeNull();
+    expect(zonedDayStart('2026-12-31', 'UTC', 1)).toBe('2027-01-01T00:00:00.000Z');
   });
 });
 
@@ -79,6 +89,20 @@ describe('exact post identity', () => {
     expect(canonicalPostUrl('https://m.facebook.com/story.php?story_fbid=9&id=2&fbclid=abc')).toBe('https://facebook.com/story.php?id=2&story_fbid=9');
     expect(canonicalPostUrl('https://www.threads.com/@a/post/XYZ')).toBe('https://threads.net/@a/post/XYZ');
     expect(canonicalPostUrl('javascript:alert(1)')).toBeNull();
+  });
+
+  it('keeps fallback keys short and distinct', () => {
+    const long = (n: number) => post({ platform: 'facebook', id: 'bad id', url: `https://www.facebook.com/groups/g/permalink/?story=${'a'.repeat(400)}${n}` });
+    const [a, b] = [postKey(long(1)), postKey(long(2))];
+    expect(a.length).toBeLessThan(200);
+    expect(a).not.toBe(b);
+    expect(postKey(long(1))).toBe(a);
+  });
+
+  it('groups the X query so its own operators cannot swallow the window', () => {
+    expect(xQuery('cats OR', null)).toBe('cats OR');
+    expect(xQuery('"open quote OR', { since: 1_000, until: 2_500 })).toBe('("open quote OR) since_time:1 until_time:3');
+    expect(xQuery('cats', { since: null, until: 2_000 })).toBe('(cats) until_time:2');
   });
 
   it('keys posts by their platform id, so URL variants match and cross-posts stay distinct', () => {
@@ -166,7 +190,7 @@ describe('runSocialSearch with filters and paging sessions', () => {
     }));
     const first = await runSocialSearch(env, ctx, { platform: 'x', query: 'Cats', period: '7d', channel: 'api', principal });
     const q = new URL(String(fetch.mock.calls[0][0])).searchParams.get('query');
-    expect(q).toBe(`Cats since_time:${(NOW - 7 * DAY) / 1000} until_time:${NOW / 1000}`);
+    expect(q).toBe(`(Cats) since_time:${(NOW - 7 * DAY) / 1000} until_time:${NOW / 1000}`);
     expect(first).toMatchObject({
       coverage: 'native', timeRange: { period: '7d', since: new Date(NOW - 7 * DAY).toISOString(), until: new Date(NOW).toISOString() },
       rawCount: 2, nextPageCredits: SOCIAL_SEARCH_CREDITS.x, platforms: [{ platform: 'x', filterMode: 'native', rawCount: 2, count: 2 }],
@@ -176,7 +200,7 @@ describe('runSocialSearch with filters and paging sessions', () => {
     // Later: the window does not slide, and the cursor carries it without repeating period.
     vi.setSystemTime(NOW + 3_600_000);
     const second = await runSocialSearch(env, ctx, { platform: 'x', query: 'cats', cursor: first.nextCursor!, channel: 'api', principal });
-    expect(new URL(String(fetch.mock.calls[1][0])).searchParams.get('query')).toBe(q!.replace('Cats', 'cats'));
+    expect(new URL(String(fetch.mock.calls[1][0])).searchParams.get('query')).toBe(q!.replace('(Cats)', '(cats)'));
     expect(new URL(String(fetch.mock.calls[1][0])).searchParams.get('cursor')).toBe('c2');
     expect(second.results.map((r) => r.id)).toEqual(['3']);
     expect(second).toMatchObject({ rawCount: 3, duplicateCount: 1, outOfRangeCount: 1, credits: SOCIAL_SEARCH_CREDITS.x, timeRange: first.timeRange });
@@ -331,6 +355,69 @@ describe('runSocialSearch with filters and paging sessions', () => {
     expect((await listSocialSearches(env, user.id))[0].timeRange).toBeNull();
   });
 
+  it('frees a cursor whose request died mid-page once its lease runs out', async () => {
+    const { env, user, principal } = await setup();
+    let n = 0;
+    answer({ 'twitter-api45.p.rapidapi.com': () => json({ timeline: [tweet(String(++n), '2026-10-12T00:00:00Z')], next_cursor: `n${n}` }) });
+    const first = await runSocialSearch(env, ctx, { platform: 'x', query: 'cats', channel: 'api', principal });
+    const handle = parseSessionCursor(first.nextCursor!);
+    // A request took the page and was cancelled before it could deliver or give the lease back.
+    await claimSession(env, user.id, handle.id, handle.version, 'trc_dead', Date.now());
+    await expect(runSocialSearch(env, ctx, { platform: 'x', query: 'cats', cursor: first.nextCursor!, channel: 'api', principal }))
+      .rejects.toMatchObject({ status: 409, code: 'cursor_conflict', message: expect.stringContaining('still loading') });
+    vi.setSystemTime(NOW + SESSION_LEASE_MS + 1);
+    const retry = await runSocialSearch(env, ctx, { platform: 'x', query: 'cats', cursor: first.nextCursor!, channel: 'api', principal });
+    expect(retry.results.map((r) => r.id)).toEqual(['2']);
+    await flush();
+  });
+
+  it('keeps the cursor usable when billing fails after the page was fetched', async () => {
+    const { env, principal } = await setup();
+    let n = 0;
+    answer({ 'twitter-api45.p.rapidapi.com': () => json({ timeline: [tweet(String(++n), '2026-10-12T00:00:00Z')], next_cursor: `n${n}` }) });
+    const first = await runSocialSearch(env, ctx, { platform: 'x', query: 'cats', channel: 'api', principal });
+    vi.mocked(settleConversion).mockRejectedValueOnce(new Error('D1 unavailable'));
+    await expect(runSocialSearch(env, ctx, { platform: 'x', query: 'cats', cursor: first.nextCursor!, channel: 'api', principal })).rejects.toMatchObject({ status: 500 });
+    const retry = await runSocialSearch(env, ctx, { platform: 'x', query: 'cats', cursor: first.nextCursor!, channel: 'api', principal });
+    expect(retry.nextCursor).toMatch(/^amdss2\./);
+    await flush();
+  });
+
+  it('asks a platform that failed mid-search again on the next page in "all"', async () => {
+    const { env, principal } = await setup();
+    let igDown = false;
+    let n = 0;
+    const fetch = answer({
+      'twitter-api45.p.rapidapi.com': () => json({ timeline: [tweet(String(++n), '2026-10-12T00:00:00Z')], next_cursor: `x${n}` }),
+      'instagram-pro-and-cheap-api.p.rapidapi.com': (u) => igDown ? json({ message: 'down' }, 500)
+        : json({ items: [{ shortcode: `IG${u.searchParams.get('cursor') ?? '0'}`, url: `https://www.instagram.com/p/IG${u.searchParams.get('cursor') ?? '0'}/`, caption: 'c', owner: { username: 'u' }, taken_at: 1791800000 }], next_cursor: 'i2', has_more: true }),
+    });
+    const first = await runSocialSearch(env, ctx, { platform: 'all', query: 'cats', channel: 'api', principal });
+    igDown = true;
+    const second = await runSocialSearch(env, ctx, { platform: 'all', query: 'cats', cursor: first.nextCursor!, channel: 'api', principal });
+    expect(second.platforms.find((p) => p.platform === 'instagram')).toMatchObject({ error: expect.stringMatching(/^upstream_error/), credits: 0 });
+    expect(second.nextPageCredits).toBe(SOCIAL_SEARCH_CREDITS.x + SOCIAL_SEARCH_CREDITS.instagram);
+    igDown = false;
+    fetch.mockClear();
+    const third = await runSocialSearch(env, ctx, { platform: 'all', query: 'cats', cursor: second.nextCursor!, channel: 'api', principal });
+    const ig = fetch.mock.calls.map(([u]) => new URL(String(u))).find((u) => u.hostname.startsWith('instagram'));
+    expect(ig?.searchParams.get('cursor')).toBe('i2');
+    expect(third.results.map((r) => r.id).includes('IGi2')).toBe(true);
+    await flush();
+  });
+
+  it('drops the least recently used sessions past the per-user cap', async () => {
+    const { env, user } = await setup();
+    const make = (at: number) => createSession(env, user.id, { platform: 'x', queryKey: 'q', range: null, cursors: { x: 'c' }, seen: [] }, at);
+    const oldest = parseSessionCursor(await make(NOW - 1000)).id;
+    // The oldest search is still being paged.
+    t!.db.prepare('UPDATE social_search_sessions SET updated_at = ? WHERE id = ?').run(NOW + 1000, oldest);
+    for (let i = 0; i < 50; i++) await make(NOW + i);
+    const ids = (t!.db.prepare('SELECT id FROM social_search_sessions').all() as { id: string }[]).map((r) => r.id);
+    expect(ids).toHaveLength(50);
+    expect(ids.includes(oldest)).toBe(true);
+  });
+
   it('takes filters over REST and MCP, and maps cursor errors to their status', async () => {
     const { env, principal } = await setup();
     let n = 0;
@@ -383,6 +470,16 @@ describe('dashboard social filters', () => {
     // The next page form keeps showing the filter; the cursor alone sets the range.
     expect(html.includes('<input type="hidden" name="period" value="7d"')).toBe(true);
     expect(html.includes('<input type="hidden" name="tz" value="Asia/Ho_Chi_Minh"')).toBe(true);
+  });
+
+  it('does not offer to page a saved search with a single-use cursor', () => {
+    const html = String(<SocialSearchPage platform="all" q="cats" result={result({})} saved={{ channel: 'web', createdAt: NOW }} />);
+    expect(html.includes('name="cursor"')).toBe(false);
+    expect(html.includes('Search again to keep paging')).toBe(true);
+    expect(html.includes('data-social-form')).toBe(true);
+    // An older provider cursor saved before paging sessions still pages.
+    const legacy = String(<SocialSearchPage platform="x" q="cats" result={result({ platform: 'x', nextCursor: 'raw-provider-cursor' })} saved={{ channel: 'web', createdAt: NOW }} />);
+    expect(legacy.includes('name="cursor" value="raw-provider-cursor"')).toBe(true);
   });
 
   it('distinguishes an empty search from an exhausted one', () => {

@@ -17,7 +17,7 @@ Social search finds public posts by keyword on five platforms, or on all of them
 
 ### Searching all platforms
 
-`platform: "all"` asks every platform in parallel and merges the posts newest first; each result keeps its own `platform`. The `platforms` array reports how each one did. When one platform fails, the others still answer and the failed one carries an `error`; the call fails with `502` only when every platform fails. `next_cursor` continues only the platforms that have another page, so later pages ask fewer platforms.
+`platform: "all"` asks every platform in parallel and merges the posts newest first; each result keeps its own `platform`. The `platforms` array reports how each one did. When one platform fails, the others still answer and the failed one carries an `error`; the call fails with `502` only when every platform fails. `next_cursor` continues only the platforms that have another page, so later pages ask fewer platforms. A platform that fails on a later page keeps its place and is asked again on the next one.
 
 ## Time filters
 
@@ -53,7 +53,7 @@ To keep a post, convert its `url` (a Facebook, Instagram, Threads or LinkedIn po
 
 ## Search history
 
-Every successful search page, from any channel, is saved to your account with its results. The dashboard lists your most recent searches under **Recent searches**; open one to see its results again without spending credits. The newest 200 searches are kept, and older ones are dropped as new ones arrive. Saved results show the posts as they were found; search again for fresh posts. Deleting your account deletes the history.
+Every successful search page, from any channel, is saved to your account with its results. The dashboard lists your most recent searches under **Recent searches**; open one to see its results again without spending credits. The newest 200 searches are kept, and older ones are dropped as new ones arrive. Saved results show the posts as they were found; search again for fresh posts or more pages (paging cursors are single-use and last 24 hours, so a saved search does not page on). Deleting your account deletes the history.
 
 ## Dashboard
 
@@ -126,7 +126,7 @@ curl https://anymd.cc/api/v1/social/search \
 | 400 | `cursor_expired` | The cursor is older than 24 hours, unknown or from another account; start the search again |
 | 401 | `authentication_required` | No account behind the request |
 | 402 | `quota_exceeded` | Fewer credits left this month than the page price |
-| 409 | `cursor_conflict` | The cursor was already used (a replay or a concurrent request); continue from the latest `next_cursor` |
+| 409 | `cursor_conflict` | The cursor was already used (a replay), or its page is still loading in another request; continue from the latest `next_cursor`. A request that was cut off mid-page frees its cursor within two minutes |
 | 502 | `upstream_error` | The platform provider failed (with `all`, every provider failed); nothing was charged |
 | 503 | `provider_unavailable` | Social search is not configured on this server |
 

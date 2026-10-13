@@ -153,7 +153,19 @@ export function postKey(r: SocialSearchResult): string {
       break;
   }
   if (fromUrl) return `${r.platform}:${fromUrl}`;
-  return `${r.platform}:url:${canonicalPostUrl(r.url) ?? r.url}`;
+  return `${r.platform}:url:${boundedKey(canonicalPostUrl(r.url) ?? r.url)}`;
+}
+
+/** Keeps URL keys short so a session's remembered posts stay small: long URLs keep a prefix plus a hash of the whole. */
+function boundedKey(value: string): string {
+  if (value.length <= 160) return value;
+  // FNV-1a, twice with different seeds: 64 bits are plenty to tell apart the posts of one search.
+  const fnv = (seed: number) => {
+    let h = seed;
+    for (let i = 0; i < value.length; i++) h = Math.imul(h ^ value.charCodeAt(i), 0x01000193) >>> 0;
+    return h.toString(16).padStart(8, '0');
+  };
+  return `${value.slice(0, 120)}#${fnv(0x811c9dc5)}${fnv(0x01000193)}`;
 }
 
 /** How complete a result is; the most complete copy of a duplicate is kept. Engagement counts are never summed. */
@@ -254,8 +266,10 @@ function zoneOffset(t: number, timeZone: string): number {
 export function zonedDayStart(date: string, timeZone: string, addDays = 0): string | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!m) return null;
-  const guess = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + addDays);
-  if (Number.isNaN(guess)) return null;
+  const day = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // Reject days that do not exist (2026-02-30) instead of rolling them over.
+  if (Number.isNaN(day) || new Date(day).toISOString().slice(0, 10) !== date) return null;
+  const guess = day + addDays * 86_400_000;
   const first = guess - zoneOffset(guess, timeZone);
   return new Date(guess - zoneOffset(first, timeZone)).toISOString();
 }

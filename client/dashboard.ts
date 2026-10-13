@@ -121,6 +121,17 @@ function initSocialFilters(period: HTMLSelectElement): void {
   sync();
 }
 
+/** Every social search page costs credits: one submit per click, so a double-click never spends a cursor twice. */
+function initSocialForms(): void {
+  document.querySelectorAll<HTMLFormElement>('form[data-social-form]').forEach((form) => {
+    form.addEventListener('submit', (e) => {
+      if (form.dataset.submitting) return e.preventDefault();
+      form.dataset.submitting = '1';
+      form.querySelectorAll<HTMLButtonElement>('button[type="submit"]').forEach((b) => b.setAttribute('aria-busy', 'true'));
+    });
+  });
+}
+
 /** Runs on every page; each part only acts when its hooks exist. */
 export function initDashboard(): void {
   if ($('[data-confirm]')) initConfirm();
@@ -130,4 +141,5 @@ export function initDashboard(): void {
   if (key) initNewKey(key);
   const period = $('[data-social-period]');
   if (period instanceof HTMLSelectElement) initSocialFilters(period);
+  if ($('[data-social-form]')) initSocialForms();
 }

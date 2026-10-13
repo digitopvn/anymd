@@ -179,11 +179,17 @@ export function xWindowOperators(window: SearchWindow | null): string {
   return ops.length ? ` ${ops.join(' ')}` : '';
 }
 
+/** The X query with the window operators; the user's query is grouped so a trailing OR or open quote cannot swallow them. */
+export function xQuery(query: string, window: SearchWindow | null): string {
+  const ops = xWindowOperators(window);
+  return ops ? `(${query})${ops}` : query;
+}
+
 export async function searchPlatform(platform: SocialPlatform, query: string, cursor: string | undefined, ctx: SearchContext, window: SearchWindow | null = null): Promise<SocialSearchPage> {
   if (cursor && SINGLE_PAGE.has(platform)) return { results: [], nextCursor: null };
   switch (platform) {
     case 'x':
-      return parseXSearch(await rapidJson('twitter-api45.p.rapidapi.com', '/search.php', { query: `${query}${xWindowOperators(window)}`, search_type: 'Latest', ...(cursor ? { cursor } : {}) }, ctx, { allowEmpty: true }));
+      return parseXSearch(await rapidJson('twitter-api45.p.rapidapi.com', '/search.php', { query: xQuery(query, window), search_type: 'Latest', ...(cursor ? { cursor } : {}) }, ctx, { allowEmpty: true }));
     case 'facebook':
       return parseFacebookSearch(await rapidJson('facebook-scraper3.p.rapidapi.com', '/search/posts', { query, ...(cursor ? { cursor } : {}) }, ctx, { allowEmpty: true }));
     case 'instagram':

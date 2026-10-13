@@ -10,6 +10,7 @@ import { formatNumber, humanDate, safeJson, timeAgo } from '../lib/util';
 import type { DocumentRow, DocumentSummary } from '../library/store';
 import type { SearchMode, SearchResponse } from '../library/search';
 import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
+import { isSessionCursor } from '../convert/social-search-session';
 import { nextPageCredits, SOCIAL_SEARCH_ALL_MAX, type SocialSearchHistoryItem, type SocialSearchResponse, type SocialSearchTarget } from '../convert/social-search';
 import { Icon, Logo } from './components/icons';
 import { Converter } from './components/marketing';
@@ -580,9 +581,11 @@ export function SocialSearchPage({ platform, q, filters = NO_FILTER, result, err
 }) {
   const all = result?.platform === 'all';
   const more = result ? nextPageCredits(result) : 0;
+  // A saved page's paging cursor is single-use and short-lived, so a reopened search starts again instead of paging.
+  const pageable = Boolean(result?.nextCursor) && !(saved && isSessionCursor(result!.nextCursor!));
   return (
     <>
-      <form class="card p-3 sm:p-4" method="post" action="/dashboard/social">
+      <form class="card p-3 sm:p-4" method="post" action="/dashboard/social" data-social-form>
         <div class="flex flex-col gap-2 sm:flex-row">
           <div class="flex min-w-0 flex-1 items-center rounded-xl bg-paper px-3">
             <Icon name="search" size={18} class="shrink-0 text-muted" />
@@ -697,7 +700,7 @@ export function SocialSearchPage({ platform, q, filters = NO_FILTER, result, err
                 <Empty
                   icon="search"
                   title="No new posts on this page"
-                  body={`The platform returned ${plural(result.rawCount, 'post')}, but each was a duplicate or outside the time range.${result.nextCursor ? ' Load more results to keep looking.' : ''}`}
+                  body={`The platform returned ${plural(result.rawCount, 'post')}, but each was a duplicate or outside the time range.${pageable ? ' Load more results to keep looking.' : ''}`}
                 />
               ) : (
                 <Empty icon="search" title="No posts found" body="Try other keywords, another platform or a wider time range. Searches where the platform returns nothing are free." />
@@ -707,11 +710,14 @@ export function SocialSearchPage({ platform, q, filters = NO_FILTER, result, err
           {result.sessionLimitReached ? (
             <p class="mt-4 text-center text-sm text-muted">This search has reached its paging limit. Narrow the query or time range for more posts.</p>
           ) : null}
-          {result.nextCursor ? (
-            <form method="post" action="/dashboard/social" class="mt-4 flex justify-center">
+          {result.nextCursor && !pageable ? (
+            <p class="mt-4 text-center text-sm text-muted">More results were available when this search ran. Search again to keep paging.</p>
+          ) : null}
+          {pageable ? (
+            <form method="post" action="/dashboard/social" class="mt-4 flex justify-center" data-social-form>
               <input type="hidden" name="q" value={result.query} />
               <input type="hidden" name="platform" value={result.platform} />
-              <input type="hidden" name="cursor" value={result.nextCursor} />
+              <input type="hidden" name="cursor" value={result.nextCursor ?? ''} />
               {/* Shown again in the form on the next page; the cursor alone decides the range searched. */}
               <input type="hidden" name="period" value={filters.period} />
               <input type="hidden" name="from" value={filters.from} />
