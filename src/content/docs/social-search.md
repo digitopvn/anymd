@@ -17,7 +17,7 @@ Social search finds public posts by keyword on five platforms, or on all of them
 
 ### Searching all platforms
 
-`platform: "all"` asks every platform in parallel and merges the posts newest first; each result keeps its own `platform`. The `platforms` array reports how each one did. When one platform fails, the others still answer and the failed one carries an `error`; the call fails with `502` only when every platform fails. `next_cursor` continues only the platforms that have another page, so later pages ask fewer platforms. A platform that fails on a later page keeps its place and is asked again on the next one.
+`platform: "all"` asks every platform in parallel and merges the posts newest first; each result keeps its own `platform`. The `platforms` array reports how each one did. When one platform fails, the others still answer and the failed one carries an `error`; the call fails with `502` only when every platform fails. `next_cursor` continues only the platforms that have another page, so later pages ask fewer platforms. A platform that fails on a later page keeps its place and is asked again on the next one, while another platform is still paging.
 
 ## Time filters
 

@@ -179,10 +179,12 @@ export function xWindowOperators(window: SearchWindow | null): string {
   return ops.length ? ` ${ops.join(' ')}` : '';
 }
 
-/** The X query with the window operators; the user's query is grouped so a trailing OR or open quote cannot swallow them. */
+/** The X query with the window operators; the user's query is grouped (and an open quote closed) so it cannot swallow them. */
 export function xQuery(query: string, window: SearchWindow | null): string {
   const ops = xWindowOperators(window);
-  return ops ? `(${query})${ops}` : query;
+  if (!ops) return query;
+  const closed = (query.match(/"/g)?.length ?? 0) % 2 ? `${query}"` : query;
+  return `(${closed})${ops}`;
 }
 
 export async function searchPlatform(platform: SocialPlatform, query: string, cursor: string | undefined, ctx: SearchContext, window: SearchWindow | null = null): Promise<SocialSearchPage> {

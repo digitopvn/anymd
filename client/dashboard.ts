@@ -130,6 +130,13 @@ function initSocialForms(): void {
       form.querySelectorAll<HTMLButtonElement>('button[type="submit"]').forEach((b) => b.setAttribute('aria-busy', 'true'));
     });
   });
+  // Back/forward cache restores the page as it was left: let the forms submit again.
+  window.addEventListener('pageshow', () => {
+    document.querySelectorAll<HTMLFormElement>('form[data-social-form]').forEach((form) => {
+      delete form.dataset.submitting;
+      form.querySelectorAll('[aria-busy]').forEach((b) => b.removeAttribute('aria-busy'));
+    });
+  });
 }
 
 /** Runs on every page; each part only acts when its hooks exist. */

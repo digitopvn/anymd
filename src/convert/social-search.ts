@@ -229,11 +229,14 @@ export async function runSocialSearch(env: Env, ctx: WaitUntil, req: SocialSearc
 
     // A provider keeps paging while it returned posts and a new cursor, even if every post was filtered out.
     // A provider that hands back the cursor it was given would loop forever, so it stops.
-    // In "all", a platform that failed mid-search keeps its cursor and is asked again on the next page (failed calls are free).
-    const nextCursors: ProviderCursors = Object.fromEntries(outcomes.flatMap((o): [SocialPlatform, string][] => {
-      if (o.error) return o.cursor ? [[o.platform, o.cursor]] : [];
-      return o.page.nextCursor && o.page.results.length && o.page.nextCursor !== o.cursor ? [[o.platform, o.page.nextCursor]] : [];
-    }));
+    // In "all", a platform that failed mid-search keeps its cursor and is asked again on the next page (failed calls are free),
+    // as long as another platform is still paging; a search is never kept alive by failures alone.
+    const paging = outcomes.filter((o) => !o.error && o.page.nextCursor && o.page.results.length && o.page.nextCursor !== o.cursor);
+    const retrying = paging.length ? outcomes.filter((o) => o.error && o.cursor) : [];
+    const nextCursors: ProviderCursors = Object.fromEntries([
+      ...paging.map((o): [SocialPlatform, string] => [o.platform, o.page.nextCursor!]),
+      ...retrying.map((o): [SocialPlatform, string] => [o.platform, o.cursor!]),
+    ]);
     const seenNext = [...seen, ...filtered.flatMap((o) => o.keys)];
     const pages = (session?.pages ?? 0) + 1;
     const hasMore = Object.keys(nextCursors).length > 0;

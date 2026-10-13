@@ -101,8 +101,10 @@ describe('exact post identity', () => {
 
   it('groups the X query so its own operators cannot swallow the window', () => {
     expect(xQuery('cats OR', null)).toBe('cats OR');
-    expect(xQuery('"open quote OR', { since: 1_000, until: 2_500 })).toBe('("open quote OR) since_time:1 until_time:3');
+    expect(xQuery('"open quote OR', { since: 1_000, until: 2_500 })).toBe('("open quote OR") since_time:1 until_time:3');
     expect(xQuery('cats', { since: null, until: 2_000 })).toBe('(cats) until_time:2');
+    expect(xQuery('"cloudflare', { since: 1_000, until: null })).toBe('("cloudflare") since_time:1');
+    expect(xQuery('"a b" c', { since: 1_000, until: null })).toBe('("a b" c) since_time:1');
   });
 
   it('keys posts by their platform id, so URL variants match and cross-posts stay distinct', () => {
