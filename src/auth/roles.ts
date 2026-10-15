@@ -128,7 +128,8 @@ export function isOAuthAdminPreset(v: unknown): v is OAuthAdminPresetId {
 export function oauthAdminPresetScopes(role: RoleName, presetId: OAuthAdminPresetId): Scope[] {
   if (!roleAtLeast(role, 'admin')) return [];
   const preset = KEY_PRESETS.find((p) => p.id === presetId);
-  return preset ? capScopes(role, preset.scopes) : [];
+  // Owner-only scopes (roles, credits, billing changes) are never granted to a third-party client in one click.
+  return preset ? capScopes(role, preset.scopes).filter((s) => !OWNER_ONLY.includes(s)) : [];
 }
 
 export function isRole(v: unknown): v is RoleName {

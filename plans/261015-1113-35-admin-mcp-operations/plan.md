@@ -1,6 +1,6 @@
 # Admin MCP operations tooling (#35)
 
-Status: in progress · Branch: `claude/affectionate-goodall-8ysb23` · Target: `dev`
+Status: implemented, in review · Branch: `claude/affectionate-goodall-8ysb23` · Target: `dev`
 
 ## Outcome
 An authorized owner/admin agent can discover its admin access, connect with explicit admin consent,

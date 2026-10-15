@@ -255,14 +255,14 @@ describe('billing support views', () => {
       .run(JSON.stringify({ provider: 'polar', event_type: 'subscription.updated', error: 'Error: boom' }), now - 5000);
     t.db
       .prepare("INSERT INTO audit_log (id,actor,action,target,target_type,meta,created_at) VALUES ('a2','creem','billing.webhook_failed','evt_x','webhook',?,?)")
-      .run(JSON.stringify({ provider: 'creem', event_type: 'checkout.completed', error: 'Error: down' }), now - 4000);
+      .run(JSON.stringify({ provider: 'creem', event_type: 'checkout.completed', error: 'Error: down: {"email":"jane.doe@example.test"} see https://api.creem.test/v1/x' }), now - 4000);
     const p = as(owner, 'api_key', ['billing:read'], { apiKeyId: 'k' });
     const page1 = structured(await callTool(t.env, p, 'list_billing_events', { limit: 2 }));
     expect(page1.items.map((e: { id: string }) => e.id)).toEqual(['evt_0', 'evt_1']);
     const page2 = structured(await callTool(t.env, p, 'list_billing_events', { limit: 2, cursor: page1.next_cursor }));
     expect(page2.items.map((e: { id: string }) => e.id)).toEqual(['evt_2']);
     const failed = structured(await callTool(t.env, p, 'list_billing_events', { status: 'failed', provider: 'creem' }));
-    expect(failed.items).toEqual([expect.objectContaining({ id: 'evt_x', provider: 'creem', error: 'Error: down' })]);
+    expect(failed.items).toEqual([expect.objectContaining({ id: 'evt_x', provider: 'creem', error: 'Error: down: {"email":"[email]"} see [url]' })]);
     expect(structured(await callTool(t.env, p, 'get_billing_event', { eventId: 'evt_0' })).status).toBe('processed_after_failures');
     expect(structured(await callTool(t.env, p, 'get_billing_event', { eventId: 'evt_1' })).status).toBe('processed');
     expect(structured(await callTool(t.env, p, 'get_billing_event', { eventId: 'evt_x' })).status).toBe('failed_awaiting_retry');

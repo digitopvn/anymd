@@ -41,7 +41,7 @@ export async function getOperationsHealth(env: Env, actor: Principal) {
       `SELECT SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued, SUM(CASE WHEN status = 'downloading' THEN 1 ELSE 0 END) AS running,
          MIN(CASE WHEN status IN ('queued','downloading') THEN created_at END) AS oldest_pending,
          SUM(CASE WHEN status = 'failed' AND updated_at >= ?1 THEN 1 ELSE 0 END) AS failed_24h, SUM(CASE WHEN status = 'ready' AND updated_at >= ?1 THEN 1 ELSE 0 END) AS ready_24h
-       FROM video_jobs WHERE status IN ('queued','downloading') OR updated_at >= ?1`,
+       FROM video_jobs WHERE status IN ('queued','downloading') OR (status IN ('failed','ready') AND updated_at >= ?1)`,
     )
       .bind(ts - DAY)
       .first<{ queued: number | null; running: number | null; oldest_pending: number | null; failed_24h: number | null; ready_24h: number | null }>(),

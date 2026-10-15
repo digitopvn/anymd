@@ -10,6 +10,7 @@ import { billingEnabled, providerName } from '../../billing/provider';
 import type { Env, Principal } from '../../env';
 import { now, safeJson } from '../../lib/util';
 import { AdminError, assertScope, clampLimit, decodeCursor, encodeCursor, iso, parseInput, Timestamp, type Paged } from './shared';
+import { redactUrls } from './stats';
 
 interface SubscriptionRow {
   id: string;
@@ -208,7 +209,7 @@ export async function getCustomerBillingSummary(env: Env, actor: Principal, user
             status: latest.status,
             period_ends: latest.period_ends,
             cancel_at_period_end: latest.cancel_at_period_end,
-            next: latest.cancel_at_period_end ? 'cancels at period end' : latest.current_period_end && latest.current_period_end > ts && entitled !== 'free' ? 'renews at period end' : 'not renewing',
+            next: latest.cancel_at_period_end ? (latest.current_period_end && latest.current_period_end <= ts ? 'ended' : 'cancels at period end') : latest.current_period_end && latest.current_period_end > ts && entitled !== 'free' ? 'renews at period end' : 'not renewing',
           }
         : null,
     },
@@ -244,7 +245,8 @@ export const BillingEventQuery = z.object({
 /** Webhook rows are kept; the window keeps scans bounded. */
 const EVENT_WINDOW_DAYS = 90;
 
-const errorText = (v: unknown) => (typeof v === 'string' ? v.slice(0, 300) : null);
+/** Provider errors can echo response bodies: URLs and email addresses are redacted before they are returned. */
+const errorText = (v: unknown) => (typeof v === 'string' ? redactUrls(v.slice(0, 300))!.replace(/[^\s@"'<>]+@[^\s@"'<>]+\.[a-z]{2,}/gi, '[email]') : null);
 
 export async function listBillingEvents(env: Env, actor: Principal, raw: unknown) {
   assertScope(actor, 'billing:read');

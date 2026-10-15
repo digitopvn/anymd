@@ -1,7 +1,7 @@
 ---
 title: "API keys & roles"
 description: "Create scoped anymd API keys, pick presets, and understand how roles cap what every key and OAuth grant can do."
-updated: "2026-10-09"
+updated: "2026-10-15"
 ---
 
 Every call to anymd runs as a **principal** with a set of **scopes**. Scopes come from your **role**, and each API key or OAuth grant can only narrow them, never widen them.
@@ -104,6 +104,7 @@ MCP clients can skip keys and sign in with OAuth 2.1 (Dynamic Client Registratio
 
 - **Least privilege by default.** A client that asks for no scopes gets `convert`, `library:read` and `library:write`: it can read the web and save to and search *your own* library, never everything your role allows. The MCP endpoint advertises only these three scopes in its 401 challenge and protected-resource metadata, so spec-following clients start there.
 - **Elevated scopes are explicit.** A client must request admin, content, pages or `keys:manage` scopes by name, and the consent screen lists them separately as elevated so you see exactly what you approve. Scopes your role lacks are dropped and shown as unavailable.
+- **Admin access is opt-in on the consent screen.** Owners and admins also see an **Admin access for this connection** choice: **None** (default), **Admin read-only (monitoring and reports)** or **Support agent**. These add the scopes of the `admin-read-only` and `support` key presets on top of what the client requested (or the default set), capped by your role. Owner-only scopes (`users:roles:write`, `credits:write`, `billing:write`) are never added this way, even for an owner: create an API key when an agent really needs them. An option that would add nothing is not shown, roles below admin never see the choice, and `site-ops` is available only as a key preset. A client's scope request never selects an option for you.
 - **No keys from connected apps.** An OAuth connection can list and revoke your keys (with `keys:manage`) but never create one (`403 oauth_key_creation_forbidden`): a key would outlive the connection. Create keys in the dashboard.
 - **Capped on every request.** The grant is intersected with your current role each time, so a demotion takes effect immediately. A token the client downscoped at refresh keeps only its own scopes.
 - **Older grants.** Grants approved before this consent model keep their non-admin scopes but lose admin scopes. One stored with no scopes (it meant "everything my role allows") now gets your role's non-elevated scopes (`convert`, `library:read`, `library:write`, `usage:read` where your role has them). Reconnect the client to grant more explicitly.
@@ -111,8 +112,8 @@ MCP clients can skip keys and sign in with OAuth 2.1 (Dynamic Client Registratio
 ## An admin agent with least privilege
 
 1. Decide what the agent does. Monitoring needs only reads; a support agent needs `users:sessions:write`; a site operator needs `settings:write` and `optouts:write`.
-2. Create a dedicated key with the matching preset (`admin-read-only`, `support` or `site-ops`) and an expiry, or connect over OAuth and request just those scopes.
-3. Check it with `GET /api/v1/me`, then connect it to the [MCP server](/docs/mcp#system-administration).
+2. Create a dedicated key with the matching preset (`admin-read-only`, `support` or `site-ops`) and an expiry, or connect over OAuth and choose the matching admin access option on the consent screen (or let the client request just those scopes).
+3. Check it with `GET /api/v1/admin/access` (or the `get_admin_access_status` tool), then connect it to the [MCP server](/docs/mcp#set-up-an-admin-agent).
 4. Review what it did in the audit log (`list_audit_events`, or `GET /api/v1/admin/audit`): every change records the tool or route, the key or OAuth client, and the request id.
 
 ## Good hygiene

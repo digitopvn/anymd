@@ -66,7 +66,7 @@ export async function getUserStats(env: Env, actor: Principal) {
       .bind(d1, d7, d30)
       .first<{ d1: number; d7: number; d30: number }>(),
     env.DB.prepare('SELECT COUNT(*) AS n FROM usage_events WHERE created_at >= ? AND user_id IS NULL').bind(d30).first<{ n: number }>(),
-    env.DB.prepare('SELECT COUNT(DISTINCT user_id) AS n FROM documents').first<{ n: number }>(),
+    env.DB.prepare('SELECT COUNT(*) AS n FROM users u WHERE EXISTS (SELECT 1 FROM documents d WHERE d.user_id = u.id)').first<{ n: number }>(),
     env.DB.prepare('SELECT COUNT(*) AS signups, SUM(CASE WHEN EXISTS (SELECT 1 FROM documents d WHERE d.user_id = u.id) THEN 1 ELSE 0 END) AS activated FROM users u WHERE u.created_at >= ?')
       .bind(d30)
       .first<{ signups: number; activated: number | null }>(),
@@ -103,7 +103,7 @@ export async function getUserStats(env: Env, actor: Principal) {
     generated_at: iso(ts),
     environment: env.ENVIRONMENT,
     windows: { last_24h: { since: iso(d1) }, last_7d: { since: iso(d7) }, last_30d: { since: iso(d30) }, until: iso(ts), timezone: 'UTC' },
-    registered_users: { total: n(users?.total), suspended: n(users?.suspended), active_accounts: n(users?.total) - n(users?.suspended) },
+    registered_users: { total: n(users?.total), suspended: n(users?.suspended), non_suspended: n(users?.total) - n(users?.suspended) },
     new_signups: {
       last_24h: n(signups?.d1),
       last_7d: n(signups?.d7),

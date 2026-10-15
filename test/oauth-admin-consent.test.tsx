@@ -46,11 +46,12 @@ describe('consentGrantScopes', () => {
     expect(scopes.every((s) => scopesForRole('admin').includes(s))).toBe(true);
   });
 
-  it('adds every preset scope for an owner', () => {
+  it('adds preset scopes for an owner but never owner-only ones', () => {
     const support = consentGrantScopes('owner', [], 'support');
-    expect(support).toEqual(expect.arrayContaining([...OAUTH_DEFAULT_SCOPES, ...SUPPORT]));
-    expect(support.includes('credits:write')).toBe(true);
-    expect(support).toHaveLength(new Set([...OAUTH_DEFAULT_SCOPES, ...SUPPORT]).size);
+    const supportNoOwnerOnly = SUPPORT.filter((s) => s !== 'credits:write');
+    expect(support).toEqual(expect.arrayContaining([...OAUTH_DEFAULT_SCOPES, ...supportNoOwnerOnly]));
+    expect(support.includes('credits:write')).toBe(false);
+    expect(support).toHaveLength(new Set([...OAUTH_DEFAULT_SCOPES, ...supportNoOwnerOnly]).size);
     const readOnly = consentGrantScopes('owner', [], 'admin-read-only');
     expect(readOnly).toEqual(expect.arrayContaining([...OAUTH_DEFAULT_SCOPES, ...ADMIN_READ_ONLY]));
     expect(readOnly.some((s) => s.endsWith(':write') && !OAUTH_DEFAULT_SCOPES.includes(s))).toBe(false);
@@ -84,7 +85,7 @@ describe('ConsentPage admin access', () => {
     expect(admin.includes('data-admin-scope="users:read"')).toBe(true);
     expect(admin.includes('data-admin-scope="system:read"')).toBe(true);
     expect(admin.includes('data-admin-scope="credits:write"')).toBe(false);
-    expect(renderConsent('owner').includes('data-admin-scope="credits:write"')).toBe(true);
+    expect(renderConsent('owner').includes('data-admin-scope="credits:write"')).toBe(false);
     expect(renderConsent('owner', ['convert', 'users:read']).includes('data-admin-scope="users:read"')).toBe(false);
   });
 
