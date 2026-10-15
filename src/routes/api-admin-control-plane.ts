@@ -8,7 +8,11 @@ import { Hono } from 'hono';
 import { requireScope, type AppContext } from '../auth/middleware';
 import type { AppBindings } from '../env';
 import { exportAuditEvents, listAuditEvents } from '../services/admin/audit';
-import { getBillingDiagnostics, getSubscription, listSubscriptions } from '../services/admin/billing';
+import { MCP_TOOL_CATALOG } from '../mcp/server';
+import { adminAccessStatus } from '../services/admin/access';
+import { getBillingDiagnostics, getBillingEvent, getCustomerBillingSummary, getSubscription, listBillingEvents, listSubscriptions } from '../services/admin/billing';
+import { getJob, getOperationsHealth, listFailedJobs } from '../services/admin/operations';
+import { getUserActivity, getUserStats } from '../services/admin/stats';
 import { listUserCredentials, revokeUserApiKey, revokeUserOAuthGrant, revokeUserSessions } from '../services/admin/credentials';
 import { grantCredits, listCreditGrants, revokeCreditGrant } from '../services/admin/credits';
 import { getSystemTrace, listSystemTraces, systemOverview, systemUsage } from '../services/admin/observability';
@@ -66,7 +70,12 @@ adminControlPlane.delete('/users/:id/grants/:grantId', requireScope('users:crede
   c.json(await revokeUserOAuthGrant(c.env, p(c), { userId: c.req.param('id'), grantId: c.req.param('grantId') })),
 );
 
+adminControlPlane.get('/users/:id/activity', requireScope('users:read'), async (c) => c.json(await getUserActivity(c.env, p(c), { ...query(c), userId: c.req.param('id') })));
+adminControlPlane.get('/users/:id/billing', requireScope('billing:read'), async (c) => c.json(await getCustomerBillingSummary(c.env, p(c), c.req.param('id'))));
+
 adminControlPlane.get('/roles', requireScope(), (c) => c.json(listRoles()));
+/** The caller's own admin access: any signed-in caller, reports only on them. */
+adminControlPlane.get('/access', requireScope(), (c) => c.json(adminAccessStatus(c.env, p(c), MCP_TOOL_CATALOG)));
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 
@@ -100,6 +109,8 @@ adminControlPlane.post('/credits/:id/revoke', requireScope('credits:write'), asy
 adminControlPlane.get('/subscriptions', requireScope('billing:read'), async (c) => c.json(await listSubscriptions(c.env, p(c), query(c))));
 adminControlPlane.get('/subscriptions/:id', requireScope('billing:read'), async (c) => c.json(await getSubscription(c.env, p(c), c.req.param('id'))));
 adminControlPlane.get('/billing/diagnostics', requireScope('billing:read'), async (c) => c.json(await getBillingDiagnostics(c.env, p(c))));
+adminControlPlane.get('/billing/events', requireScope('billing:read'), async (c) => c.json(await listBillingEvents(c.env, p(c), query(c))));
+adminControlPlane.get('/billing/events/:id', requireScope('billing:read'), async (c) => c.json(await getBillingEvent(c.env, p(c), c.req.param('id'))));
 
 // ─── Audit ──────────────────────────────────────────────────────────────────
 
@@ -118,6 +129,10 @@ adminControlPlane.get('/audit/export', requireScope('audit:read'), async (c) => 
 // ─── System ─────────────────────────────────────────────────────────────────
 
 adminControlPlane.get('/system/overview', requireScope('system:read'), async (c) => c.json(await systemOverview(c.env, p(c))));
+adminControlPlane.get('/system/stats', requireScope('system:read'), async (c) => c.json(await getUserStats(c.env, p(c))));
+adminControlPlane.get('/system/health', requireScope('system:read'), async (c) => c.json(await getOperationsHealth(c.env, p(c))));
+adminControlPlane.get('/system/jobs', requireScope('system:read'), async (c) => c.json(await listFailedJobs(c.env, p(c), query(c))));
+adminControlPlane.get('/system/jobs/:id', requireScope('system:read'), async (c) => c.json(await getJob(c.env, p(c), c.req.param('id'))));
 adminControlPlane.get('/system/usage', requireScope('system:read'), async (c) => c.json(await systemUsage(c.env, p(c), query(c))));
 adminControlPlane.get('/system/traces', requireScope('system:read'), async (c) => c.json(await listSystemTraces(c.env, p(c), query(c))));
 adminControlPlane.get('/system/traces/:id', requireScope('system:read'), async (c) => c.json(await getSystemTrace(c.env, p(c), c.req.param('id'))));

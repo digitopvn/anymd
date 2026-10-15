@@ -18,12 +18,12 @@ import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError } from '../convert/types';
 import { eventsAvailable, EventsRpcError, handleEventsMethod } from '../events/subscriptions';
-import type { Env, Principal, WaitUntil } from '../env';
+import type { Env, Principal, Scope, WaitUntil } from '../env';
 import { deleteDocument, editTags, getDocument, listDocuments, listTags, MAX_TAG_FILTERS, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags, parseTagFilter } from '../library/store';
 import { convertPayload, searchForPrincipal, usageSummary } from '../services';
 import { AdminError } from '../services/admin/shared';
 import { ACCOUNT_TOOLS } from './account-tools';
-import { ADMIN_TOOLS } from './admin-tools';
+import { accessStatusTool, ADMIN_TOOLS } from './admin-tools';
 import { CMS_PARITY_TOOLS } from './cms-parity-tools';
 import { FEEDBACK_TOOLS } from './feedback-tools';
 import {
@@ -40,13 +40,13 @@ import {
   type JsonRpcMessage,
 } from './protocol';
 import { checkMcpRate, type RateLimited } from './rate-limit';
-import { DESTRUCTIVE, IDEMPOTENT_WRITE, isMutation, READ_ONLY, ToolError, WRITE, type ToolContext, type ToolDef } from './tool-types';
+import { DESTRUCTIVE, holdsToolScope, IDEMPOTENT_WRITE, isMutation, READ_ONLY, ToolError, WRITE, type ToolContext, type ToolDef } from './tool-types';
 
 const SERVER_INFO = { name: 'anymd', title: 'anymd — the web context layer for AI agents', version: '1.1.0' };
 const INSTRUCTIONS =
   'anymd is the web context layer for AI agents: it reads public web content (web pages, GitHub, YouTube, Reddit, Hacker News, X, PDFs, Office files, images) into structured Markdown and keeps a private, searchable library of everything read. ' +
   'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document for full text, search_social to find public posts on X, Facebook, Instagram, Threads or LinkedIn (read a result with read_url). Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision. ' +
-  'Admin tools appear only for owner/admin credentials granted their scopes: start with system_overview, page with next_cursor, pass expected* values and an idempotencyKey with every change; every change lands in list_audit_events.';
+  'Admin tools appear only for owner/admin credentials granted their scopes; get_admin_access_status explains what this connection can reach and how to reconnect with admin access. Admins: start with system_overview or get_user_stats, page with next_cursor, pass expected* values and an idempotencyKey with every change; every change lands in list_audit_events.';
 
 const READ = READ_ONLY;
 const TAG_LIST_INPUT = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAGS).optional();
@@ -345,12 +345,13 @@ const TOOLS: ToolDef[] = [
 // ─── Admin control plane, account and CMS parity tools ──────────────────────
 // Defined in their own modules; appended after the core tools so existing tool order is unchanged.
 
-const ALL_TOOLS: ToolDef[] = [...TOOLS, ...CMS_PARITY_TOOLS, ...ACCOUNT_TOOLS, ...FEEDBACK_TOOLS, ...ADMIN_TOOLS];
+// The access report lists tools by scope, so it reads the finished catalog lazily.
+const ALL_TOOLS: ToolDef[] = [...TOOLS, ...CMS_PARITY_TOOLS, ...ACCOUNT_TOOLS, ...FEEDBACK_TOOLS, ...ADMIN_TOOLS, accessStatusTool(() => ALL_TOOLS)];
 const TOOL_BY_NAME = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 const inputSchemas = new Map(ALL_TOOLS.map((t) => [t.name, z.toJSONSchema(t.input, { io: 'input' })]));
 
 function visibleTools(p: Principal) {
-  return ALL_TOOLS.filter((t) => p.scopes.includes(t.scope));
+  return ALL_TOOLS.filter((t) => holdsToolScope(p, t));
 }
 
 function toolListing(p: Principal) {
@@ -359,16 +360,16 @@ function toolListing(p: Principal) {
 
 /** A tool the caller cannot use because of scope. `stepUp` when an OAuth client could request it. */
 interface ScopeDenial {
-  tool: ToolDef;
+  tool: ToolDef & { scope: Scope };
   stepUp: boolean;
   roleAllows: boolean;
 }
 
 function scopeDenial(name: string, p: Principal): ScopeDenial | null {
   const tool = TOOL_BY_NAME.get(name);
-  if (!tool || p.scopes.includes(tool.scope)) return null;
+  if (!tool || tool.scope === null || p.scopes.includes(tool.scope)) return null;
   const roleAllows = scopesForRole(p.role).includes(tool.scope);
-  return { tool, roleAllows, stepUp: roleAllows && p.kind === 'oauth' };
+  return { tool: { ...tool, scope: tool.scope }, roleAllows, stepUp: roleAllows && p.kind === 'oauth' };
 }
 
 function denialToolResult(d: ScopeDenial, p: Principal) {
@@ -532,7 +533,7 @@ function callsMutation(m: JsonRpcMessage, p: Principal): boolean {
   if (isMessageObject(m) && (m.method === 'events/subscribe' || m.method === 'events/unsubscribe')) return true;
   if (!isMessageObject(m) || m.method !== 'tools/call') return false;
   const tool = TOOL_BY_NAME.get(String(m.params?.name ?? ''));
-  return Boolean(tool && p.scopes.includes(tool.scope) && isMutation(tool));
+  return Boolean(tool && holdsToolScope(p, tool) && isMutation(tool));
 }
 
 /**

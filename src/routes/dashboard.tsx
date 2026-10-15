@@ -213,7 +213,7 @@ async function keysPage(c: AppContext, extra: { newKey?: string; error?: string 
     grantsOf(c.env, user.id),
   ]);
   c.header('Cache-Control', 'no-store');
-  return shell(c, '/dashboard/keys', 'API keys', <KeysPage keys={results} grants={grants} role={c.get('principal').role} newKey={extra.newKey} error={extra.error} />, { status });
+  return shell(c, '/dashboard/keys', 'API keys', <KeysPage keys={results} grants={grants} role={c.get('principal').role} origin={originOf(c)} newKey={extra.newKey} error={extra.error} />, { status });
 }
 
 dashboardRoutes.get('/keys', (c) => keysPage(c));

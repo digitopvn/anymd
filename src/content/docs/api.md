@@ -1,7 +1,7 @@
 ---
 title: "REST API"
 description: "The anymd REST API v1: authentication, errors, conversion, library, search, usage, keys and admin endpoints with curl, JavaScript and Python examples."
-updated: "2026-10-13"
+updated: "2026-10-15"
 ---
 
 Base URL: `https://anymd.cc/api/v1`. Everything is JSON unless noted.
@@ -81,17 +81,18 @@ Read `code`, not `message`. Messages are for humans and may change.
 | POST | `/billing/checkout`, `/billing/portal` | browser session |
 | * | `/admin/pages…`, `/admin/blocks`, `/admin/templates` | `pages:*` (admins: [builder guide](/admin/docs/page-builder)) |
 | * | `/admin/posts…` | `content:*` |
-| GET | `/admin/users`, `/admin/users/:id`, `/admin/users/:id/credentials` | `users:read` |
+| GET | `/admin/users`, `/admin/users/:id`, `/admin/users/:id/credentials`, `/admin/users/:id/activity` | `users:read` |
+| GET | `/admin/users/:id/billing` | `billing:read` (credit grants also need `credits:read`) |
 | PATCH | `/admin/users/:id` (role) | `users:roles:write` |
 | POST | `/admin/users/:id/status`, `/admin/users/:id/sessions/revoke` | `users:sessions:write` |
 | DELETE | `/admin/users/:id/keys/:keyId`, `/admin/users/:id/grants/:grantId` | `users:credentials:write` |
-| GET | `/admin/roles` | any signed-in caller |
+| GET | `/admin/roles`, `/admin/access` | any signed-in caller |
 | GET / PATCH, PUT | `/admin/settings` | `settings:read` / `settings:write` |
 | GET / POST, DELETE | `/admin/optouts…` | `optouts:read` / `optouts:write` |
 | GET / POST | `/admin/credits…` | `credits:read` / `credits:write` |
-| GET | `/admin/subscriptions…`, `/admin/billing/diagnostics` | `billing:read` |
+| GET | `/admin/subscriptions…`, `/admin/billing/diagnostics`, `/admin/billing/events…` | `billing:read` |
 | GET | `/admin/audit`, `/admin/audit/export` | `audit:read` |
-| GET | `/admin/system/overview`, `/admin/system/usage`, `/admin/system/traces…` | `system:read` |
+| GET | `/admin/system/overview`, `/admin/system/stats`, `/admin/system/health`, `/admin/system/jobs…`, `/admin/system/usage`, `/admin/system/traces…` | `system:read` |
 
 ## Convert
 
@@ -436,6 +437,8 @@ Conventions:
 | `PATCH /admin/users/:id` | `{ role, expectedRole? }` | `users:roles:write` |
 | `POST /admin/users/:id/status` | `{ status: "suspended" \| "active", reason, expectedStatus? }` | `users:sessions:write` |
 | `GET /admin/users/:id/credentials` | | `users:read` |
+| `GET /admin/users/:id/activity` | `?since=&until=&cursor=&limit=` (`since` at most 30 days ago, default 30 days; `limit` default 20, max 100). Event metadata only, no URLs or queries | `users:read` |
+| `GET /admin/users/:id/billing` | Stored vs entitled plan, subscriptions, renewal; masked email; credit grants only with `credits:read`; orders, invoices and payments under `unsupported` | `billing:read` |
 | `POST /admin/users/:id/sessions/revoke` | `{ sessionHandle? }` | `users:sessions:write` |
 | `DELETE /admin/users/:id/keys/:keyId` | | `users:credentials:write` |
 | `DELETE /admin/users/:id/grants/:grantId` | | `users:credentials:write` |
@@ -470,6 +473,8 @@ curl -X PATCH https://anymd.cc/api/v1/admin/users/usr_… \
 | `GET /admin/subscriptions` | `?status=&plan=&userId=&cursor=&limit=` | `billing:read` |
 | `GET /admin/subscriptions/:id` | Includes `consistency` between the user plan and the subscription | `billing:read` |
 | `GET /admin/billing/diagnostics` | Provider config (secrets as present/missing only), webhook outcomes and failures, plan drift | `billing:read` |
+| `GET /admin/billing/events` | `?status=processed\|failed&provider=polar\|creem&type=&outcome=&since=&cursor=&limit=` (`since` at most 90 days ago, default 30 days; `outcome` only with `processed`) | `billing:read` |
+| `GET /admin/billing/events/:id` | One webhook delivery by provider event id: outcome and failed attempts. No payloads or signatures | `billing:read` |
 
 `POST /admin/credits` answers `201` for a new grant and `200` with `replayed: true` for a retry. Grants from billing orders cannot be revoked here (`409 billing_owned`). How grants count: an active grant raises their allowance. By default a grant expires at the end of the current month (UTC), or at the end of next month when fewer than 7 days of this month remain; a grant without `recurring` is a one-time pool: its credits are spent once over its whole lifetime, so whatever one month uses is gone the next (5,000 granted on the 26th with 3,000 used that month leaves at most 2,000 for next month). Pass `recurring: true` (with or without `expiresAt`) for credits that renew in full every month; an `expiresAt` later than the default without `recurring: true` is `422`. On Pro and Scale, credits are used in this order: the plan's included credits, then grants, then paid overage. A grant covers usage from the moment it is granted onward and is not a refund: overage reported before it stays billed. Example: on a plan with 10,000 included credits, a 5,000-credit grant made when the account had used 12,000 this period keeps the next 5,000 credits (12,000 to 17,000) off the overage bill; the 2,000 used before the grant stay billed. Positions are counted within the current period of a monthly subscription, or the calendar month (UTC) otherwise.
 
@@ -488,8 +493,12 @@ curl https://anymd.cc/api/v1/admin/credits \
 | `GET /admin/audit` | `?action=user.*&actorUserId=&target=&targetType=&since=&until=&cursor=&limit=` | `audit:read` |
 | `GET /admin/audit/export` | Same filters; NDJSON, up to 5,000 rows (`X-Anymd-Count`, `X-Anymd-Truncated`) | `audit:read` |
 | `GET /admin/system/overview` | | `system:read` |
+| `GET /admin/system/stats` | User and product KPIs with their definitions ([what they count](/docs/mcp#what-the-reports-count)) | `system:read` |
+| `GET /admin/system/health` | Job and webhook backlog, error rates, optional integrations as booleans | `system:read` |
+| `GET /admin/system/jobs` | `?type=video_download\|video_analysis\|feedback&since=&userId=&cursor=&limit=` (failed jobs; `since` at most 30 days ago, default 7 days) | `system:read` |
+| `GET /admin/system/jobs/:id` | Metadata only | `system:read` |
 | `GET /admin/system/usage` | `?days=7&channel=&kind=` (`days` 1–30) | `system:read` |
 | `GET /admin/system/traces` | `?sort=recent\|slowest&status=&kind=&userId=&since=&cursor=&limit=` (`since` at most 30 days ago; `slowest` ranks the newest 5,000 traces in the window) | `system:read` |
 | `GET /admin/system/traces/:id` | | `system:read` |
 
-`GET /admin/roles` lists role templates, scopes, key presets and plans for any signed-in caller.
+`GET /admin/roles` lists role templates, scopes, key presets and plans for any signed-in caller. `GET /admin/access` tells any signed-in caller what admin access their role allows, what this credential holds and how to reconnect with admin access ([Set up an admin agent](/docs/mcp#set-up-an-admin-agent)). No orders, invoices, payments, revenue or MRR are stored or reported, and job retry is not exposed.

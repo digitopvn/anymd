@@ -979,7 +979,7 @@ export interface GrantView {
   createdAt: number;
 }
 
-export function KeysPage({ keys, newKey, grants, role, error }: { keys: ApiKeyRow[]; newKey?: string; grants: GrantView[]; role: RoleName; error?: string }) {
+export function KeysPage({ keys, newKey, grants, role, error, origin = 'https://anymd.cc' }: { keys: ApiKeyRow[]; newKey?: string; grants: GrantView[]; role: RoleName; error?: string; origin?: string }) {
   const allowed = new Set(ROLE_TEMPLATES[role].scopes);
   return (
     <>
@@ -1094,6 +1094,24 @@ export function KeysPage({ keys, newKey, grants, role, error }: { keys: ApiKeyRo
               <p class="px-5 py-8 text-center text-sm text-muted">No connected apps.</p>
             )}
           </div>
+          {roleAtLeast(role, 'admin') ? (
+            <div class="card p-5" data-admin-agent-setup>
+              <p class="font-bold">Connect an admin agent</p>
+              <p class="mt-1 text-xs text-muted">Admin access is never granted by default. Pick one route; every change the agent makes is recorded in the audit log.</p>
+              <ol class="mt-3 list-decimal space-y-3 pl-5 text-sm">
+                <li>
+                  <strong>OAuth clients</strong> (ChatGPT, Claude): reconnect anymd in your MCP client and choose an admin access option on the consent screen. Then ask the agent to call <code class="font-mono text-xs">get_admin_access_status</code>.
+                </li>
+                <li>
+                  <strong>API key</strong>: create a key with the <code class="font-mono text-xs">admin-read-only</code> or <code class="font-mono text-xs">support</code> preset, then add it:
+                  <pre class="md-output mt-2 overflow-x-auto rounded-xl bg-night p-4 !whitespace-pre text-[12px]">{`claude mcp add --transport http anymd-admin \\\n  ${origin}/mcp \\\n  --header "Authorization: Bearer amd_…"`}</pre>
+                </li>
+              </ol>
+              <a href="/docs/mcp#set-up-an-admin-agent" class="mt-3 inline-block text-sm underline">
+                Set up an admin agent
+              </a>
+            </div>
+          ) : null}
         </div>
       </div>
     </>
