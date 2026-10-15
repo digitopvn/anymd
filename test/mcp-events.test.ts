@@ -146,7 +146,7 @@ describe('callback URL policy', () => {
 
   it('refuses non-https, credentials, fragments, internal names and this service', () => {
     const env = { PUBLIC_URL: 'https://anymd.test' };
-    for (const raw of ['http://hooks.example.com/x', 'https://u:p@hooks.example.com/', 'https://hooks.example.com/#x', 'https://localhost/x', 'https://printer.local/x', 'https://intranet/x', 'https://[::1]/x', 'https://127.0.0.1/x', 'https://anymd.test/hook', 'https://api.anymd.test/hook', 'ftp://hooks.example.com']) {
+    for (const raw of ['http://hooks.example.com/x', 'https://u:p@hooks.example.com/', 'https://hooks.example.com/#x', 'https://localhost/x', 'https://printer.local/x', 'https://intranet/x', 'https://[::1]/x', 'https://127.0.0.1/x', 'https://anymd.test/hook', 'https://api.anymd.test/hook', 'https://anymd.test./hook', 'https://localhost./x', 'ftp://hooks.example.com']) {
       expect(() => parseCallbackUrl(env, raw), raw).toThrow();
     }
     expect(parseCallbackUrl(env, HOOK).href).toBe(HOOK);
@@ -362,7 +362,37 @@ describe('delivery', () => {
     expect(net.deliveries()).toHaveLength(MAX_ATTEMPTS);
   });
 
-  it('gives up at once on 410 and treats redirects as failures', async () => {
+  it('a suspended endpoint neither starves the owner\'s other subscriptions nor replays on refresh', async () => {
+    await seedSubscription(user, `api_key:${keyId}`, 'anymd.library.document.saved');
+    await seedSubscription(user, `api_key:${keyId}`, 'anymd.library.document.saved', {}, { url: 'https://other.example.net/hook' });
+    net.respond((post) => (post.url === HOOK ? new Response('down', { status: 503 }) : new Response(null, { status: 204 })));
+    await save();
+    await save(1);
+    await processEvents(t.env);
+    for (let i = 1; i < MAX_ATTEMPTS; i++) {
+      makeDue();
+      await processEvents(t.env);
+    }
+    const bad = subscriptions().find((s) => s.url === HOOK)!;
+    expect(bad.active).toBe(0);
+    const pendingOfBad = t.db.prepare("SELECT COUNT(*) AS n FROM event_deliveries WHERE subscription_id = ? AND status = 'pending'").get(bad.id) as { n: number };
+    expect(pendingOfBad.n).toBe(0);
+    await save(2);
+    await processEvents(t.env);
+    const healthy = net.deliveries().filter((d) => d.url !== HOOK);
+    expect(healthy).toHaveLength(3);
+    // Refreshing the suspended subscription delivers only what happens next.
+    net.respond(() => new Response(null, { status: 204 }));
+    await modern('events/subscribe', subscribeParams());
+    const before = net.deliveries().filter((d) => d.url === HOOK).length;
+    await processEvents(t.env);
+    expect(net.deliveries().filter((d) => d.url === HOOK)).toHaveLength(before);
+    await save(3);
+    await processEvents(t.env);
+    expect(net.deliveries().filter((d) => d.url === HOOK)).toHaveLength(before + 1);
+  });
+
+  it('ends the subscription on 410 Gone and treats redirects as failures', async () => {
     await seedSubscription(user, `api_key:${keyId}`, 'anymd.library.document.saved');
     await save();
     net.respond(() => new Response(null, { status: 307, headers: { location: 'http://169.254.169.254/' } }));
@@ -372,7 +402,11 @@ describe('delivery', () => {
     net.respond(() => new Response(null, { status: 410 }));
     makeDue();
     await processEvents(t.env);
-    expect(deliveries()[0]).toMatchObject({ status: 'failed', attempts: 2 });
+    expect(subscriptions()).toHaveLength(0);
+    expect(deliveries()).toHaveLength(0);
+    await save(1);
+    await processEvents(t.env);
+    expect(net.deliveries()).toHaveLength(2);
   });
 
   it('re-resolves the host before every delivery and refuses one that now points inside (DNS rebinding)', async () => {

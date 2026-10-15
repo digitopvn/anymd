@@ -117,7 +117,7 @@ export async function subscribe(env: Env, p: Principal, params: Record<string, u
   let verifiedAt = verified ?? null;
   if (!verifiedAt) {
     const limiter = env.RL_MCP_MUTATION ?? env.RL_AUTH;
-    if (!(await limiter.limit({ key: `events:verify:${url.hostname}` })).success) {
+    if (!(await limiter.limit({ key: `events:verify:${userId}:${url.hostname}` })).success) {
       throw new EventsRpcError(EVENTS_RPC.RESOURCE_EXHAUSTED, 'Too many verification attempts for this host. Retry later.', { limit: 'verification' });
     }
     const failure = await verifyEndpoint(env, { subscriptionId: id, url: url.href, secrets: [secret as string] });

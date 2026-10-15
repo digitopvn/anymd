@@ -1,8 +1,8 @@
 /**
  * Event emission. An event is written to `event_outbox` in the same D1 batch as the change it
- * describes, so an event exists exactly when its change committed. Nothing is written for owners
- * without a live subscription to that event, and nothing at all while MCP Events is not configured
- * (no `EVENTS_SECRET_KEY`), so this costs one indexed read per write only for subscribed owners.
+ * describes, so an event exists exactly when its change committed, and only when its owner has a
+ * live subscription to it (checked inside the same insert, so no extra round trip). While MCP
+ * Events is not configured (no `EVENTS_SECRET_KEY`) the write runs alone, exactly as before.
  */
 import type { Env, Principal, WaitUntil } from '../env';
 import { newId, now } from '../lib/util';
@@ -44,20 +44,18 @@ export function principalKey(p: Pick<Principal, 'kind' | 'apiKeyId' | 'grantId'>
   return null;
 }
 
-/** The event names among `names` this owner has a live subscription to. */
-export async function subscribedNames(env: Env, userId: string, names: EventName[]): Promise<Set<EventName>> {
-  if (!eventsEnabled(env) || !names.length) return new Set();
-  const { results } = await env.DB.prepare(`SELECT DISTINCT name FROM event_subscriptions WHERE user_id = ? AND expires_at > ? AND name IN (${names.map(() => '?').join(',')})`)
-    .bind(userId, now(), ...names)
-    .all<{ name: EventName }>();
-  return new Set(results.map((r) => r.name));
-}
+const SUBSCRIBED = 'EXISTS (SELECT 1 FROM event_subscriptions WHERE user_id = ? AND name = ? AND active = 1 AND expires_at > ?)';
 
 async function insertStatement(env: Env, e: PendingEvent, origin: EventOrigin | undefined): Promise<D1PreparedStatement> {
   const key = principalKey(origin?.principal);
-  const values = [e.id ?? newId('evt_'), e.userId, e.name, e.resourceId, JSON.stringify(e.data), key ? await actorHash(key) : null, origin?.principal?.requestId ?? null, now()];
+  const ts = now();
+  const values = [e.id ?? newId('evt_'), e.userId, e.name, e.resourceId, JSON.stringify(e.data), key ? await actorHash(key) : null, origin?.principal?.requestId ?? null, ts];
   const head = 'INSERT OR IGNORE INTO event_outbox (id,user_id,name,resource_id,data_json,actor_hash,correlation_id,created_at) SELECT ?,?,?,?,?,?,?,?';
-  return e.when ? env.DB.prepare(`${head} WHERE EXISTS (${e.when.exists})`).bind(...values, ...e.when.binds) : env.DB.prepare(`${head} WHERE changes() > 0`).bind(...values);
+  // `changes()` is the row count of the previous statement in the batch, so a `changed` event must
+  // directly follow its write, and the write must be the first statement that changes data.
+  return e.when
+    ? env.DB.prepare(`${head} WHERE EXISTS (${e.when.exists}) AND ${SUBSCRIBED}`).bind(...values, ...e.when.binds, e.userId, e.name, ts)
+    : env.DB.prepare(`${head} WHERE changes() > 0 AND ${SUBSCRIBED}`).bind(...values, e.userId, e.name, ts);
 }
 
 let kick: ((env: Env, userId: string) => Promise<unknown>) | null = null;
@@ -68,18 +66,14 @@ export function onEventsWritten(fn: (env: Env, userId: string) => Promise<unknow
 }
 
 /**
- * Run `write` and write the events of `events` whose owner subscribes to them, atomically. Returns
- * the write's change count. Events the owner does not subscribe to are never written.
+ * Run `write` and, in the same batch, the events of `events` whose owner subscribes to them.
+ * Returns the write's change count.
  */
 export async function writeWithEvents(env: Env, write: D1PreparedStatement, events: PendingEvent[], origin?: EventOrigin): Promise<number> {
   const userId = events[0]?.userId;
-  const wanted = userId ? await subscribedNames(env, userId, [...new Set(events.map((e) => e.name))]) : new Set<EventName>();
-  const due = events.filter((e) => wanted.has(e.name));
-  if (!due.length) return Number((await write.run()).meta.changes ?? 0);
-  // Without a `changed` event first, the write's own change count would not guard anything.
-  const statements = [write, ...(await Promise.all(due.map((e) => insertStatement(env, e, origin))))];
-  const results = await env.DB.batch(statements);
+  if (!eventsEnabled(env) || !userId) return Number((await write.run()).meta.changes ?? 0);
+  const results = await env.DB.batch([write, ...(await Promise.all(events.map((e) => insertStatement(env, e, origin))))]);
   const emitted = results.slice(1).some((r) => Number(r.meta?.changes ?? 0) > 0);
-  if (emitted && origin?.ctx && kick && userId) origin.ctx.waitUntil(kick(env, userId).catch((err) => console.error('events dispatch', err instanceof Error ? err.message : String(err))));
+  if (emitted && origin?.ctx && kick) origin.ctx.waitUntil(kick(env, userId).catch((err) => console.error('events dispatch', err instanceof Error ? err.message : String(err))));
   return Number(results[0].meta?.changes ?? 0);
 }

@@ -97,14 +97,15 @@ export function parseCallbackUrl(env: Pick<Env, 'PUBLIC_URL'>, raw: unknown): UR
   if (url.protocol !== 'https:') throw new CallbackUrlError('delivery.url must use https', 'invalid_url');
   if (url.username || url.password) throw new CallbackUrlError('delivery.url must not carry credentials', 'invalid_url');
   if (url.hash) throw new CallbackUrlError('delivery.url must not carry a fragment', 'invalid_url');
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  // A trailing dot names the same host (`anymd.cc.`), so compare without it.
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
   const literal = ipv4Octets(host) !== null || host.includes(':');
   if (literal ? !isPublicAddress(host) : !host.includes('.') || host === 'localhost' || BLOCKED_SUFFIXES.some((s) => host.endsWith(s))) {
     throw new CallbackUrlError('delivery.url must be a public host', 'blocked_host');
   }
   let own = '';
   try {
-    own = new URL(env.PUBLIC_URL).hostname.toLowerCase();
+    own = new URL(env.PUBLIC_URL).hostname.toLowerCase().replace(/\.$/, '');
   } catch {
     /* No public URL configured (tests). */
   }

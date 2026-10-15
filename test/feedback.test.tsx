@@ -347,6 +347,15 @@ describe('feedback status events', () => {
     expect(events()[0].user_id).toBe(user.id);
   });
 
+  it('writes a needs_review event when a report is held at submission', async () => {
+    await setup([], { EVENTS_SECRET_KEY: 'test-events-key', FEEDBACK_MIN_ACCOUNT_AGE_HOURS: '1000000' });
+    subscribe(user.id);
+    const out = await submitFeedback(te.env, principalOf(), draft(), 'api');
+    expect(out.record.status).toBe('needs_review');
+    expect(gh.posts()).toBe(0);
+    expect(events().map((e) => JSON.parse(e.data_json))).toEqual([expect.objectContaining({ feedback_id: out.record.id, status: 'needs_review' })]);
+  });
+
   it('writes nothing for intermediate states or for other accounts', async () => {
     await setup(['429'], { EVENTS_SECRET_KEY: 'test-events-key' });
     const stranger = await seedUser(te, 'user');

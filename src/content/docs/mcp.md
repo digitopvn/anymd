@@ -307,7 +307,7 @@ Every event is about your own resources, and is listed by `events/list` only whe
 | `anymd.feedback.status.changed` | Feedback you sent reached `created` (a GitHub issue exists), `needs_review` or `failed` | `feedback:write` | `feedback_ids` |
 
 - `document_ids`, `job_ids`, `feedback_ids`: only these ids (up to 50). Omit for all of yours.
-- `tags`: only documents carrying every one of these tags when the event is delivered. `domain`: only documents from this domain or its subdomains, e.g. `example.com`.
+- `tags`: only documents carrying every one of these tags when the event is matched to subscriptions, shortly after the change. `domain`: only documents from this domain or its subdomains, e.g. `example.com`.
 - `exclude_self` (default `true`): skip library changes made with the same credential that subscribed, so an agent does not react to its own writes. Set it to `false` to hear them too.
 
 Payloads are minimal: the resource id (`document_id`, `job_id` or `feedback_id`), `resource_type`, what happened (`change`: `created`/`updated`, `status`, `tag_count`, `error_code`, `issue_number`), `version` (the resource's last-change time in ms) and `correlation_id` (the request that made the change, when there was one). `events/list` returns the exact `inputSchema` and `payloadSchema` of each event.
@@ -338,7 +338,7 @@ The result is `{ id, refreshBefore, cursor: null, truncated }`.
 - **Verification.** The first subscription for a credential and URL pair triggers a signed POST `{"type":"verification","challenge":"…"}`. Your endpoint must answer `2xx` with `{"challenge":"<the same value>"}`. One handshake covers every event and argument set on that URL for that credential.
 - **No replay.** Events start from the moment you subscribe. `cursor` is always `null`; if you send one, the result says `truncated: true`.
 - **Secret rotation.** Refresh with a new `secret`. For the next hour each message is signed with both the new and the old secret.
-- **Limits.** At most 20 live subscriptions per account (`-32013` beyond that). Each account keeps at most 500 undelivered events; past that, new events are dropped until the endpoint catches up. `events/subscribe` and `events/unsubscribe` count toward the stricter MCP rate limit for changes.
+- **Limits.** At most 20 live subscriptions per account (`-32013` beyond that). Each subscription keeps at most 500 undelivered events; past that, new events for it are dropped until its endpoint catches up. Other subscriptions are unaffected. `events/subscribe` and `events/unsubscribe` count toward the stricter MCP rate limit for changes.
 
 To stop, call `events/unsubscribe` with the same `name`, `arguments` and `delivery.url` you subscribed with, from the same credential. Deleting a subscription in the dashboard works too.
 
@@ -355,9 +355,9 @@ Messages follow [Standard Webhooks](https://www.standardwebhooks.com/). Each POS
 
 The body of an event is `{ "eventId", "name", "timestamp", "data", "cursor": null }`, where `data` is the payload above and `timestamp` is when the change happened. Bodies are capped at 256 KiB.
 
-- **Retries.** A network error, timeout or non-`2xx` answer is retried after 1, 2, 4 and 8 minutes (5 attempts). `410 Gone` and `413` are never retried. Redirects are never followed and count as a failure.
-- **Dead letters.** When all attempts fail, the event is dead-lettered and the subscription is suspended: nothing more is sent until your client subscribes again, which resumes delivery.
-- **Termination.** If the subscribing credential is revoked, expires or loses the event's scope, the account is suspended, or you delete the subscription in the dashboard, the subscription ends and your endpoint gets a signed `{"type":"terminated","error":{"code":-32012,"message":"Forbidden","data":{"reason":"…"}}}`. The credential is checked before every delivery.
+- **Retries.** A network error, timeout or non-`2xx` answer is retried after 1, 2, 4 and 8 minutes (5 attempts). `413` is never retried. `410 Gone` ends the subscription without a termination message. Redirects are never followed and count as a failure.
+- **Dead letters.** When all attempts fail, the event is dead-lettered and the subscription is suspended: its other queued events are dead-lettered too, and nothing more is sent until your client subscribes again. Delivery then resumes with new events only.
+- **Termination.** If the subscribing credential is revoked, expires or loses the event's scope, the account is suspended, or you delete the subscription in the dashboard, the subscription ends and your endpoint gets a signed `{"type":"terminated","error":{"code":-32012,"message":"Forbidden","data":{"reason":"…"}}}`. The credential is checked before every delivery. Deleting your account removes its subscriptions without a termination message.
 - **Retention.** Delivery records are kept 7 days; dead letters and events, 30 days.
 
 Verify every message, including the verification and termination messages, before acting on it. In Node or TypeScript:

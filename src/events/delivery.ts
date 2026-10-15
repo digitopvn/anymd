@@ -28,8 +28,12 @@ const TIMEOUT_MS = 10_000;
 const CLAIM_MS = 60_000;
 const FANOUT_BATCH = 100;
 const DELIVERY_BATCH = 50;
-/** Undelivered backlog per owner; events beyond it are not queued (the endpoint is too far behind). */
-export const MAX_PENDING_PER_USER = 500;
+/** Undelivered backlog per subscription; events beyond it are not queued (the endpoint is too far behind). */
+export const MAX_PENDING_PER_SUBSCRIPTION = 500;
+/** Delivery started right after a request stops claiming work after this, well inside `waitUntil`'s limit. */
+const REQUEST_BUDGET_MS = 5_000;
+/** The scheduler keeps fanning out and delivering for up to this long per tick. */
+const SCHEDULED_BUDGET_MS = 45_000;
 /** Old callback secret keeps signing (alongside the new one) this long after a rotation. */
 export const SECRET_GRACE_MS = 60 * 60_000;
 
@@ -241,21 +245,24 @@ async function fanOut(env: Env, userId?: string): Promise<number> {
   ).all<OutboxRow>();
   let queued = 0;
   for (const event of events) {
-    const { results: subs } = await env.DB.prepare('SELECT * FROM event_subscriptions WHERE user_id = ? AND name = ? AND expires_at > ? AND created_at <= ?')
+    // Suspended subscriptions get nothing new, so a refresh never replays what happened meanwhile.
+    const { results: subs } = await env.DB.prepare('SELECT * FROM event_subscriptions WHERE user_id = ? AND name = ? AND active = 1 AND expires_at > ? AND created_at <= ?')
       .bind(event.user_id, event.name, ts, event.created_at)
       .all<SubscriptionRow>();
     const needsDoc = subs.some((s) => /"(tags|domain)"/.test(s.arguments_json));
     const doc = needsDoc ? await env.DB.prepare('SELECT tags, domain FROM documents WHERE id = ? AND user_id = ?').bind(event.resource_id, event.user_id).first<{ tags: string; domain: string }>() : undefined;
     const targets = subs.filter((s) => matches(s, event, doc));
-    const backlog = targets.length ? ((await env.DB.prepare("SELECT COUNT(*) AS n FROM event_deliveries WHERE user_id = ? AND status = 'pending'").bind(event.user_id).first<{ n: number }>())?.n ?? 0) : 0;
-    const room = Math.max(0, MAX_PENDING_PER_USER - backlog);
-    const statements = targets.slice(0, room).map((s) =>
-      env.DB.prepare("INSERT OR IGNORE INTO event_deliveries (subscription_id, event_id, user_id, status, attempts, next_attempt_at, created_at, updated_at) VALUES (?, ?, ?, 'pending', 0, ?, ?, ?)").bind(s.id, event.id, event.user_id, ts, ts, ts),
+    // Each subscription's backlog is capped on its own, so one slow endpoint cannot starve the others.
+    const statements = targets.map((s) =>
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO event_deliveries (subscription_id, event_id, user_id, status, attempts, next_attempt_at, created_at, updated_at) SELECT ?, ?, ?, 'pending', 0, ?, ?, ? WHERE (SELECT COUNT(*) FROM event_deliveries WHERE subscription_id = ? AND status = 'pending') < ?",
+      ).bind(s.id, event.id, event.user_id, ts, ts, ts, s.id, MAX_PENDING_PER_SUBSCRIPTION),
     );
-    if (targets.length > room) console.warn('events backlog full', { user: event.user_id, dropped: targets.length - room });
     statements.push(env.DB.prepare('UPDATE event_outbox SET dispatched_at = ? WHERE id = ?').bind(ts, event.id));
-    await env.DB.batch(statements);
-    queued += Math.min(targets.length, room);
+    const results = await env.DB.batch(statements);
+    const added = results.slice(0, targets.length).filter((r) => Number(r.meta?.changes ?? 0) > 0).length;
+    if (added < targets.length) console.warn('events backlog full', { user: event.user_id, dropped: targets.length - added });
+    queued += added;
   }
   return queued;
 }
@@ -272,7 +279,7 @@ interface DueDelivery {
 }
 
 /** POST due deliveries. Returns how many were attempted. */
-async function deliverDue(env: Env, userId?: string): Promise<number> {
+async function deliverDue(env: Env, userId: string | undefined, deadline: number): Promise<number> {
   const ts = now();
   const base = `SELECT d.id, d.attempts, d.subscription_id, d.event_id, o.name, o.data_json, o.correlation_id, o.created_at AS event_created_at
     FROM event_deliveries d JOIN event_subscriptions s ON s.id = d.subscription_id JOIN event_outbox o ON o.id = d.event_id
@@ -284,6 +291,8 @@ async function deliverDue(env: Env, userId?: string): Promise<number> {
   const subs = new Map<string, SubscriptionRow | null>();
   let attempted = 0;
   for (const d of due) {
+    // Leave the rest to the next run rather than claim work that may be cut off.
+    if (Date.now() > deadline) break;
     // Claim: only the run that bumps the attempt count sends it.
     const claimed = await env.DB.prepare("UPDATE event_deliveries SET attempts = attempts + 1, next_attempt_at = ?, updated_at = ? WHERE id = ? AND status = 'pending' AND attempts = ?")
       .bind(ts + CLAIM_MS, ts, d.id, d.attempts)
@@ -310,25 +319,46 @@ async function deliverDue(env: Env, userId?: string): Promise<number> {
       ]);
       continue;
     }
+    if (res.status === 410) {
+      // The endpoint says it no longer wants this subscription: end it (its deliveries go with it).
+      await env.DB.prepare('DELETE FROM event_subscriptions WHERE id = ?').bind(sub.id).run();
+      subs.set(sub.id, null);
+      continue;
+    }
     const error = res.error ?? 'connection_refused';
     const final = !res.retryable ? 'failed' : attempts >= MAX_ATTEMPTS ? 'dead' : null;
     await env.DB.batch([
       final
         ? env.DB.prepare('UPDATE event_deliveries SET status = ?, last_error = ?, updated_at = ? WHERE id = ?').bind(final, error, at, d.id)
         : env.DB.prepare('UPDATE event_deliveries SET last_error = ?, next_attempt_at = ?, updated_at = ? WHERE id = ?').bind(error, at + RETRY_DELAYS_MS[attempts - 1], at, d.id),
-      // A dead-lettered delivery suspends the subscription until the client refreshes it.
+      // A dead-lettered delivery suspends the subscription until the client refreshes it, and its
+      // other queued deliveries are dead-lettered too: a refresh starts from new events, no replay.
       env.DB.prepare('UPDATE event_subscriptions SET last_error = ?, failed_since = COALESCE(failed_since, ?), active = CASE WHEN ? THEN 0 ELSE active END WHERE id = ?').bind(error, at, final === 'dead' ? 1 : 0, sub.id),
+      ...(final === 'dead'
+        ? [env.DB.prepare("UPDATE event_deliveries SET status = 'dead', last_error = 'subscription_suspended', updated_at = ? WHERE subscription_id = ? AND status = 'pending'").bind(at, sub.id)]
+        : []),
     ]);
+    if (final === 'dead') subs.set(sub.id, null);
   }
   return attempted;
 }
 
-/** Fan out new events and deliver what is due, optionally for one owner only. */
+/**
+ * Fan out new events and deliver what is due, optionally for one owner only (right after a request,
+ * briefly). Without an owner it keeps going while there is work, within the scheduler's budget.
+ */
 export async function processEvents(env: Env, opts: { userId?: string } = {}): Promise<{ queued: number; attempted: number }> {
   if (!env.EVENTS_SECRET_KEY) return { queued: 0, attempted: 0 };
-  const queued = await fanOut(env, opts.userId);
-  const attempted = await deliverDue(env, opts.userId);
-  return { queued, attempted };
+  const deadline = Date.now() + (opts.userId ? REQUEST_BUDGET_MS : SCHEDULED_BUDGET_MS);
+  const total = { queued: 0, attempted: 0 };
+  do {
+    const queued = await fanOut(env, opts.userId);
+    const attempted = await deliverDue(env, opts.userId, deadline);
+    total.queued += queued;
+    total.attempted += attempted;
+    if (opts.userId || (queued < FANOUT_BATCH && attempted < DELIVERY_BATCH)) break;
+  } while (Date.now() < deadline);
+  return total;
 }
 
 /**

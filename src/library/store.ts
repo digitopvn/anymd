@@ -6,7 +6,7 @@ import { renderEnrichment } from '../convert/image-enrichment';
 import { countWords } from '../convert/types';
 import type { Enrichment } from '../convert/enrichment-types';
 import type { EventName } from '../events/catalog';
-import { type EventOrigin, writeWithEvents } from '../events/outbox';
+import { eventsEnabled, type EventOrigin, writeWithEvents } from '../events/outbox';
 
 export interface DocumentRow {
   id: string;
@@ -277,10 +277,11 @@ export async function updateTags(env: Env, userId: string, id: string, tags: str
   const clean = normalizeTags(tags).slice(0, MAX_TAGS);
   const value = clean.join(' ');
   const ts = now();
+  const write = env.DB.prepare('UPDATE documents SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(value, ts, id, userId);
+  if (!eventsEnabled(env)) return Number((await write.run()).meta.changes ?? 0) > 0;
+  // The event fires only when the stored tags actually change.
   const previous = await env.DB.prepare('SELECT tags FROM documents WHERE id = ? AND user_id = ?').bind(id, userId).first<{ tags: string }>();
   if (!previous) return false;
-  const write = env.DB.prepare('UPDATE documents SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(value, ts, id, userId);
-  // The event fires only when the stored tags actually change.
   const events = previous.tags === value ? [] : [documentEvent('anymd.library.tags.updated', userId, id, ts, { tag_count: clean.length })];
   return (await writeWithEvents(env, write, events, origin)) > 0;
 }

@@ -423,7 +423,7 @@ export async function submitFeedback(env: Env, principal: Principal, input: Feed
 
   // The limits are re-checked inside the insert itself, so parallel requests cannot all pass a stale count.
   const count = "(SELECT COUNT(*) FROM feedback_submissions WHERE created_at > ? AND status != 'failed'";
-  const insert = await env.DB.prepare(
+  const write = env.DB.prepare(
     `INSERT OR IGNORE INTO feedback_submissions (id, user_id, type, title, sanitized_body, channel, idempotency_key, payload_hash, content_hash, status, last_error_code, created_at, updated_at, publicly_confirmed_at)
      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?
      WHERE ${count} AND user_id = ?) < 1 AND ${count} AND user_id = ?) < ? AND ${count} AND user_id = ?) < ? AND ${count}) < ?`,
@@ -431,15 +431,16 @@ export async function submitFeedback(env: Env, principal: Principal, input: Feed
     .bind(
       id, userId, input.type, built.title, built.body, channel, input.idempotency_key, h.payload, h.content, hold ? 'needs_review' : 'received', hold, at, at, at,
       at - 60_000, userId, at - 24 * 3600_000, userId, intEnv(env.FEEDBACK_DAILY_LIMIT, 3), at - 7 * 24 * 3600_000, userId, intEnv(env.FEEDBACK_WEEKLY_LIMIT, 10), at - 3600_000, intEnv(env.FEEDBACK_GLOBAL_HOURLY_LIMIT, 60),
-    )
-    .run();
+    );
+  // A report held for review at submission is already a public status.
+  const inserted = await writeWithEvents(env, write, await statusEvent({ id, user_id: userId }, hold ? 'needs_review' : 'received', undefined, at));
   const stored = await byKey(env, userId, input.idempotency_key);
   if (!stored) {
     // Nothing was written: either a limit was reached by a concurrent request, or storage failed.
     await enforceLimits(env, userId, Date.now());
     throw new FeedbackError(429, 'feedback_rate_limited', 'Too many reports at once. Try again in a minute.', undefined, 60);
   }
-  if (Number(insert.meta?.changes ?? 0) === 0) {
+  if (inserted === 0) {
     // A concurrent request with the same key won the insert: it publishes, this one only reports.
     if (stored.payload_hash !== h.payload) throw new FeedbackError(409, 'idempotency_conflict', 'This idempotency key was already used with different content. Use a new key for a new report.');
     return settle(await advance(env, stored), true);
