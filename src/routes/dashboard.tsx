@@ -5,7 +5,7 @@ import { deleteCookie } from 'hono/cookie';
 import { markVia, requireUserPage, sameOriginWrites, type AppContext } from '../auth/middleware';
 import { billingEnabled, createCheckout, customerPortalUrl, providerName } from '../billing/provider';
 import type { PlanId } from '../billing/plans';
-import type { AppBindings } from '../env';
+import type { AppBindings, WaitUntil } from '../env';
 import { deleteAccount, documentsToMarkdown, exportDocuments } from '../lib/account';
 import { renderMarkdown } from '../lib/markdown';
 import { applyPreferencesPatch, getReadingPreferences, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences } from '../convert/reading-preferences';
@@ -23,6 +23,7 @@ import {
   BillingPage,
   DashShell,
   DocumentPage,
+  EventSubscriptionsPage,
   KeysPage,
   LibraryPage,
   OverviewPage,
@@ -39,6 +40,8 @@ import { AdminError } from '../services/admin/shared';
 import { FeedbackFormPage, FeedbackResultPage, MyFeedbackPage, type FeedbackFormValues } from '../views/feedback';
 import { assertPublishable, FeedbackDraftSchema, FeedbackError, FeedbackInputSchema, IDEMPOTENCY_KEY, listFeedback, previewFeedback, submitFeedback } from '../services/feedback';
 import { sha256 } from '../lib/util';
+import { eventsEnabled } from '../events/outbox';
+import { deleteSubscriptionForOwner, listSubscriptionsForOwner } from '../events/subscriptions';
 import { formData, originOf, renderMessage, renderPage } from './shared';
 
 export const dashboardRoutes = new Hono<AppBindings>();
@@ -50,7 +53,7 @@ function shell(c: AppContext, current: string, title: string, children: Child, o
   return renderPage(
     c,
     { title, path: current, noindex: true, markdownPath: null, variant: 'app' },
-    <DashShell user={user} current={current} title={title} actions={opts.actions}>
+    <DashShell user={user} current={current} title={title} actions={opts.actions} events={eventsEnabled(c.env)}>
       {children}
     </DashShell>,
     opts.status,
@@ -246,6 +249,37 @@ dashboardRoutes.post('/grants/:id/revoke', async (c) => {
     if (!(err instanceof AdminError)) console.error('grant revoke', err instanceof Error ? err.message : err);
   });
   return c.redirect('/dashboard/keys');
+});
+
+// ─── MCP event subscriptions ───────────────────────────────────────────────
+
+const eventsUnavailable = (c: AppContext) => renderMessage(c, 404, 'Not available', 'Event subscriptions are not enabled on this deployment.', <a class="btn btn-dark" href="/dashboard">Dashboard</a>);
+
+dashboardRoutes.get('/events', async (c) => {
+  if (!eventsEnabled(c.env)) return eventsUnavailable(c);
+  const subscriptions = await listSubscriptionsForOwner(c.env, c.get('user')!.id);
+  const done = c.req.query('deleted');
+  const notice = done === '1' ? 'Subscription deleted. Its endpoint was told the subscription ended.' : undefined;
+  const error = done === '0' ? 'That subscription no longer exists. It may have expired or been deleted already.' : undefined;
+  c.header('Cache-Control', 'no-store');
+  return shell(c, '/dashboard/events', 'Event subscriptions', <EventSubscriptionsPage subscriptions={subscriptions} notice={notice} error={error} />);
+});
+
+// Scoped by owner in the helper: another user's id behaves exactly like an unknown one.
+/** The request's execution context, when there is one (in-process callers have none). */
+function waitUntilOf(c: AppContext): WaitUntil | undefined {
+  try {
+    return c.executionCtx;
+  } catch {
+    return undefined;
+  }
+}
+
+dashboardRoutes.post('/events/:id/delete', async (c) => {
+  if (!eventsEnabled(c.env)) return eventsUnavailable(c);
+  const id = c.req.param('id');
+  const deleted = id.length <= 128 && (await deleteSubscriptionForOwner(c.env, c.get('user')!.id, id, waitUntilOf(c)));
+  return c.redirect(`/dashboard/events?deleted=${deleted ? 1 : 0}`, 303);
 });
 
 // ─── Billing ────────────────────────────────────────────────────────────────

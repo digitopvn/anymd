@@ -13,6 +13,8 @@ import type { Env, Principal } from '../env';
 import { cleanText, neutralizeMentions, quoteUserText, safePublicUrl, scrubText, type BlockKind, type RedactKind } from '../lib/feedback-scrub';
 import { createFeedbackIssue, ensureFeedbackLabel, feedbackConfigured, FEEDBACK_LABEL, FEEDBACK_REPO, findIssueByFeedbackId, markerLine } from '../lib/github-feedback';
 import { sha256 } from '../lib/util';
+import { stableEventId } from '../events/crypto';
+import { writeWithEvents, type PendingEvent } from '../events/outbox';
 
 export const FEEDBACK_TYPES = ['bug', 'feature', 'improvement', 'question', 'other'] as const;
 export type FeedbackType = (typeof FEEDBACK_TYPES)[number];
@@ -223,12 +225,20 @@ async function reviewReason(env: Env, userId: string, draft: FeedbackDraft, at: 
 const byKey = (env: Env, userId: string, key: string) => env.DB.prepare('SELECT * FROM feedback_submissions WHERE user_id = ? AND idempotency_key = ?').bind(userId, key).first<Row>();
 const byId = (env: Env, id: string) => env.DB.prepare('SELECT * FROM feedback_submissions WHERE id = ?').bind(id).first<Row>();
 
-async function setState(env: Env, id: string, s: { status: DbStatus; error?: string | null; number?: number; url?: string; leaseUntil?: number | null; updatedAt?: number }): Promise<void> {
-  await env.DB.prepare(
+/** A public status change becomes one `anymd.feedback.status.changed` event, at most once per status. */
+async function statusEvent(row: Pick<Row, 'id' | 'user_id'>, status: DbStatus, issueNumber: number | undefined, ts: number): Promise<PendingEvent[]> {
+  const pub = publicStatus(status);
+  if (pub === 'pending') return [];
+  const name = 'anymd.feedback.status.changed';
+  return [{ id: await stableEventId(name, row.id, pub), name, userId: row.user_id, resourceId: row.id, data: { feedback_id: row.id, resource_type: 'feedback', status: pub, ...(issueNumber ? { issue_number: issueNumber } : {}), version: ts } }];
+}
+
+async function setState(env: Env, row: Pick<Row, 'id' | 'user_id'>, s: { status: DbStatus; error?: string | null; number?: number; url?: string; leaseUntil?: number | null; updatedAt?: number }): Promise<void> {
+  const ts = s.updatedAt ?? Date.now();
+  const write = env.DB.prepare(
     'UPDATE feedback_submissions SET status = ?, last_error_code = ?, github_issue_number = COALESCE(?, github_issue_number), github_issue_url = COALESCE(?, github_issue_url), publishing_lease_until = ?, updated_at = ? WHERE id = ?',
-  )
-    .bind(s.status, s.error ?? null, s.number ?? null, s.url ?? null, s.leaseUntil ?? null, s.updatedAt ?? Date.now(), id)
-    .run();
+  ).bind(s.status, s.error ?? null, s.number ?? null, s.url ?? null, s.leaseUntil ?? null, ts, row.id);
+  await writeWithEvents(env, write, await statusEvent(row, s.status, s.number, ts));
 }
 
 /** Compare-and-set claim: only one concurrent caller moves a row into `publishing`. */
@@ -261,7 +271,7 @@ async function fresh(env: Env, id: string): Promise<Row> {
 
 async function markCreated(env: Env, row: Row, issue: { number: number; url: string }, labeled: boolean): Promise<Row> {
   try {
-    await setState(env, row.id, { status: labeled ? 'created' : 'needs_review', error: labeled ? null : 'label_missing', number: issue.number, url: issue.url });
+    await setState(env, row, { status: labeled ? 'created' : 'needs_review', error: labeled ? null : 'label_missing', number: issue.number, url: issue.url });
   } catch {
     // The issue exists but the row still says `publishing`; a retry with the same key reconciles it.
     throw new FeedbackError(503, 'persistence_failed', 'The report was published but its record could not be saved. Retry with the same idempotency key to finish.', undefined, 30);
@@ -281,10 +291,10 @@ async function reconcile(env: Env, row: Row, since: number): Promise<Row> {
     return markCreated(env, row, found.issue, labeled);
   }
   if (found.found === false && Date.now() - since >= RECONCILE_GRACE_MS) {
-    await setState(env, row.id, { status: 'pending_retry', error: 'not_found_on_github', leaseUntil: Date.now() });
+    await setState(env, row, { status: 'pending_retry', error: 'not_found_on_github', leaseUntil: Date.now() });
   } else {
     // Keep the original timestamp so repeated lookups do not restart the grace period.
-    await setState(env, row.id, { status: 'unknown_remote_state', error: 'unconfirmed_remote_state', updatedAt: since });
+    await setState(env, row, { status: 'unknown_remote_state', error: 'unconfirmed_remote_state', updatedAt: since });
   }
   return fresh(env, row.id);
 }
@@ -297,23 +307,23 @@ async function publish(env: Env, row: Row): Promise<Row> {
   if (!(await claim(env, row, true))) return fresh(env, row.id); // someone else holds it
   const claimed = await fresh(env, row.id);
   if (claimed.attempt_count > MAX_ATTEMPTS) {
-    await setState(env, row.id, { status: 'failed', error: 'max_attempts' });
+    await setState(env, row, { status: 'failed', error: 'max_attempts' });
     return fresh(env, row.id);
   }
   const r = await createFeedbackIssue(env, { title: row.title, body: row.sanitized_body });
   if (r.ok) return markCreated(env, claimed, r, r.labeled);
   switch (r.kind) {
     case 'rate_limited':
-      await setState(env, row.id, { status: 'pending_retry', error: 'github_rate_limited', leaseUntil: Date.now() + r.retryAfter * 1000 });
+      await setState(env, row, { status: 'pending_retry', error: 'github_rate_limited', leaseUntil: Date.now() + r.retryAfter * 1000 });
       break;
     case 'misconfigured':
-      await setState(env, row.id, { status: 'failed', error: 'integration_misconfigured' });
+      await setState(env, row, { status: 'failed', error: 'integration_misconfigured' });
       break;
     case 'invalid':
-      await setState(env, row.id, { status: 'failed', error: 'upstream_invalid_request' });
+      await setState(env, row, { status: 'failed', error: 'upstream_invalid_request' });
       break;
     case 'ambiguous':
-      await setState(env, row.id, { status: 'unknown_remote_state', error: 'unconfirmed_remote_state' });
+      await setState(env, row, { status: 'unknown_remote_state', error: 'unconfirmed_remote_state' });
       return reconcile(env, await fresh(env, row.id), Date.now());
   }
   return fresh(env, row.id);
@@ -340,7 +350,7 @@ async function advance(env: Env, row: Row): Promise<Row> {
     case 'failed':
       // Only an integration problem that may have been fixed is worth another try.
       if (row.last_error_code === 'integration_misconfigured' && feedbackConfigured(env) && row.attempt_count <= MAX_ATTEMPTS) {
-        await setState(env, row.id, { status: 'pending_retry', error: row.last_error_code, leaseUntil: at });
+        await setState(env, row, { status: 'pending_retry', error: row.last_error_code, leaseUntil: at });
         return publish(env, await fresh(env, row.id));
       }
       return row;
@@ -413,7 +423,7 @@ export async function submitFeedback(env: Env, principal: Principal, input: Feed
 
   // The limits are re-checked inside the insert itself, so parallel requests cannot all pass a stale count.
   const count = "(SELECT COUNT(*) FROM feedback_submissions WHERE created_at > ? AND status != 'failed'";
-  const insert = await env.DB.prepare(
+  const write = env.DB.prepare(
     `INSERT OR IGNORE INTO feedback_submissions (id, user_id, type, title, sanitized_body, channel, idempotency_key, payload_hash, content_hash, status, last_error_code, created_at, updated_at, publicly_confirmed_at)
      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?
      WHERE ${count} AND user_id = ?) < 1 AND ${count} AND user_id = ?) < ? AND ${count} AND user_id = ?) < ? AND ${count}) < ?`,
@@ -421,15 +431,16 @@ export async function submitFeedback(env: Env, principal: Principal, input: Feed
     .bind(
       id, userId, input.type, built.title, built.body, channel, input.idempotency_key, h.payload, h.content, hold ? 'needs_review' : 'received', hold, at, at, at,
       at - 60_000, userId, at - 24 * 3600_000, userId, intEnv(env.FEEDBACK_DAILY_LIMIT, 3), at - 7 * 24 * 3600_000, userId, intEnv(env.FEEDBACK_WEEKLY_LIMIT, 10), at - 3600_000, intEnv(env.FEEDBACK_GLOBAL_HOURLY_LIMIT, 60),
-    )
-    .run();
+    );
+  // A report held for review at submission is already a public status.
+  const inserted = await writeWithEvents(env, write, await statusEvent({ id, user_id: userId }, hold ? 'needs_review' : 'received', undefined, at));
   const stored = await byKey(env, userId, input.idempotency_key);
   if (!stored) {
     // Nothing was written: either a limit was reached by a concurrent request, or storage failed.
     await enforceLimits(env, userId, Date.now());
     throw new FeedbackError(429, 'feedback_rate_limited', 'Too many reports at once. Try again in a minute.', undefined, 60);
   }
-  if (Number(insert.meta?.changes ?? 0) === 0) {
+  if (inserted === 0) {
     // A concurrent request with the same key won the insert: it publishes, this one only reports.
     if (stored.payload_hash !== h.payload) throw new FeedbackError(409, 'idempotency_conflict', 'This idempotency key was already used with different content. Use a new key for a new report.');
     return settle(await advance(env, stored), true);

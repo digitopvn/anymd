@@ -17,8 +17,10 @@ import { Converter } from './components/marketing';
 import type { StoredReadingPreferences } from '../convert/reading-preferences';
 import { ReadingPreferencesSection } from './reading-preferences-section';
 import type { ReadingFormValues } from './components/reading-options-fields';
+import type { SubscriptionView } from '../events/subscriptions';
 
-const NAV: { href: string; label: string; icon: string; min?: RoleName }[] = [
+/** `events` entries show only when MCP Events are configured on this deployment. */
+const NAV: { href: string; label: string; icon: string; min?: RoleName; events?: boolean }[] = [
   { href: '/dashboard', label: 'Overview', icon: 'home' },
   { href: '/dashboard/library', label: 'Library', icon: 'book' },
   { href: '/dashboard/search', label: 'Search', icon: 'search' },
@@ -26,6 +28,7 @@ const NAV: { href: string; label: string; icon: string; min?: RoleName }[] = [
   { href: '/dashboard/usage', label: 'Usage logs', icon: 'chart' },
   { href: '/dashboard/traces', label: 'Traces', icon: 'activity' },
   { href: '/dashboard/keys', label: 'API keys', icon: 'key' },
+  { href: '/dashboard/events', label: 'Event subscriptions', icon: 'send', events: true },
   { href: '/dashboard/feedback', label: 'Feedback', icon: 'message' },
   { href: '/dashboard/billing', label: 'Billing', icon: 'card' },
   { href: '/dashboard/account', label: 'Account', icon: 'settings' },
@@ -39,8 +42,9 @@ const ADMIN_NAV: { href: string; label: string; icon: string; min: RoleName }[] 
   { href: '/admin/settings', label: 'Settings', icon: 'settings', min: 'admin' },
 ];
 
-export function DashShell({ user, current, title, actions, children }: { user: UserRow; current: string; title: string; actions?: Child; children: Child }) {
+export function DashShell({ user, current, title, actions, events = false, children }: { user: UserRow; current: string; title: string; actions?: Child; events?: boolean; children: Child }) {
   const role = user.role as RoleName;
+  const nav = NAV.filter((n) => events || !n.events);
   const admin = ADMIN_NAV.filter((n) => roleAtLeast(role, n.min));
   const link = (n: { href: string; label: string; icon: string }) => (
     <a href={n.href === '/dashboard/feedback' ? `${n.href}?from=${encodeURIComponent(current)}` : n.href} aria-current={current === n.href || (n.href === '/dashboard/feedback' && current.startsWith(`${n.href}/`)) ? 'page' : undefined}>
@@ -61,7 +65,7 @@ export function DashShell({ user, current, title, actions, children }: { user: U
           </form>
         </div>
         <nav class="dash-nav scroll-x flex gap-1 px-3 pb-3 lg:flex-col lg:overflow-visible lg:pb-0" aria-label="Dashboard">
-          {NAV.map(link)}
+          {nav.map(link)}
           {admin.length ? <p class="hidden px-3 pb-1 pt-5 font-mono text-[11px] uppercase tracking-widest text-muted lg:block">Admin</p> : null}
           {admin.map(link)}
         </nav>
@@ -1110,6 +1114,70 @@ export function KeysPage({ keys, newKey, grants, role, error, origin = 'https://
           ) : null}
         </div>
       </div>
+    </>
+  );
+}
+
+/** Callback host and path only: a query string may carry a token the subscriber put there. */
+function callbackLabel(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return 'invalid URL';
+  }
+}
+
+function expiresIn(ts: number): string {
+  const m = Math.max(0, Math.round((ts - Date.now()) / 60_000));
+  if (m < 60) return `in ${m}m`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `in ${h}h` : `on ${humanDate(ts)}`;
+}
+
+export function EventSubscriptionsPage({ subscriptions, notice, error }: { subscriptions: SubscriptionView[]; notice?: string; error?: string }) {
+  return (
+    <>
+      {notice ? <p class="mb-4 rounded-xl border border-ok-line bg-accent-soft px-4 py-3 text-sm text-accent-ink">{notice}</p> : null}
+      {error ? <p class="mb-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">{error}</p> : null}
+      {subscriptions.length ? (
+        <div class="card overflow-hidden">
+          <div class="border-b border-line px-5 py-4">
+            <p class="font-bold">Live subscriptions</p>
+            <p class="text-xs text-muted">Webhooks your MCP clients registered with events/subscribe. Deleting one stops deliveries and tells the endpoint it was terminated.</p>
+          </div>
+          <ul>
+            {subscriptions.map((s) => (
+              <li class="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3.5 last:border-0">
+                <div class="min-w-0 flex-1">
+                  <p class="flex flex-wrap items-center gap-2">
+                    <code class="font-mono text-sm font-semibold">{s.name}</code>
+                    <span class={`chip !py-0 !text-[11px] ${s.active ? 'chip-mint' : '!bg-danger-soft !text-danger !border-danger-line'}`}>{s.active ? 'active' : 'suspended'}</span>
+                    <span class="chip !py-0 !text-[11px]">{s.credential}</span>
+                  </p>
+                  <p class="mt-1 break-all font-mono text-xs">{callbackLabel(s.url)}</p>
+                  {s.arguments ? (
+                    <p class="mt-1 break-all text-xs text-muted">
+                      Filters: <code class="font-mono">{s.arguments}</code>
+                    </p>
+                  ) : null}
+                  <p class="mt-1 text-xs text-muted">
+                    expires {expiresIn(s.expiresAt)} · {s.lastDeliveryAt ? `last delivery ${timeAgo(s.lastDeliveryAt)}` : 'no deliveries yet'} · {formatNumber(s.pending)} pending · {formatNumber(s.dead)} dead
+                  </p>
+                  {s.lastError ? <p class="mt-1 break-all text-xs text-danger">Last error: {s.lastError}</p> : null}
+                </div>
+                <form method="post" action={`/dashboard/events/${encodeURIComponent(s.id)}/delete`} data-confirm="Delete this subscription? The endpoint stops receiving events.">
+                  <button class="btn btn-ghost btn-sm !text-danger" type="submit">
+                    Delete
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <Empty icon="send" title="No event subscriptions" body="MCP clients that support events can subscribe to changes in your library. Their webhooks appear here while they are live, and you can delete any of them." />
+      )}
     </>
   );
 }

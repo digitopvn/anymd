@@ -47,6 +47,7 @@ import { getOwnTrace, listOwnTraces } from '../services/admin/observability';
 import { AdminError } from '../services/admin/shared';
 import { adminControlPlane } from './api-admin-control-plane';
 import { clientIp, originOf } from './shared';
+import type { EventOrigin } from '../events/outbox';
 
 export const api = new Hono<AppBindings>();
 
@@ -96,6 +97,17 @@ async function body<T extends z.ZodTypeAny>(c: AppContext, schema: T): Promise<z
 
 function me(c: AppContext): Principal & { userId: string } {
   return c.get('principal') as Principal & { userId: string };
+}
+
+/** Who made a library change, for MCP Events loop avoidance and prompt delivery. */
+function eventOrigin(c: AppContext): EventOrigin {
+  let ctx: EventOrigin['ctx'];
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    // No execution context (in-process callers); delivery then waits for the scheduler.
+  }
+  return { principal: c.get('principal'), ctx };
 }
 
 function channelFor(c: AppContext): 'api' | 'cli' | 'web' {
@@ -296,7 +308,7 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
     let documentId: string | null = null;
     let notSavedReason: NotSavedReason | null = form.save === '0' ? 'not_requested' : !p.scopes.includes('library:write') ? 'missing_scope' : null;
     if (!notSavedReason) {
-      const saved = await saveDocument(c.env, p.userId, result, markdown, getPlan(user?.plan ?? 'free').libraryLimit);
+      const saved = await saveDocument(c.env, p.userId, result, markdown, getPlan(user?.plan ?? 'free').libraryLimit, eventOrigin(c));
       documentId = saved?.id ?? null;
       if (!saved) notSavedReason = 'library_limit';
       if (saved?.changed) c.executionCtx.waitUntil(embedDocument(c.env, p.userId, saved.id).catch(() => 0));
@@ -353,7 +365,7 @@ api.post('/library/:id/tags', requireScope('library:write'), async (c) => {
   const b = await body(c, z.object({ add: TagList.optional(), remove: TagList.optional(), set: TagList.optional() }).strict());
   if (b.set && (b.add || b.remove)) return apiError(c, 422, 'invalid_request', 'Use either `set`, or `add` and/or `remove`, not both.');
   if (!b.set && !b.add && !b.remove) return apiError(c, 422, 'invalid_request', 'Pass `add`, `remove` or `set`.');
-  const tags = await editTags(c.env, me(c).userId, c.req.param('id'), b);
+  const tags = await editTags(c.env, me(c).userId, c.req.param('id'), b, eventOrigin(c));
   if (!tags) return apiError(c, 404, 'not_found', 'Document not found');
   return c.json({ id: c.req.param('id'), tags });
 });
@@ -370,13 +382,13 @@ api.get('/library/:id', requireScope('library:read'), async (c) => {
 
 api.patch('/library/:id', requireScope('library:write'), async (c) => {
   const b = await body(c, z.object({ tags: z.array(z.string().max(40)).max(20) }));
-  const ok = await updateTags(c.env, me(c).userId, c.req.param('id'), b.tags);
+  const ok = await updateTags(c.env, me(c).userId, c.req.param('id'), b.tags, eventOrigin(c));
   if (!ok) return apiError(c, 404, 'not_found', 'Document not found');
   return c.json({ ok: true });
 });
 
 api.delete('/library/:id', requireScope('library:write'), async (c) => {
-  const ok = await deleteDocument(c.env, me(c).userId, c.req.param('id'));
+  const ok = await deleteDocument(c.env, me(c).userId, c.req.param('id'), eventOrigin(c));
   if (!ok) return apiError(c, 404, 'not_found', 'Document not found');
   return c.json({ ok: true });
 });

@@ -17,6 +17,7 @@ import { runSocialSearch, SOCIAL_SEARCH_ALL_MAX, socialSearchInput, socialSearch
 import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError } from '../convert/types';
+import { eventsAvailable, EventsRpcError, handleEventsMethod } from '../events/subscriptions';
 import type { Env, Principal, Scope, WaitUntil } from '../env';
 import { deleteDocument, editTags, getDocument, listDocuments, listTags, MAX_TAG_FILTERS, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags, parseTagFilter } from '../library/store';
 import { convertPayload, searchForPrincipal, usageSummary } from '../services';
@@ -161,7 +162,7 @@ const TOOLS: ToolDef[] = [
     input: z.object({ id: z.string() }),
     annotations: DESTRUCTIVE,
     run: async (a, t) => {
-      if (!(await deleteDocument(t.env, t.principal.userId, a.id))) throw new ToolError('Document not found');
+      if (!(await deleteDocument(t.env, t.principal.userId, a.id, { principal: t.principal, ctx: t.ctx }))) throw new ToolError('Document not found');
       return { ok: true };
     },
   },
@@ -181,7 +182,7 @@ const TOOLS: ToolDef[] = [
     run: async (a, t) => {
       if (a.set && (a.add || a.remove)) throw new ToolError('Use either set, or add and/or remove, not both.');
       if (!a.set && !a.add && !a.remove) throw new ToolError('Pass add, remove or set.');
-      const tags = await editTags(t.env, t.principal.userId, a.id, { add: a.add, remove: a.remove, set: a.set });
+      const tags = await editTags(t.env, t.principal.userId, a.id, { add: a.add, remove: a.remove, set: a.set }, { principal: t.principal, ctx: t.ctx });
       if (!tags) throw new ToolError('Document not found');
       return { id: a.id, tags };
     },
@@ -439,7 +440,7 @@ async function handleMessage(msg: JsonRpcMessage, t: ToolContext, era: Era): Pro
     case 'server/discover':
       return ok({
         supportedVersions: SUPPORTED_VERSIONS,
-        capabilities: { tools: { listChanged: false } },
+        capabilities: { tools: { listChanged: false }, ...(eventsAvailable(t.env, t.principal) ? { events: { listChanged: false } } : {}) },
         instructions: INSTRUCTIONS,
         ttlMs: LIST_TTL_MS,
         cacheScope: 'private',
@@ -449,6 +450,16 @@ async function handleMessage(msg: JsonRpcMessage, t: ToolContext, era: Era): Pro
       return ok({ tools: toolListing(t.principal), ...listCache });
     case 'tools/call':
       return ok(await callTool(msg.params, t));
+  }
+  // MCP Events exist only in the modern era, and only when this deployment can store callback secrets.
+  if (era === 'modern' && msg.method.startsWith('events/') && eventsAvailable(t.env, t.principal)) {
+    try {
+      const result = await handleEventsMethod(t.env, t.principal, msg.method, msg.params);
+      if (result) return ok(msg.method === 'events/list' ? { ...result, ...listCache } : result);
+    } catch (err) {
+      if (err instanceof EventsRpcError) return rpcError(id, err.code, err.message, err.data);
+      throw err;
+    }
   }
   if (era === 'legacy') {
     switch (msg.method) {
@@ -519,6 +530,7 @@ function batchAllowed(versionHeader: string | null): boolean {
 }
 
 function callsMutation(m: JsonRpcMessage, p: Principal): boolean {
+  if (isMessageObject(m) && (m.method === 'events/subscribe' || m.method === 'events/unsubscribe')) return true;
   if (!isMessageObject(m) || m.method !== 'tools/call') return false;
   const tool = TOOL_BY_NAME.get(String(m.params?.name ?? ''));
   return Boolean(tool && holdsToolScope(p, tool) && isMutation(tool));

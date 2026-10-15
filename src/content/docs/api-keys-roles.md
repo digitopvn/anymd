@@ -65,6 +65,8 @@ Everything below `keys:manage` and outside content and pages is **elevated**: it
 
 A request missing a scope gets `403 forbidden` with the scopes it needed in `required`. The endpoint-to-scope map is in the [REST API](/docs/api) reference; MCP tools are hidden entirely when you lack their scope.
 
+[MCP Events](/docs/mcp#events-webhooks) use the same scopes, and an event is listed only when the credential holds its scope: library events (`anymd.library.*`) need `library:read`, video events (`anymd.video.*`) need `convert`, and `anymd.feedback.status.changed` needs `feedback:write`. Only API keys and OAuth credentials can subscribe. If a credential later loses the scope, is revoked or expires, its subscriptions end.
+
 ## Roles
 
 Roles are templates. Your account has exactly one.
