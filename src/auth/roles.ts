@@ -112,6 +112,25 @@ export const KEY_PRESETS: { id: string; label: string; scopes: Scope[] }[] = [
   { id: 'full', label: 'Everything my role allows', scopes: ALL_SCOPES },
 ];
 
+/**
+ * Admin access an owner or admin may add on the OAuth consent screen. It is opt-in per connection
+ * (unchecked by default, never implied by a client's request) and capped by the role, so clients
+ * that cannot request admin scopes themselves (or step up) can still be connected as admin agents.
+ */
+export const OAUTH_ADMIN_PRESET_IDS = ['admin-read-only', 'support'] as const;
+export type OAuthAdminPresetId = (typeof OAUTH_ADMIN_PRESET_IDS)[number];
+
+export function isOAuthAdminPreset(v: unknown): v is OAuthAdminPresetId {
+  return typeof v === 'string' && (OAUTH_ADMIN_PRESET_IDS as readonly string[]).includes(v);
+}
+
+/** The scopes of an admin consent preset this role can hold (empty for roles below admin). */
+export function oauthAdminPresetScopes(role: RoleName, presetId: OAuthAdminPresetId): Scope[] {
+  if (!roleAtLeast(role, 'admin')) return [];
+  const preset = KEY_PRESETS.find((p) => p.id === presetId);
+  return preset ? capScopes(role, preset.scopes) : [];
+}
+
 export function isRole(v: unknown): v is RoleName {
   return typeof v === 'string' && v in ROLE_TEMPLATES;
 }

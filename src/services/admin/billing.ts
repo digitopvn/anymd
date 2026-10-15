@@ -9,7 +9,7 @@ import { polarPlanForStatus } from '../../billing/polar';
 import { billingEnabled, providerName } from '../../billing/provider';
 import type { Env, Principal } from '../../env';
 import { now, safeJson } from '../../lib/util';
-import { AdminError, assertScope, clampLimit, decodeCursor, encodeCursor, iso, parseInput, type Paged } from './shared';
+import { AdminError, assertScope, clampLimit, decodeCursor, encodeCursor, iso, parseInput, Timestamp, type Paged } from './shared';
 
 interface SubscriptionRow {
   id: string;
@@ -144,5 +144,183 @@ export async function getBillingDiagnostics(env: Env, actor: Principal) {
     subscriptions_by_status: byStatus.results,
     plan_drift: drift,
     notes: 'Read-only. Plans and subscriptions change only through the billing provider; use credit grants for support allowances.',
+  };
+}
+
+// ─── Customer billing summary (support) ─────────────────────────────────────
+
+/** `jane@example.com` → `j***@example.com`: enough to confirm an account without copying the address around. */
+export function maskEmail(email: string): string {
+  const at = email.lastIndexOf('@');
+  if (at < 1) return '***';
+  return `${email[0]}***${email.slice(at)}`;
+}
+
+/** What anymd cannot answer about money, said once instead of returning placeholders. */
+export const UNSUPPORTED_BILLING_RECORDS = {
+  supported: false,
+  records: ['orders', 'invoices', 'payments', 'refunds', 'customers'],
+  reason: 'anymd stores subscriptions synced by webhook, not orders, invoices or payments. Look these up in the billing provider dashboard.',
+} as const;
+
+/**
+ * One user's billing picture for support: stored plan, subscriptions with what they entitle, renewal
+ * or cancellation, the provider customer link (present or not) and, with credits:read, recent grants.
+ * Read-only; it composes the same rows list_subscriptions and list_credit_grants read.
+ */
+export async function getCustomerBillingSummary(env: Env, actor: Principal, userId: string) {
+  assertScope(actor, 'billing:read');
+  const user = await env.DB.prepare('SELECT id, email, role, status, plan, polar_customer_id, creem_customer_id, created_at FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ id: string; email: string; role: string; status: string; plan: string; polar_customer_id: string | null; creem_customer_id: string | null; created_at: number }>();
+  if (!user) throw new AdminError('User not found. Find them with list_users.', 404, 'not_found');
+  const withCredits = actor.scopes.includes('credits:read');
+  const [subs, grants] = await Promise.all([
+    env.DB.prepare('SELECT * FROM subscriptions WHERE user_id = ? ORDER BY updated_at DESC, id DESC LIMIT 10').bind(userId).all<SubscriptionRow>(),
+    withCredits
+      ? env.DB.prepare('SELECT id, source, credits, reason, created_at, expires_at, revoked_at, recurring FROM credit_grants WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 10')
+          .bind(userId)
+          .all<{ id: string; source: string; credits: number; reason: string; created_at: number; expires_at: number | null; revoked_at: number | null; recurring: number | null }>()
+      : null,
+  ]);
+  const views = subs.results.map((s) => subscriptionView(env, s));
+  const latest = views[0] ?? null;
+  const entitled = latest?.entitled_plan ?? 'free';
+  const ts = now();
+  return {
+    generated_at: iso(ts),
+    provider: providerName(env),
+    user: {
+      id: user.id,
+      email: maskEmail(user.email),
+      role: user.role,
+      status: user.status,
+      stored_plan: user.plan,
+      created_at: iso(user.created_at),
+      provider_customer: { polar: Boolean(user.polar_customer_id), creem: Boolean(user.creem_customer_id) },
+    },
+    entitlement: {
+      entitled_plan: entitled,
+      consistent: user.plan === entitled,
+      source: latest ? `subscription ${latest.id}` : 'no subscription',
+      renewal: latest
+        ? {
+            status: latest.status,
+            period_ends: latest.period_ends,
+            cancel_at_period_end: latest.cancel_at_period_end,
+            next: latest.cancel_at_period_end ? 'cancels at period end' : latest.current_period_end && latest.current_period_end > ts && entitled !== 'free' ? 'renews at period end' : 'not renewing',
+          }
+        : null,
+    },
+    subscriptions: views,
+    credit_grants: grants
+      ? grants.results.map((g) => ({
+          ...g,
+          recurring: Boolean(g.recurring),
+          state: g.revoked_at ? 'revoked' : g.expires_at && g.expires_at <= ts ? 'expired' : 'active',
+          created: iso(g.created_at),
+          expires: iso(g.expires_at),
+        }))
+      : null,
+    ...(grants ? {} : { credit_grants_note: 'Needs credits:read.' }),
+    last_payment: { available: false, reason: 'Payments are not stored; check the billing provider.' },
+    unsupported: UNSUPPORTED_BILLING_RECORDS,
+    notes: 'Read-only. Plans change only through the billing provider; use grant_credits (owner) for support allowances.',
+  };
+}
+
+// ─── Billing webhook events ─────────────────────────────────────────────────
+
+export const BillingEventQuery = z.object({
+  status: z.enum(['processed', 'failed']).optional().describe('processed (default): deliveries recorded with their outcome; failed: deliveries whose handling threw (kept in the audit log, retried by the provider)'),
+  provider: z.enum(['polar', 'creem']).optional(),
+  type: z.string().max(80).optional().describe('Exact event type, e.g. subscription.updated'),
+  outcome: z.string().max(80).optional().describe('processed only: exact outcome'),
+  since: Timestamp.optional().describe('Default: 30 days ago; at most 90 days ago'),
+  cursor: z.string().max(400).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+/** Webhook rows are kept; the window keeps scans bounded. */
+const EVENT_WINDOW_DAYS = 90;
+
+const errorText = (v: unknown) => (typeof v === 'string' ? v.slice(0, 300) : null);
+
+export async function listBillingEvents(env: Env, actor: Principal, raw: unknown) {
+  assertScope(actor, 'billing:read');
+  const q = parseInput(BillingEventQuery, raw);
+  const limit = clampLimit(q.limit, 25, 100);
+  const ts = now();
+  const oldest = ts - EVENT_WINDOW_DAYS * 86_400_000;
+  if (q.since !== undefined && q.since < oldest) throw new AdminError(`since must be within the last ${EVENT_WINDOW_DAYS} days.`, 422, 'invalid_request', [{ path: 'since', message: `At most ${EVENT_WINDOW_DAYS} days ago` }]);
+  const since = q.since ?? ts - 30 * 86_400_000;
+  const cursor = decodeCursor(q.cursor);
+  if ((q.status ?? 'processed') === 'processed') {
+    const parts = ['received_at >= ?'];
+    const binds: unknown[] = [since];
+    if (q.provider) parts.push('provider = ?'), binds.push(q.provider);
+    if (q.type) parts.push('type = ?'), binds.push(q.type);
+    if (q.outcome) parts.push('outcome = ?'), binds.push(q.outcome);
+    if (cursor) parts.push('(received_at < ? OR (received_at = ? AND id < ?))'), binds.push(cursor.ts, cursor.ts, cursor.id);
+    const { results } = await env.DB.prepare(`SELECT id, type, provider, outcome, received_at FROM webhook_events WHERE ${parts.join(' AND ')} ORDER BY received_at DESC, id DESC LIMIT ?`)
+      .bind(...binds, limit + 1)
+      .all<{ id: string; type: string; provider: string | null; outcome: string | null; received_at: number }>();
+    const more = results.length > limit;
+    const items = more ? results.slice(0, limit) : results;
+    const last = items[items.length - 1];
+    return {
+      status: 'processed',
+      items: items.map((e) => ({ id: e.id, status: 'processed', provider: e.provider, type: e.type, outcome: e.outcome ?? 'unknown', at: iso(e.received_at) })),
+      next_cursor: more && last ? encodeCursor(last.received_at, last.id) : null,
+    };
+  }
+  if (q.outcome) throw new AdminError('outcome filters processed events only.', 422, 'invalid_request', [{ path: 'outcome', message: 'Only with status=processed' }]);
+  const parts = ["action = 'billing.webhook_failed'", 'created_at >= ?'];
+  const binds: unknown[] = [since];
+  if (q.provider) parts.push("json_extract(meta, '$.provider') = ?"), binds.push(q.provider);
+  if (q.type) parts.push("json_extract(meta, '$.event_type') = ?"), binds.push(q.type);
+  if (cursor) parts.push('(created_at < ? OR (created_at = ? AND id < ?))'), binds.push(cursor.ts, cursor.ts, cursor.id);
+  const { results } = await env.DB.prepare(`SELECT id, target, meta, created_at FROM audit_log WHERE ${parts.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`)
+    .bind(...binds, limit + 1)
+    .all<{ id: string; target: string; meta: string; created_at: number }>();
+  const more = results.length > limit;
+  const items = more ? results.slice(0, limit) : results;
+  const last = items[items.length - 1];
+  return {
+    status: 'failed',
+    items: items.map((r) => {
+      const meta = safeJson<Record<string, unknown>>(r.meta, {});
+      return { id: r.target, status: 'failed', provider: meta.provider ?? null, type: meta.event_type ?? null, error: errorText(meta.error), audit_id: r.id, at: iso(r.created_at) };
+    }),
+    next_cursor: more && last ? encodeCursor(last.created_at, last.id) : null,
+  };
+}
+
+/**
+ * One webhook delivery by its provider event id: the recorded outcome and every failed attempt.
+ * A failure with no recorded row means the provider has not yet delivered it successfully.
+ */
+export async function getBillingEvent(env: Env, actor: Principal, eventId: string) {
+  assertScope(actor, 'billing:read');
+  const [row, failures] = await Promise.all([
+    env.DB.prepare('SELECT id, type, provider, outcome, received_at FROM webhook_events WHERE id = ?').bind(eventId).first<{ id: string; type: string; provider: string | null; outcome: string | null; received_at: number }>(),
+    env.DB.prepare("SELECT id, meta, created_at, request_id FROM audit_log WHERE target = ? AND action = 'billing.webhook_failed' ORDER BY created_at DESC LIMIT 20")
+      .bind(eventId)
+      .all<{ id: string; meta: string; created_at: number; request_id: string | null }>(),
+  ]);
+  if (!row && !failures.results.length) throw new AdminError('Billing event not found. List them with list_billing_events.', 404, 'not_found');
+  const attempts = failures.results.map((f) => {
+    const meta = safeJson<Record<string, unknown>>(f.meta, {});
+    return { audit_id: f.id, at: iso(f.created_at), provider: meta.provider ?? null, type: meta.event_type ?? null, error: errorText(meta.error) };
+  });
+  return {
+    id: eventId,
+    status: row ? (attempts.length ? 'processed_after_failures' : 'processed') : 'failed_awaiting_retry',
+    provider: row?.provider ?? attempts[0]?.provider ?? null,
+    type: row?.type ?? attempts[0]?.type ?? null,
+    outcome: row ? (row.outcome ?? 'unknown') : null,
+    received_at: iso(row?.received_at),
+    failed_attempts: attempts,
+    notes: 'Payloads and signatures are not stored. Failed deliveries are retried by the provider; anymd keeps no copy to replay.',
   };
 }

@@ -5,7 +5,10 @@
  */
 import { z } from 'zod';
 import { AuditQuery, listAuditEvents } from '../services/admin/audit';
-import { getBillingDiagnostics, getSubscription, listSubscriptions, SubscriptionQuery } from '../services/admin/billing';
+import { adminAccessStatus } from '../services/admin/access';
+import { BillingEventQuery, getBillingDiagnostics, getBillingEvent, getCustomerBillingSummary, getSubscription, listBillingEvents, listSubscriptions, SubscriptionQuery } from '../services/admin/billing';
+import { FailedJobQuery, getJob, getOperationsHealth, listFailedJobs } from '../services/admin/operations';
+import { getUserActivity, getUserStats, UserActivityQuery } from '../services/admin/stats';
 import { listUserCredentials, revokeUserApiKey, revokeUserOAuthGrant, revokeUserSessions, RevokeSessionsInput, RevokeUserGrantInput, RevokeUserKeyInput } from '../services/admin/credentials';
 import { GrantCreditsInput, GrantQuery, grantCredits, listCreditGrants, revokeCreditGrant, RevokeGrantInput } from '../services/admin/credits';
 import { getSystemTrace, listSystemTraces, systemOverview, systemUsage, SystemTraceQuery, SystemUsageQuery } from '../services/admin/observability';
@@ -27,6 +30,52 @@ export const ADMIN_TOOLS: ToolDef[] = [
     input: z.object({}),
     annotations: READ_ONLY,
     run: (_a, t) => systemOverview(t.env, t.principal),
+  },
+  {
+    name: 'get_user_stats',
+    title: 'User and product KPIs',
+    description:
+      'Registered users, new signups (24h/7d/30d with the prior period), active users DAU/WAU/MAU, usage-active users, activation, stored plans vs paying accounts and plan conflicts, and requests/credits/error rate. Every number comes with its definition, rolling UTC windows, generated_at and data coverage caveats. No revenue: orders and invoices live in the billing provider.',
+    scope: 'system:read',
+    input: z.object({}),
+    annotations: READ_ONLY,
+    run: (_a, t) => getUserStats(t.env, t.principal),
+  },
+  {
+    name: 'get_user_activity',
+    title: 'User activity',
+    description: `One user's activity for support: totals, breakdown by kind and channel, daily series, last activity, library size and a page of event metadata (no URLs, queries or document contents). Window since/until, at most 30 days. ${PAGED}`,
+    scope: 'users:read',
+    input: UserActivityQuery,
+    annotations: READ_ONLY,
+    run: (a, t) => getUserActivity(t.env, t.principal, a),
+  },
+  {
+    name: 'get_operations_health',
+    title: 'Operations health',
+    description: 'Background work at a glance: queued/running/failed video downloads and analyses with the oldest pending age, feedback publishing backlog, billing webhook failures, request error rates (1h/24h) and which optional integrations are configured (true/false only).',
+    scope: 'system:read',
+    input: z.object({}),
+    annotations: READ_ONLY,
+    run: (_a, t) => getOperationsHealth(t.env, t.principal),
+  },
+  {
+    name: 'list_failed_jobs',
+    title: 'List failed jobs',
+    description: `Failed background jobs, most recently updated first: type video_download (default), video_analysis or feedback. Metadata and truncated errors only. Filter by userId and since (at most 30 days ago). ${PAGED}`,
+    scope: 'system:read',
+    input: FailedJobQuery,
+    annotations: READ_ONLY,
+    run: (a, t) => listFailedJobs(t.env, t.principal, a),
+  },
+  {
+    name: 'get_job',
+    title: 'Get job',
+    description: 'One background job (video download/analysis or feedback publication) by id: status, attempts, timings and truncated error. Metadata only.',
+    scope: 'system:read',
+    input: z.object({ jobId: z.string().min(1).max(80) }),
+    annotations: READ_ONLY,
+    run: (a, t) => getJob(t.env, t.principal, a.jobId),
   },
   {
     name: 'list_users',
@@ -126,6 +175,33 @@ export const ADMIN_TOOLS: ToolDef[] = [
     input: z.object({}),
     annotations: READ_ONLY,
     run: (_a, t) => getBillingDiagnostics(t.env, t.principal),
+  },
+  {
+    name: 'get_customer_billing_summary',
+    title: 'Customer billing summary',
+    description: "One user's billing for support: stored plan vs entitled plan, subscriptions, renewal or cancellation, provider customer link (present or not), recent credit grants (with credits:read). Email is masked. Payments, orders and invoices are not stored and are reported as unsupported.",
+    scope: 'billing:read',
+    input: z.object({ userId: z.string().min(1).max(80) }),
+    annotations: READ_ONLY,
+    run: (a, t) => getCustomerBillingSummary(t.env, t.principal, a.userId),
+  },
+  {
+    name: 'list_billing_events',
+    title: 'List billing events',
+    description: `Billing webhook deliveries, newest first. status=processed (default) lists recorded deliveries with their outcome; status=failed lists deliveries whose handling threw (the provider retries them). Filter by provider, type, outcome, since (at most 90 days ago). No payloads or signatures. ${PAGED}`,
+    scope: 'billing:read',
+    input: BillingEventQuery,
+    annotations: READ_ONLY,
+    run: (a, t) => listBillingEvents(t.env, t.principal, a),
+  },
+  {
+    name: 'get_billing_event',
+    title: 'Get billing event',
+    description: 'One billing webhook delivery by provider event id: recorded outcome and every failed attempt with its sanitized error.',
+    scope: 'billing:read',
+    input: z.object({ eventId: z.string().min(1).max(200) }),
+    annotations: READ_ONLY,
+    run: (a, t) => getBillingEvent(t.env, t.principal, a.eventId),
   },
   {
     name: 'list_credit_grants',
@@ -248,3 +324,21 @@ export const ADMIN_TOOLS: ToolDef[] = [
     run: (a, t) => updateSettings(t.env, t.principal, a),
   },
 ];
+
+/**
+ * The caller's own admin access, visible to every signed-in caller so a client whose connection
+ * lacks admin scopes can still learn what its role allows and how to reconnect. Reports nothing
+ * about other users or the system. Takes the finished tool catalog to name the tools.
+ */
+export function accessStatusTool(catalog: () => readonly ToolDef[]): ToolDef {
+  return {
+    name: 'get_admin_access_status',
+    title: 'My admin access',
+    description:
+      "What this connection can do as an admin: your role, this credential's effective scopes, the admin scopes your role allows but this connection lacks, the admin tools available now and after reconnecting, and exactly how to reconnect with admin access (OAuth consent option, step-up scope or API key preset). Reports only on you; roles without admin access learn only that.",
+    scope: null,
+    input: z.object({}),
+    annotations: READ_ONLY,
+    run: async (_a, t) => adminAccessStatus(t.env, t.principal, catalog()),
+  };
+}
