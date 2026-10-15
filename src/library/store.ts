@@ -5,6 +5,8 @@ import { mergeEnrichment } from './enrichment';
 import { renderEnrichment } from '../convert/image-enrichment';
 import { countWords } from '../convert/types';
 import type { Enrichment } from '../convert/enrichment-types';
+import type { EventName } from '../events/catalog';
+import { type EventOrigin, writeWithEvents } from '../events/outbox';
 
 export interface DocumentRow {
   id: string;
@@ -39,6 +41,11 @@ const CHUNK_CHARS = 1800;
 const CHUNK_OVERLAP = 200;
 const MAX_CHUNKS = 48;
 
+/** The MCP event of a library change; fired only when the change commits (see `writeWithEvents`). */
+function documentEvent(name: EventName, userId: string, id: string, ts: number, extra: Record<string, unknown> = {}) {
+  return { name, userId, resourceId: id, data: { document_id: id, resource_type: 'document', ...extra, version: ts } };
+}
+
 /** Save (or refresh) a conversion in the user's library. Returns the document id and whether it changed. */
 export async function saveDocument(
   env: Env,
@@ -46,6 +53,7 @@ export async function saveDocument(
   result: ConvertResult,
   markdown: string,
   libraryLimit: number | null = null,
+  origin?: EventOrigin,
   attempt = 0,
 ): Promise<{ id: string; changed: boolean } | null> {
   const urlHash = await sha256(result.source);
@@ -92,34 +100,32 @@ export async function saveDocument(
       await env.DB.prepare('UPDATE documents SET updated_at = ? WHERE id = ?').bind(ts, existing.id).run();
       return { id: existing.id, changed: false };
     }
-    const updated = await env.DB.prepare(
+    const update = env.DB.prepare(
       'UPDATE documents SET title=?,author=?,description=?,domain=?,site=?,image=?,published=?,language=?,source_kind=?,markdown=?,word_count=?,content_hash=?,embedded_chunks=0,updated_at=?,enrichment_json=?,base_markdown=? WHERE id=? AND user_id=? AND content_hash=?',
     )
       .bind(
         result.title, result.author, result.description, result.domain, result.site ?? '', result.image ?? '',
         result.published, result.language ?? '', result.sourceKind, markdown, wordCount, contentHash, ts, enrichmentJson, base, existing.id, userId, existing.content_hash,
-      )
-      .run();
-    if (!updated.meta.changes) {
+      );
+    if (!(await writeWithEvents(env, update, [documentEvent('anymd.library.document.saved', userId, existing.id, ts, { change: 'updated' })], origin))) {
       if (attempt >= 2) return null;
-      return saveDocument(env, userId, result, result.baseContent ?? markdown, libraryLimit, attempt + 1);
+      return saveDocument(env, userId, result, result.baseContent ?? markdown, libraryLimit, origin, attempt + 1);
     }
     return { id: existing.id, changed: true };
   }
   // A full library still converts; the new page is just not saved.
   if (libraryLimit !== null && (await countDocuments(env, userId)) >= libraryLimit) return null;
   const id = newId('doc_');
-  const inserted = await env.DB.prepare(
+  const insert = env.DB.prepare(
     'INSERT INTO documents (id,user_id,url,url_hash,title,author,description,domain,site,image,published,language,source_kind,tags,markdown,word_count,content_hash,created_at,updated_at,enrichment_json,base_markdown) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,url_hash) DO NOTHING',
   )
     .bind(
       id, userId, result.source, urlHash, result.title, result.author, result.description, result.domain, result.site ?? '',
       result.image ?? '', result.published, result.language ?? '', result.sourceKind, '', markdown, wordCount, contentHash, ts, ts, enrichmentJson, base,
-    )
-    .run();
-  if (!inserted.meta.changes) {
+    );
+  if (!(await writeWithEvents(env, insert, [documentEvent('anymd.library.document.saved', userId, id, ts, { change: 'created' })], origin))) {
     if (attempt >= 2) return null;
-    return saveDocument(env, userId, result, result.baseContent ?? markdown, libraryLimit, attempt + 1);
+    return saveDocument(env, userId, result, result.baseContent ?? markdown, libraryLimit, origin, attempt + 1);
   }
   return { id, changed: true };
 }
@@ -231,7 +237,7 @@ export function applyTagEdit(current: string[], edit: TagEdit): string[] {
  * (`WHERE tags = ?`), retried on a concurrent change. Returns the resulting tags, or null when the
  * document does not exist for this user.
  */
-export async function editTags(env: Env, userId: string, id: string, edit: TagEdit): Promise<string[] | null> {
+export async function editTags(env: Env, userId: string, id: string, edit: TagEdit, origin?: EventOrigin): Promise<string[] | null> {
   for (let attempt = 0; attempt < TAG_WRITE_ATTEMPTS; attempt++) {
     const row = await env.DB.prepare('SELECT tags FROM documents WHERE id = ? AND user_id = ?').bind(id, userId).first<{ tags: string }>();
     if (!row) return null;
@@ -239,10 +245,9 @@ export async function editTags(env: Env, userId: string, id: string, edit: TagEd
     const next = applyTagEdit(current, edit);
     const value = next.join(' ');
     if (value === row.tags) return next;
-    const res = await env.DB.prepare('UPDATE documents SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ? AND tags = ?')
-      .bind(value, now(), id, userId, row.tags)
-      .run();
-    if ((res.meta.changes ?? 0) > 0) return next;
+    const ts = now();
+    const write = env.DB.prepare('UPDATE documents SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ? AND tags = ?').bind(value, ts, id, userId, row.tags);
+    if ((await writeWithEvents(env, write, [documentEvent('anymd.library.tags.updated', userId, id, ts, { tag_count: next.length })], origin)) > 0) return next;
   }
   throw new TagError('tag_conflict', 'The document tags changed while saving. Retry the request.', 409);
 }
@@ -268,18 +273,24 @@ export async function listTags(env: Env, userId: string, limit = 100): Promise<{
 }
 
 /** Replace a document's tags (PATCH /library/:id). Kept lenient for existing clients: extra tags are dropped. */
-export async function updateTags(env: Env, userId: string, id: string, tags: string[]): Promise<boolean> {
+export async function updateTags(env: Env, userId: string, id: string, tags: string[], origin?: EventOrigin): Promise<boolean> {
   const clean = normalizeTags(tags).slice(0, MAX_TAGS);
-  const res = await env.DB.prepare('UPDATE documents SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-    .bind(clean.join(' '), now(), id, userId)
-    .run();
-  return (res.meta.changes ?? 0) > 0;
+  const value = clean.join(' ');
+  const ts = now();
+  const previous = await env.DB.prepare('SELECT tags FROM documents WHERE id = ? AND user_id = ?').bind(id, userId).first<{ tags: string }>();
+  if (!previous) return false;
+  const write = env.DB.prepare('UPDATE documents SET tags = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(value, ts, id, userId);
+  // The event fires only when the stored tags actually change.
+  const events = previous.tags === value ? [] : [documentEvent('anymd.library.tags.updated', userId, id, ts, { tag_count: clean.length })];
+  return (await writeWithEvents(env, write, events, origin)) > 0;
 }
 
-export async function deleteDocument(env: Env, userId: string, id: string): Promise<boolean> {
+export async function deleteDocument(env: Env, userId: string, id: string, origin?: EventOrigin): Promise<boolean> {
   const doc = await env.DB.prepare('SELECT embedded_chunks FROM documents WHERE id = ? AND user_id = ?').bind(id, userId).first<{ embedded_chunks: number }>();
   if (!doc) return false;
-  await env.DB.prepare('DELETE FROM documents WHERE id = ? AND user_id = ?').bind(id, userId).run();
+  const ts = now();
+  const write = env.DB.prepare('DELETE FROM documents WHERE id = ? AND user_id = ?').bind(id, userId);
+  await writeWithEvents(env, write, [documentEvent('anymd.library.document.deleted', userId, id, ts)], origin);
   if (doc.embedded_chunks > 0) {
     const ids = Array.from({ length: doc.embedded_chunks }, (_, i) => `${id}#${i}`);
     await env.VECTORS.deleteByIds(ids).catch(() => undefined);

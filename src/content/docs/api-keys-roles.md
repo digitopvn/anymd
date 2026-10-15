@@ -1,7 +1,7 @@
 ---
 title: "API keys & roles"
 description: "Create scoped anymd API keys, pick presets, and understand how roles cap what every key and OAuth grant can do."
-updated: "2026-10-09"
+updated: "2026-10-15"
 ---
 
 Every call to anymd runs as a **principal** with a set of **scopes**. Scopes come from your **role**, and each API key or OAuth grant can only narrow them, never widen them.
@@ -64,6 +64,8 @@ Rule of thumb: give each integration its own key with the smallest preset that w
 Everything below `keys:manage` and outside content and pages is **elevated**: it touches other people's accounts or the whole deployment.
 
 A request missing a scope gets `403 forbidden` with the scopes it needed in `required`. The endpoint-to-scope map is in the [REST API](/docs/api) reference; MCP tools are hidden entirely when you lack their scope.
+
+[MCP Events](/docs/mcp#events-webhooks) use the same scopes, and an event is listed only when the credential holds its scope: library events (`anymd.library.*`) need `library:read`, video events (`anymd.video.*`) need `convert`, and `anymd.feedback.status.changed` needs `feedback:write`. Only API keys and OAuth credentials can subscribe. If a credential later loses the scope, is revoked or expires, its subscriptions end.
 
 ## Roles
 

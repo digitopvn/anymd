@@ -1,7 +1,7 @@
 ---
 title: "MCP server"
-description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp so your agents can read the public web, remember it and search it."
-updated: "2026-10-13"
+description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp so your agents can read the public web, remember it and search it, and get webhook events when it changes."
+updated: "2026-10-15"
 ---
 
 anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) server. It is the main way agents use anymd as their web context layer: connect it once and your agent can read public web content as structured Markdown, recall everything it has read from your private library, and (with the right scopes) manage pages.
@@ -247,6 +247,127 @@ One endpoint serves both protocol eras, and existing clients need no change.
 
 - **2026-07-28 (stateless).** No `initialize`. Each request names its version in `params._meta["io.modelcontextprotocol/protocolVersion"]` and mirrors it in the `MCP-Protocol-Version` header, with `Mcp-Method` (and `Mcp-Name` for `tools/call`; non-ASCII values as `=?base64?…?=`). A header that disagrees with the body gets `400` with error `-32020`; an unknown version gets `400` with `-32022` and the supported list. `server/discover` describes the server; results carry `resultType`, and lists carry `ttlMs` and `cacheScope: "private"`. One message per request: no batches, no `ping`.
 - **2025-11-25 and earlier.** `initialize` and `ping` work as before. JSON-RPC batches (up to 20 messages; each message counts toward the rate limits) work for clients on 2025-03-26 or earlier, or that send no `MCP-Protocol-Version` header; a batch sent with `2025-06-18` or later gets `400` with `-32600`, since those versions dropped batching. A message that is not a JSON object gets `-32600` without counting toward the limits.
+
+## Events (webhooks)
+
+MCP Events let an agent hear about changes to its own account instead of polling: anymd POSTs a small signed message to an HTTPS endpoint you run. Events are opt-in and exist only on the `2026-07-28` protocol. When the deployment offers them, `server/discover` lists `capabilities.events`; 2025-era clients see nothing new and keep working unchanged.
+
+An event says *what* changed, never the content. Fetch details with the normal tools (`get_document`, `get_video_download`, `list_my_feedback`) under their normal scopes. A subscription grants nothing on its own: it never spends credits, never submits feedback or GitHub issues, and acting on an event goes through the same tool authorization as any other call.
+
+There is no REST or CLI way to subscribe: events are MCP-only. In **Dashboard → Event subscriptions** (`/dashboard/events`) you can see your subscriptions with their delivery health, and delete one.
+
+### Event catalog
+
+Every event is about your own resources, and is listed by `events/list` only when your credential holds its scope.
+
+| Event | Fires when | Needs | Arguments (all optional) |
+|---|---|---|---|
+| `anymd.library.document.saved` | A document was created or its content changed (a re-read with unchanged content does not fire) | `library:read` | `document_ids`, `tags`, `domain`, `exclude_self` |
+| `anymd.library.document.deleted` | A document was deleted | `library:read` | `document_ids`, `exclude_self` |
+| `anymd.library.tags.updated` | A document's tags changed (an edit that changes nothing does not fire) | `library:read` | `document_ids`, `tags`, `exclude_self` |
+| `anymd.video.ready` · `anymd.video.failed` | A YouTube video download you started is ready, or failed for good | `convert` | `job_ids` |
+| `anymd.video.analysis.ready` · `anymd.video.analysis.failed` | The AI analysis of one of your videos is ready, or failed for good | `convert` | `job_ids` |
+| `anymd.feedback.status.changed` | Feedback you sent reached `created` (a GitHub issue exists), `needs_review` or `failed` | `feedback:write` | `feedback_ids` |
+
+- `document_ids`, `job_ids`, `feedback_ids`: only these ids (up to 50). Omit for all of yours.
+- `tags`: only documents carrying every one of these tags when the event is delivered. `domain`: only documents from this domain or its subdomains, e.g. `example.com`.
+- `exclude_self` (default `true`): skip library changes made with the same credential that subscribed, so an agent does not react to its own writes. Set it to `false` to hear them too.
+
+Payloads are minimal: the resource id (`document_id`, `job_id` or `feedback_id`), `resource_type`, what happened (`change`: `created`/`updated`, `status`, `tag_count`, `error_code`, `issue_number`), `version` (the resource's last-change time in ms) and `correlation_id` (the request that made the change, when there was one). `events/list` returns the exact `inputSchema` and `payloadSchema` of each event.
+
+### Subscribe, refresh, unsubscribe
+
+Only API keys and OAuth credentials can subscribe. Pick a random secret of 24 to 64 bytes, encode it as `whsec_` + base64, and send it with the subscription:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "events/subscribe",
+  "params": {
+    "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+    "name": "anymd.library.document.saved",
+    "arguments": { "tags": ["research"] },
+    "delivery": { "mode": "webhook", "url": "https://agent.example.com/anymd-events", "secret": "whsec_…" },
+    "ttlMs": 3600000
+  }
+}
+```
+
+The result is `{ id, refreshBefore, cursor: null, truncated }`.
+
+- **Identity.** `id` (`sub_…`) is derived from your credential, the URL, the event name and the arguments, so subscribing again with the same four values refreshes the same subscription instead of creating a new one. The refresh result adds `deliveryStatus` (`active`, `lastDeliveryAt`, `lastError`, `failedSince`).
+- **Lifetime.** `ttlMs` defaults to one hour, is clamped to between 60 seconds and 24 hours, and `null` asks for the 24-hour maximum. Subscribe again before `refreshBefore`, or the subscription lapses.
+- **Verification.** The first subscription for a credential and URL pair triggers a signed POST `{"type":"verification","challenge":"…"}`. Your endpoint must answer `2xx` with `{"challenge":"<the same value>"}`. One handshake covers every event and argument set on that URL for that credential.
+- **No replay.** Events start from the moment you subscribe. `cursor` is always `null`; if you send one, the result says `truncated: true`.
+- **Secret rotation.** Refresh with a new `secret`. For the next hour each message is signed with both the new and the old secret.
+- **Limits.** At most 20 live subscriptions per account (`-32013` beyond that). Each account keeps at most 500 undelivered events; past that, new events are dropped until the endpoint catches up. `events/subscribe` and `events/unsubscribe` count toward the stricter MCP rate limit for changes.
+
+To stop, call `events/unsubscribe` with the same `name`, `arguments` and `delivery.url` you subscribed with, from the same credential. Deleting a subscription in the dashboard works too.
+
+### Delivery
+
+Messages follow [Standard Webhooks](https://www.standardwebhooks.com/). Each POST carries:
+
+| Header | Value |
+|---|---|
+| `webhook-id` | The event id. Deliveries are at-least-once: deduplicate on it |
+| `webhook-timestamp` | Unix seconds when this attempt was sent |
+| `webhook-signature` | `v1,<base64 HMAC-SHA256>` over `<webhook-id>.<webhook-timestamp>.<body>`, keyed with the base64-decoded part of your `whsec_` secret. Several space-separated signatures during a secret rotation |
+| `X-MCP-Subscription-Id` | The subscription `id` |
+
+The body of an event is `{ "eventId", "name", "timestamp", "data", "cursor": null }`, where `data` is the payload above and `timestamp` is when the change happened. Bodies are capped at 256 KiB.
+
+- **Retries.** A network error, timeout or non-`2xx` answer is retried after 1, 2, 4 and 8 minutes (5 attempts). `410 Gone` and `413` are never retried. Redirects are never followed and count as a failure.
+- **Dead letters.** When all attempts fail, the event is dead-lettered and the subscription is suspended: nothing more is sent until your client subscribes again, which resumes delivery.
+- **Termination.** If the subscribing credential is revoked, expires or loses the event's scope, the account is suspended, or you delete the subscription in the dashboard, the subscription ends and your endpoint gets a signed `{"type":"terminated","error":{"code":-32012,"message":"Forbidden","data":{"reason":"…"}}}`. The credential is checked before every delivery.
+- **Retention.** Delivery records are kept 7 days; dead letters and events, 30 days.
+
+Verify every message, including the verification and termination messages, before acting on it. In Node or TypeScript:
+
+```ts
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+// The whsec_… secret you sent in events/subscribe. Keep it out of source control.
+export function verifyWebhook(secret: string, headers: Headers, body: string): boolean {
+  const id = headers.get('webhook-id');
+  const timestamp = headers.get('webhook-timestamp');
+  const signatures = headers.get('webhook-signature');
+  if (!id || !timestamp || !signatures) return false;
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false; // refuse stale or replayed messages
+  const key = Buffer.from(secret.slice('whsec_'.length), 'base64');
+  const expected = createHmac('sha256', key).update(`${id}.${timestamp}.${body}`).digest();
+  return signatures.split(' ').some((entry) => {
+    const [version, value] = entry.split(',');
+    const got = Buffer.from(value ?? '', 'base64');
+    return version === 'v1' && got.length === expected.length && timingSafeEqual(got, expected);
+  });
+}
+```
+
+Verify against the raw request body, before parsing it. Then answer `{"type":"verification"}` by echoing its `challenge`, stop on `{"type":"terminated"}`, and treat anything with an `eventId` as an event: skip ids you have already seen, then fetch what you need with the tools.
+
+### Callback URL rules
+
+The URL must be `https`, at most 2048 characters, without credentials or a `#fragment`, and on a public host that is not anymd itself. anymd resolves the host and requires every address to be public, both when you subscribe and again before every POST, so a host that later points at a private address is refused. A Worker cannot pin a connection to the address it checked, so a short window between check and connect remains; keep your endpoint on a host you control.
+
+### Errors
+
+| Code | Meaning |
+|---|---|
+| `-32602` | Invalid params: unknown argument, bad URL, non-public host, malformed secret, bad `ttlMs` |
+| `-32011` | Not found: unknown event name, or no matching subscription to unsubscribe |
+| `-32012` | Forbidden: your credential lacks the event's scope (`data.required`) |
+| `-32013` | Resource exhausted: 20 live subscriptions, or too many verification attempts for one host |
+| `-32014` | Unsupported: a delivery `mode` other than `webhook` |
+| `-32015` | Callback endpoint error: the endpoint could not be reached or did not echo the challenge (`data.reason`) |
+
+`events/*` methods answer `-32601` (method not found) on 2025-era protocol versions, and wherever `server/discover` does not list `capabilities.events`. These event codes follow the numbering ChatGPT implements today. The MCP Events draft may renumber them to `-32023`…`-32027` in the same order; anymd will follow when it settles.
+
+### What this is not
+
+- **Not Claude Channels.** Channels is a Claude Code feature that pushes messages into a running Claude Code session. anymd does not implement it; MCP Events deliver to a webhook endpoint you run.
+- **Not social monitoring.** There are no recurring watches or saved searches. `search_social` is a one-shot search and emits no events.
 
 ## Rate limits
 

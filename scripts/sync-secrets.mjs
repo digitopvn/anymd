@@ -28,6 +28,9 @@ const creemPrefix = target === 'production' ? 'CREEM_PRODUCTION_' : 'CREEM_';
 secrets.CREEM_API_KEY = process.env[`${creemPrefix}API_KEY`];
 secrets.CREEM_WEBHOOK_SECRET = process.env[`${creemPrefix}WEBHOOK_SECRET`];
 
+// MCP Events encrypts callback secrets with EVENTS_SECRET_KEY; each environment keeps its own key
+// (staging reads STAGING_EVENTS_SECRET_KEY), so rotating one never breaks the other's subscriptions.
+secrets.EVENTS_SECRET_KEY = process.env[target === 'production' ? 'EVENTS_SECRET_KEY' : 'STAGING_EVENTS_SECRET_KEY'];
 // Social sign-in. Staging prefers STAGING_-prefixed values. A GitHub OAuth App accepts a single
 // callback host, so staging never reuses the production GitHub app; Google may, once the staging
 // callback is added to the client's redirect URIs. Staging derives its callback from PUBLIC_URL.

@@ -26,6 +26,7 @@ import { dashboardRoutes } from './routes/dashboard';
 import { publicRoutes } from './routes/public';
 import { renderMessage } from './routes/shared';
 import { processPendingFeedback } from './services/feedback';
+import { processEvents, pruneEvents } from './events/delivery';
 import { sweepExpiredSessions } from './convert/social-search-session';
 import { recordAudit } from './services/admin/audit';
 
@@ -160,6 +161,13 @@ export interface OAuthGrantProps {
   v?: number;
 }
 
+/** The grant id inside an OAuth access token (`userId:grantId:secret`); the provider already validated it. */
+function grantIdOf(request: Request, userId: string): string | undefined {
+  const auth = request.headers.get('authorization') ?? '';
+  const parts = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim().split(':') : [];
+  return parts.length === 3 && parts[0] === userId && parts[1] ? parts[1] : undefined;
+}
+
 /** OAuth-authenticated MCP calls. The provider has already validated the token. */
 const mcpApiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext & { props?: OAuthGrantProps; auth?: { clientId?: string; scope?: string[] } }): Promise<Response> {
@@ -175,6 +183,7 @@ const mcpApiHandler = {
       role,
       scopes: oauthPrincipalScopes(role, ctx.props?.scopes ?? [], ctx.props?.v, ctx.auth?.scope),
       clientId: ctx.auth?.clientId ?? ctx.props?.clientId,
+      grantId: grantIdOf(request, user.id),
       requestId: request.headers.get('cf-ray') ?? crypto.randomUUID(),
     };
     return handleMcp(request, env, ctx, principal);
@@ -217,12 +226,20 @@ export default {
     return oauthProvider(env).fetch(request, env, ctx);
   },
   /** Background YouTube video downloads (see `src/convert/youtube-video.ts`). */
-  async queue(batch: MessageBatch<VideoJobMessage>, env: Env): Promise<void> {
-    await handleVideoQueue(batch, env);
+  async queue(batch: MessageBatch<VideoJobMessage>, env: Env, ctx: ExecutionContext): Promise<void> {
+    await handleVideoQueue(batch, env, ctx);
   },
-  /** Settles feedback waiting on GitHub (rate limits, lost responses; see `src/services/feedback.ts`) and sweeps expired social search sessions. */
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(processPendingFeedback(env).then(() => undefined, (err) => console.error('feedback retry failed', err instanceof Error ? err.message : String(err))));
-    ctx.waitUntil(sweepExpiredSessions(env, Date.now()).then(() => undefined, (err) => console.error('social search session sweep failed', err instanceof Error ? err.message : String(err))));
+  /**
+   * Every minute: MCP Events delivery and retries (see `src/events/delivery.ts`). Every tenth minute:
+   * settles feedback waiting on GitHub (rate limits, lost responses; see `src/services/feedback.ts`),
+   * sweeps expired social search sessions and prunes old event records.
+   */
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const log = (what: string) => (err: unknown) => console.error(what, err instanceof Error ? err.message : String(err));
+    ctx.waitUntil(processEvents(env).then(() => undefined, log('events delivery failed')));
+    if (new Date(controller.scheduledTime).getUTCMinutes() % 10 !== 0) return;
+    ctx.waitUntil(processPendingFeedback(env).then(() => undefined, log('feedback retry failed')));
+    ctx.waitUntil(sweepExpiredSessions(env, Date.now()).then(() => undefined, log('social search session sweep failed')));
+    ctx.waitUntil(pruneEvents(env).then(() => undefined, log('events prune failed')));
   },
 } satisfies ExportedHandler<Env, VideoJobMessage>;

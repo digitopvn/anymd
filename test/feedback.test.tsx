@@ -328,3 +328,32 @@ describe('feedback over MCP', () => {
     expect(JSON.stringify(mine.result).includes('created')).toBe(true);
   });
 });
+
+describe('feedback status events', () => {
+  const events = () => te.db.prepare('SELECT user_id, data_json FROM event_outbox').all() as { user_id: string; data_json: string }[];
+  const subscribe = (userId: string) =>
+    te.db
+      .prepare('INSERT INTO event_subscriptions (id,user_id,principal,principal_hash,name,arguments_json,url,secret_enc,scope,active,verified_at,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,1,0,?,0,0)')
+      .run(`sub_${userId}`, userId, 'api_key:key_1', 'h', 'anymd.feedback.status.changed', '{}', 'https://hooks.example.com/x', 'v1.x.y', 'feedback:write', Date.now() + 3600_000);
+
+  it('writes one event per public status of the owner\'s own feedback', async () => {
+    await setup([], { EVENTS_SECRET_KEY: 'test-events-key' });
+    subscribe(user.id);
+    subscribe((await seedUser(te, 'user')).id);
+    const out = await submitFeedback(te.env, principalOf(), draft(), 'api');
+    await submitFeedback(te.env, principalOf(), draft(), 'api'); // replay with the same key
+    expect(out.record.status).toBe('created');
+    expect(events().map((e) => JSON.parse(e.data_json))).toEqual([expect.objectContaining({ feedback_id: out.record.id, resource_type: 'feedback', status: 'created', issue_number: 1 })]);
+    expect(events()[0].user_id).toBe(user.id);
+  });
+
+  it('writes nothing for intermediate states or for other accounts', async () => {
+    await setup(['429'], { EVENTS_SECRET_KEY: 'test-events-key' });
+    const stranger = await seedUser(te, 'user');
+    subscribe(stranger.id);
+    subscribe(user.id);
+    const out = await submitFeedback(te.env, principalOf(), draft(), 'api');
+    expect(out.record.status).toBe('pending');
+    expect(events()).toEqual([]);
+  });
+});

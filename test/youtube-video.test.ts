@@ -357,3 +357,54 @@ describe('video analysis', () => {
     expect(job(state.id)).toMatchObject({ status: 'failed', analysis_status: 'failed', analysis_error: 'download_failed' });
   });
 });
+
+describe('MCP events', () => {
+  const events = () => t.db.prepare('SELECT name, data_json FROM event_outbox ORDER BY created_at, name').all() as { name: string; data_json: string }[];
+
+  function subscribe(userId: string, name: string) {
+    t.db
+      .prepare('INSERT INTO event_subscriptions (id,user_id,principal,principal_hash,name,arguments_json,url,secret_enc,scope,active,verified_at,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,1,0,?,0,0)')
+      .run(`sub_${name}`, userId, 'api_key:key_1', 'h', name, '{}', 'https://hooks.example.com/x', 'v1.x.y', 'convert', Date.now() + 3600_000);
+  }
+
+  beforeEach(() => {
+    t.env.EVENTS_SECRET_KEY = 'test-events-key';
+    t.env.VIDCAP_API_KEY = 'vidcap-key';
+    t.env.OPENROUTER_API_KEY = 'or-key';
+  });
+
+  it('writes one event when a download and its analysis become ready, even if re-run', async () => {
+    stubFetch();
+    const user = await seedUser(t, 'user');
+    for (const name of ['anymd.video.ready', 'anymd.video.failed', 'anymd.video.analysis.ready', 'anymd.video.analysis.failed']) subscribe(user.id, name);
+    const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`, true)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    await processVideoJob(t.env, state.id, 2);
+    await processVideoAnalysis(t.env, state.id, 1);
+    await processVideoAnalysis(t.env, state.id, 2);
+    expect(events().map((e) => e.name)).toEqual(['anymd.video.ready', 'anymd.video.analysis.ready']);
+    expect(JSON.parse(events()[0].data_json)).toMatchObject({ job_id: state.id, resource_type: 'video_job', status: 'ready' });
+  });
+
+  it('writes the failure of a download and of its requested analysis once each', async () => {
+    stubFetch(() => Response.json({ status: 'fail' }), () => Response.json({ status: 0 }));
+    const user = await seedUser(t, 'user');
+    for (const name of ['anymd.video.failed', 'anymd.video.analysis.failed']) subscribe(user.id, name);
+    const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`, true)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    await processVideoJob(t.env, state.id, 2);
+    expect(events().map((e) => e.name).sort()).toEqual(['anymd.video.analysis.failed', 'anymd.video.failed']);
+    expect(JSON.parse(events().find((e) => e.name === 'anymd.video.analysis.failed')!.data_json)).toMatchObject({ status: 'failed', error_code: 'download_failed' });
+  });
+
+  it('writes nothing for another owner or without a subscription', async () => {
+    stubFetch();
+    const owner = await seedUser(t, 'user');
+    const stranger = await seedUser(t, 'user');
+    subscribe(stranger.id, 'anymd.video.ready');
+    const state = (await startVideoDownload(t.env, principalOf(owner.id), 'free', 'api', `https://youtu.be/${VIDEO}`)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    expect(job(state.id).status).toBe('ready');
+    expect(events()).toEqual([]);
+  });
+});

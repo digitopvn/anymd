@@ -57,6 +57,8 @@ export interface Env {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   GOOGLE_CALLBACK_URL?: string;
+  /** Encrypts MCP Events callback secrets at rest. Without it the events capability is not offered. */
+  EVENTS_SECRET_KEY?: string;
 }
 
 /** The part of ExecutionContext this app uses; Hono's and workers-types' contexts both satisfy it. */
@@ -77,6 +79,8 @@ export interface Principal {
   apiKeyId?: string;
   /** OAuth client the grant was issued to (MCP over OAuth). */
   clientId?: string;
+  /** OAuth grant behind the token (MCP over OAuth); identifies the credential for MCP Events. */
+  grantId?: string;
   /** Request correlation id, recorded on audit rows. */
   requestId?: string;
   /** Adapter and operation that is acting, e.g. `mcp:update_user_role` or `api:PATCH /admin/users/:id`. */

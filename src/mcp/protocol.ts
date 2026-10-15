@@ -36,6 +36,19 @@ export const RPC = {
   UNSUPPORTED_VERSION: -32022,
 } as const;
 
+/**
+ * MCP Events error codes. The draft is moving them to -32023..-32027; ChatGPT, the main client today,
+ * implements the earlier numbering (-32011..-32015, CallbackEndpointError = -32015), so that is what
+ * this server answers until the draft settles. Same order and meaning in both numberings.
+ */
+export const EVENTS_RPC = {
+  NOT_FOUND: -32011,
+  FORBIDDEN: -32012,
+  RESOURCE_EXHAUSTED: -32013,
+  UNSUPPORTED: -32014,
+  CALLBACK_ENDPOINT_ERROR: -32015,
+} as const;
+
 export type JsonRpcId = string | number | null;
 export interface JsonRpcMessage {
   jsonrpc?: string;

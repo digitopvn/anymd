@@ -202,7 +202,7 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
     let documentId: string | null = null;
     let notSavedReason: NotSavedReason | null = req.save === false ? 'not_requested' : !principal.userId ? 'anonymous' : !principal.scopes.includes('library:write') ? 'missing_scope' : null;
     if (!notSavedReason && principal.userId) {
-      const saved = await tracer.span('library.save', () => saveDocument(env, principal.userId!, result!, formatMarkdown(result!, { frontmatter: false }), getPlan(plan).libraryLimit));
+      const saved = await tracer.span('library.save', () => saveDocument(env, principal.userId!, result!, formatMarkdown(result!, { frontmatter: false }), getPlan(plan).libraryLimit, { principal, ctx }));
       documentId = saved?.id ?? null;
       if (!saved) notSavedReason = 'library_limit';
       if (saved?.changed) ctx.waitUntil(embedDocument(env, principal.userId, saved.id).catch(() => 0));

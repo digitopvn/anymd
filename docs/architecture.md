@@ -19,6 +19,7 @@ Why one Worker: every channel (URL, web, REST, CLI, MCP, WebMCP) must return byt
 | Rate limiting | `RL_ANON`, `RL_AUTH`, `RL_DOMAIN` | Per-minute limits per caller, and per fetched site |
 | Static assets | `ASSETS` | `public/` (built CSS/JS, icons, brand) |
 | Queue | `VIDEO_QUEUE` | Background YouTube video downloads; the same Worker's `queue` handler consumes it |
+| Cron trigger | `triggers.crons` | Every minute, the Worker's `scheduled` handler: MCP Events delivery each minute; feedback retries, social search session sweep and event pruning every tenth minute |
 
 Bindings and secrets are typed in `src/env.ts`; per-environment values are in `wrangler.jsonc`.
 
@@ -32,6 +33,7 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 | `src/billing/` | Plans, credit table, offers (`plans.ts`); `provider.ts` routes checkout and portal to the provider named by `BILLING_PROVIDER`: Creem (`creem.ts`: checkout, portal, webhooks) or Polar (`polar.ts`: also usage ingest for metered overage) |
 | `src/cms/` | Page-builder block registry (`blocks.ts`) and page document service: ops, revisions, publish (`pages.ts`) |
 | `src/services/admin/` | The admin control plane: users, credentials, settings, opt-outs, credits, billing (read-only), audit and observability. Each service checks its scope, validates input, enforces rank rules, applies idempotency and optimistic concurrency, and writes the audit row in the same D1 batch as the change. REST, web admin and MCP are thin adapters over it |
+| `src/events/` | MCP Events webhooks: event catalog and scopes (`catalog.ts`), `events/*` methods and dashboard queries (`subscriptions.ts`), transactional outbox (`outbox.ts`), fan-out, signed delivery, retries, revocation and pruning (`delivery.ts`), callback URL SSRF guard (`callback-url.ts`), signatures, ids and at-rest secret encryption (`crypto.ts`) |
 | `src/lib/` | Usage + quota accounting (`usage.ts`), tracer, Markdown rendering (`markdown.ts`), email, utilities |
 | `src/content/` | Bundled Markdown (blog, docs, legal) and site copy (`site.ts`); loader in `index.ts` |
 | `src/views/` | Hono JSX layouts and pages |
@@ -75,6 +77,14 @@ Why RRF: it fuses BM25 and cosine rankings without normalising incomparable scor
 
 Why server-side sessions instead of a self-describing cursor: cross-page de-duplication needs the identities of every post already returned (up to the session's remembered-post limit), which a client-held cursor could not carry or be trusted with, and the version check and lease make a replayed or concurrent cursor fail with `409` instead of charging twice. Why billing ignores filtering: the provider is paid for every page it returns, so a platform that returned posts is charged even when de-duplication or the range removes all of them.
 
+### MCP Events
+
+Modern-era MCP clients (`2026-07-28`) can subscribe a webhook to events about their own library, video jobs and feedback; `src/mcp/server.ts` routes `events/*` to `src/events/subscriptions.ts` only for that era, only for API-key and OAuth principals, and only when `EVENTS_SECRET_KEY` is set. The public contract is the Events section of `src/content/docs/mcp.md`.
+
+Writers call `writeWithEvents` (`src/events/outbox.ts`), which puts the event row into `event_outbox` in the same `DB.batch` as the change, guarded by SQLite `changes()`, and only when the owner has a live subscription to that event. Delivery (`src/events/delivery.ts`) fans outbox rows out to `event_deliveries`, then POSTs them, starting in `waitUntil` right after the change and continuing on the per-minute cron.
+
+Why an outbox in the same batch: an event exists exactly when its change committed, so a rolled-back write never fires and a committed one is never lost to a crash between write and send. Terminal video and feedback transitions use deterministic event ids (`stableEventId`), so a redelivered queue message or a retried status update cannot emit twice. Why the credential is re-checked before every POST instead of at subscribe only: revoking a key, narrowing its scopes, losing a role or suspending an account must stop deliveries at once, matching how `capScopes` treats requests. Why events carry only ids and versions: a subscription grants nothing, so the content stays behind the normal, separately authorized tools. Why callbacks get their own guard (`callback-url.ts`) instead of `normalizeTargetUrl`: a delivery is a privileged, signed POST, so it requires https, re-resolves the host over DNS-over-HTTPS before every send and never follows redirects. Its residual DNS-rebinding window is documented in that file.
+
 ### Pages
 
 `applyPageOps` (`src/cms/pages.ts`) is shared by the editor UI, REST, CLI, MCP and WebMCP. Ops apply to a clone, validate per block against the zod schemas in `blocks.ts`, and persist with `UPDATE … WHERE revision = ?` so concurrent writers can't both win. Idempotency keys are stored per principal with a payload hash. See `docs/page-builder-operations.md`.
@@ -90,6 +100,7 @@ The schema is owned by `migrations/`. Tables group as:
 | Video | `video_jobs` | One row per background YouTube download: status, CDN URL, credits charged at `ready`. |
 | Metering | `usage_events`, `traces` | Monthly credit use is summed from `usage_events` since the UTC month start. |
 | Social search | `social_searches`, `social_search_sessions` | `social_searches`: saved search pages with their results (JSON) for the dashboard history, plus `filters_json` (time range, removal counts, coverage; `NULL` on rows saved before filters); the newest 200 per user are kept. `social_search_sessions`: paging state per search (provider cursors, resolved range, identities of posts already returned), expiring after 24 hours and swept by the scheduled handler. |
+| MCP Events | `event_subscriptions`, `event_outbox`, `event_deliveries` | Subscription id is derived from (credential, callback URL, event name, canonical arguments); the callback secret is stored AES-GCM-encrypted with a key derived from `EVENTS_SECRET_KEY`. `event_outbox` is written in the same batch as the change; `event_deliveries` holds per-subscription retry and dead-letter state. Not to be confused with billing `subscriptions` or `webhook_events`. |
 | Billing | `subscriptions`, `credit_grants`, `webhook_events` | `webhook_events` makes Creem and Polar webhook handling idempotent and records the provider and outcome. `users.creem_customer_id` opens the Creem portal. Credit grants carry reason, actor, idempotency key and revocation; only active grants raise the allowance. Plans are owned by the billing provider. |
 | Content | `posts`, `pages`, `page_revisions`, `idempotency_keys` | Page `draft`/`published` are JSON page documents. |
 | Admin | `audit_log`, `settings`, `settings_state`, `site_optouts`, `stats` | Every privileged change writes `audit_log` with actor, auth kind, credential, `via`, request id and a scrubbed diff. `settings_state.version` makes settings writes optimistic. |
@@ -98,4 +109,4 @@ Add schema changes as a new numbered file in `migrations/`; never edit an applie
 
 ## Graceful degradation
 
-Every secret in `src/env.ts` is optional. Missing key for the `BILLING_PROVIDER` provider → no billing; missing transcript keys → YouTube without transcripts; missing `RAPIDAPI_KEY` → social adapters are unavailable; missing `OPENROUTER_API_KEY` → image analysis is unavailable while fan-out can still use Workers AI and Jev can remain disabled; missing Resend → no email. Image analysis uses the `qwen/qwen3.6-35b-a3b` model when OpenRouter is configured. Keep new integrations behind the same pattern: detect the secret, do nothing harmful without it.
+Every secret in `src/env.ts` is optional. Missing key for the `BILLING_PROVIDER` provider → no billing; missing transcript keys → YouTube without transcripts; missing `RAPIDAPI_KEY` → social adapters are unavailable; missing `OPENROUTER_API_KEY` → image analysis is unavailable while fan-out can still use Workers AI and Jev can remain disabled; missing Resend → no email. Missing `EVENTS_SECRET_KEY` → no MCP Events: `server/discover` omits the capability and no outbox rows are written. Image analysis uses the `qwen/qwen3.6-35b-a3b` model when OpenRouter is configured. Keep new integrations behind the same pattern: detect the secret, do nothing harmful without it.
