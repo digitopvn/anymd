@@ -25,7 +25,7 @@ const version = z.number().int().describe('Monotonic version of the resource (it
 
 const libraryArgs = z.strictObject({
   document_ids: ids('document'),
-  tags: z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAG_FILTERS).optional().describe('Only documents carrying every one of these tags at delivery time'),
+  tags: z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAG_FILTERS).optional().describe('Only documents carrying every one of these tags when the event is matched to subscriptions, shortly after the change'),
   domain: z.string().max(253).optional().describe('Only documents from this domain, e.g. example.com'),
   exclude_self: excludeSelf,
 });

@@ -50,7 +50,7 @@ CREATE TABLE event_deliveries (
   subscription_id TEXT NOT NULL REFERENCES event_subscriptions(id) ON DELETE CASCADE,
   event_id TEXT NOT NULL REFERENCES event_outbox(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  -- pending | delivered | failed (non-retryable: 410/413) | dead (retries exhausted)
+  -- pending | delivered | failed (non-retryable: 413 or oversized) | dead (retries exhausted, or its subscription was suspended)
   status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
   next_attempt_at INTEGER NOT NULL,
@@ -61,3 +61,4 @@ CREATE TABLE event_deliveries (
 );
 CREATE INDEX event_deliveries_due ON event_deliveries(status, next_attempt_at);
 CREATE INDEX event_deliveries_user ON event_deliveries(user_id, status);
+CREATE INDEX event_deliveries_subscription_status ON event_deliveries(subscription_id, status);

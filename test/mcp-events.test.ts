@@ -4,7 +4,7 @@ import type { ConvertResult } from '../src/convert/types';
 import type { Env, Principal } from '../src/env';
 import { isPublicIpv4, isPublicIpv6, parseCallbackUrl } from '../src/events/callback-url';
 import { encryptSecret, parseWebhookSecret, subscriptionId } from '../src/events/crypto';
-import { MAX_ATTEMPTS, MAX_BODY_BYTES, postWebhook, processEvents, pruneEvents } from '../src/events/delivery';
+import { MAX_ATTEMPTS, MAX_BODY_BYTES, MAX_PENDING_PER_SUBSCRIPTION, postWebhook, processEvents, pruneEvents } from '../src/events/delivery';
 import { actorHash } from '../src/events/crypto';
 import { MAX_SUBSCRIPTIONS_PER_USER } from '../src/events/subscriptions';
 import { deleteDocument, saveDocument, updateTags } from '../src/library/store';
@@ -266,6 +266,13 @@ describe('library events', () => {
     expect(outbox()).toHaveLength(0);
   });
 
+  it('writes nothing to the outbox when the owner\'s only subscription is suspended', async () => {
+    const id = await seedSubscription(user, `api_key:${keyId}`, 'anymd.library.document.saved');
+    t.db.prepare('UPDATE event_subscriptions SET active = 0 WHERE id = ?').run(id);
+    await saveDocument(t.env, user.id, conversion(), 'Body', null, { principal: other });
+    expect(outbox()).toHaveLength(0);
+  });
+
   it('delivers exactly one signed event per committed save, and none for an unchanged re-save', async () => {
     await seedSubscription(user, `api_key:${keyId}`, 'anymd.library.document.saved');
     const saved = await saveDocument(t.env, user.id, conversion(), 'Body', null, { principal: other });
@@ -407,6 +414,38 @@ describe('delivery', () => {
     await save(1);
     await processEvents(t.env);
     expect(net.deliveries()).toHaveLength(2);
+  });
+
+  it('caps each subscription\'s backlog on its own', async () => {
+    const full = await seedSubscription(user, `api_key:${keyId}`, 'anymd.library.document.saved');
+    await seedSubscription(user, `api_key:${keyId}`, 'anymd.library.document.saved', {}, { url: 'https://other.example.net/hook' });
+    const later = Date.now() + 3600_000;
+    t.db.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${MAX_PENDING_PER_SUBSCRIPTION})
+      INSERT INTO event_outbox (id, user_id, name, resource_id, data_json, created_at, dispatched_at) SELECT 'evt_old_' || i, '${user.id}', 'anymd.library.document.saved', 'doc', '{}', 0, 0 FROM n`);
+    t.db.exec(`INSERT INTO event_deliveries (subscription_id, event_id, user_id, status, attempts, next_attempt_at, created_at, updated_at)
+      SELECT '${full}', id, user_id, 'pending', 0, ${later}, 0, 0 FROM event_outbox`);
+    await save();
+    await processEvents(t.env);
+    expect(net.deliveries().map((d) => d.url)).toEqual(['https://other.example.net/hook']);
+    const backlog = t.db.prepare("SELECT COUNT(*) AS n FROM event_deliveries WHERE subscription_id = ? AND status = 'pending'").get(full) as { n: number };
+    expect(backlog.n).toBe(MAX_PENDING_PER_SUBSCRIPTION);
+  });
+
+  it('does not spend an attempt or suspend anything while its own resolver is down', async () => {
+    await seedSubscription(user, `api_key:${keyId}`, 'anymd.library.document.saved');
+    await save();
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => (new URL(String(input)).hostname === 'cloudflare-dns.com' ? new Response('', { status: 502 }) : net.handler(input, init)));
+    for (let i = 0; i < MAX_ATTEMPTS + 1; i++) {
+      makeDue();
+      await processEvents(t.env);
+    }
+    expect(net.posts).toHaveLength(0);
+    expect(deliveries()[0]).toMatchObject({ status: 'pending', attempts: 0 });
+    expect(subscriptions()[0]).toMatchObject({ active: 1, last_error: null });
+    vi.stubGlobal('fetch', net.handler);
+    makeDue();
+    await processEvents(t.env);
+    expect(net.deliveries()).toHaveLength(1);
   });
 
   it('re-resolves the host before every delivery and refuses one that now points inside (DNS rebinding)', async () => {

@@ -11,7 +11,7 @@
 import type { Env } from '../env';
 
 export class CallbackUrlError extends Error {
-  constructor(message: string, readonly reason: 'invalid_url' | 'blocked_host' | 'unresolvable') {
+  constructor(message: string, readonly reason: 'invalid_url' | 'blocked_host' | 'unresolvable' | 'resolver_unavailable') {
     super(message);
   }
 }
@@ -98,14 +98,14 @@ export function parseCallbackUrl(env: Pick<Env, 'PUBLIC_URL'>, raw: unknown): UR
   if (url.username || url.password) throw new CallbackUrlError('delivery.url must not carry credentials', 'invalid_url');
   if (url.hash) throw new CallbackUrlError('delivery.url must not carry a fragment', 'invalid_url');
   // A trailing dot names the same host (`anymd.cc.`), so compare without it.
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
   const literal = ipv4Octets(host) !== null || host.includes(':');
   if (literal ? !isPublicAddress(host) : !host.includes('.') || host === 'localhost' || BLOCKED_SUFFIXES.some((s) => host.endsWith(s))) {
     throw new CallbackUrlError('delivery.url must be a public host', 'blocked_host');
   }
   let own = '';
   try {
-    own = new URL(env.PUBLIC_URL).hostname.toLowerCase().replace(/\.$/, '');
+    own = new URL(env.PUBLIC_URL).hostname.toLowerCase().replace(/\.+$/, '');
   } catch {
     /* No public URL configured (tests). */
   }
@@ -117,10 +117,10 @@ const DOH = 'https://cloudflare-dns.com/dns-query';
 
 async function resolve(host: string, type: 'A' | 'AAAA'): Promise<string[]> {
   const res = await fetch(`${DOH}?name=${encodeURIComponent(host)}&type=${type}`, { headers: { Accept: 'application/dns-json' }, redirect: 'manual', signal: AbortSignal.timeout(5000) }).catch(() => null);
-  if (!res) throw new CallbackUrlError('Could not resolve the callback host', 'unresolvable');
-  if (!res.ok) throw new CallbackUrlError('Could not resolve the callback host', 'unresolvable');
+  // Our resolver failing says nothing about the callback host: callers must not blame the endpoint.
+  if (!res || !res.ok) throw new CallbackUrlError('Could not resolve the callback host', 'resolver_unavailable');
   const body = (await res.json().catch(() => null)) as { Status?: number; Answer?: { type: number; data: string }[] } | null;
-  if (!body || (body.Status !== 0 && body.Status !== 3)) throw new CallbackUrlError('Could not resolve the callback host', 'unresolvable');
+  if (!body || (body.Status !== 0 && body.Status !== 3)) throw new CallbackUrlError('Could not resolve the callback host', 'resolver_unavailable');
   const want = type === 'A' ? 1 : 28;
   return (body.Answer ?? []).filter((a) => a.type === want).map((a) => a.data);
 }

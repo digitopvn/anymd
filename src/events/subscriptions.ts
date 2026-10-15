@@ -106,7 +106,7 @@ export async function subscribe(env: Env, p: Principal, params: Record<string, u
   try {
     await assertPublicCallback(env, url.href);
   } catch (err) {
-    if (err instanceof CallbackUrlError && err.reason === 'unresolvable') throw new EventsRpcError(EVENTS_RPC.CALLBACK_ENDPOINT_ERROR, 'The callback endpoint could not be reached', { reason: 'connection_refused' });
+    if (err instanceof CallbackUrlError && (err.reason === 'unresolvable' || err.reason === 'resolver_unavailable')) throw new EventsRpcError(EVENTS_RPC.CALLBACK_ENDPOINT_ERROR, 'The callback endpoint could not be reached', { reason: 'connection_refused' });
     throw new EventsRpcError(RPC.INVALID_PARAMS, err instanceof Error ? err.message : 'Invalid delivery.url');
   }
 

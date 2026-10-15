@@ -78,6 +78,8 @@ export interface PostResult {
   error?: DeliveryError;
   /** False for 410/413 and oversized bodies: the event is given up at once. */
   retryable: boolean;
+  /** Our own resolver was unavailable: nothing was sent, so the attempt does not count against the endpoint. */
+  deferred?: boolean;
   /** Up to 4 KiB of a 2xx body, only for the verification handshake. Never stored or returned. */
   text?: string;
 }
@@ -136,7 +138,9 @@ export async function postWebhook(env: Env, target: { subscriptionId: string; ur
     await assertPublicCallback(env, target.url);
   } catch (err) {
     // Refused before connecting: a host that now resolves privately, or does not resolve.
-    return { ok: false, error: 'connection_refused', retryable: !(err instanceof CallbackUrlError && err.reason !== 'unresolvable') };
+    if (!(err instanceof CallbackUrlError)) return { ok: false, error: 'connection_refused', retryable: true };
+    if (err.reason === 'resolver_unavailable') return { ok: false, error: 'connection_refused', retryable: true, deferred: true };
+    return { ok: false, error: 'connection_refused', retryable: err.reason === 'unresolvable' };
   }
   const timestamp = Math.floor(Date.now() / 1000);
   let res: Response;
@@ -237,7 +241,7 @@ function matches(sub: SubscriptionRow, event: OutboxRow, doc: { tags: string; do
 }
 
 /** Turn undispatched outbox events into one pending delivery per matching subscription. */
-async function fanOut(env: Env, userId?: string): Promise<number> {
+async function fanOut(env: Env, userId?: string): Promise<{ events: number; queued: number }> {
   const ts = now();
   const { results: events } = await (userId
     ? env.DB.prepare('SELECT * FROM event_outbox WHERE dispatched_at IS NULL AND user_id = ? ORDER BY created_at LIMIT ?').bind(userId, FANOUT_BATCH)
@@ -261,10 +265,10 @@ async function fanOut(env: Env, userId?: string): Promise<number> {
     statements.push(env.DB.prepare('UPDATE event_outbox SET dispatched_at = ? WHERE id = ?').bind(ts, event.id));
     const results = await env.DB.batch(statements);
     const added = results.slice(0, targets.length).filter((r) => Number(r.meta?.changes ?? 0) > 0).length;
-    if (added < targets.length) console.warn('events backlog full', { user: event.user_id, dropped: targets.length - added });
+    if (added < targets.length) console.warn('events not queued (backlog full or already queued)', { user: event.user_id, skipped: targets.length - added });
     queued += added;
   }
-  return queued;
+  return { events: events.length, queued };
 }
 
 interface DueDelivery {
@@ -295,7 +299,7 @@ async function deliverDue(env: Env, userId: string | undefined, deadline: number
     if (Date.now() > deadline) break;
     // Claim: only the run that bumps the attempt count sends it.
     const claimed = await env.DB.prepare("UPDATE event_deliveries SET attempts = attempts + 1, next_attempt_at = ?, updated_at = ? WHERE id = ? AND status = 'pending' AND attempts = ?")
-      .bind(ts + CLAIM_MS, ts, d.id, d.attempts)
+      .bind(Date.now() + CLAIM_MS, now(), d.id, d.attempts)
       .run();
     if (!claimed.meta.changes) continue;
     if (!subs.has(d.subscription_id)) {
@@ -311,6 +315,11 @@ async function deliverDue(env: Env, userId: string | undefined, deadline: number
     const body = JSON.stringify({ eventId: d.event_id, name: d.name, timestamp: new Date(d.event_created_at).toISOString(), data, cursor: null });
     const res = await postWebhook(env, { subscriptionId: sub.id, url: sub.url, secrets: await signingSecrets(env, sub) }, d.event_id, body);
     const at = now();
+    if (res.deferred) {
+      // Nothing reached the endpoint: give the attempt back and try again in a minute.
+      await env.DB.prepare('UPDATE event_deliveries SET attempts = ?, next_attempt_at = ?, updated_at = ? WHERE id = ?').bind(d.attempts, at + RETRY_DELAYS_MS[0], at, d.id).run();
+      continue;
+    }
     const attempts = d.attempts + 1;
     if (res.ok) {
       await env.DB.batch([
@@ -352,11 +361,11 @@ export async function processEvents(env: Env, opts: { userId?: string } = {}): P
   const deadline = Date.now() + (opts.userId ? REQUEST_BUDGET_MS : SCHEDULED_BUDGET_MS);
   const total = { queued: 0, attempted: 0 };
   do {
-    const queued = await fanOut(env, opts.userId);
+    const { events, queued } = await fanOut(env, opts.userId);
     const attempted = await deliverDue(env, opts.userId, deadline);
     total.queued += queued;
     total.attempted += attempted;
-    if (opts.userId || (queued < FANOUT_BATCH && attempted < DELIVERY_BATCH)) break;
+    if (opts.userId || (events < FANOUT_BATCH && attempted < DELIVERY_BATCH)) break;
   } while (Date.now() < deadline);
   return total;
 }

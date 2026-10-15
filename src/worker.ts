@@ -234,12 +234,18 @@ export default {
    * settles feedback waiting on GitHub (rate limits, lost responses; see `src/services/feedback.ts`),
    * sweeps expired social search sessions and prunes old event records.
    */
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
     const log = (what: string) => (err: unknown) => console.error(what, err instanceof Error ? err.message : String(err));
-    ctx.waitUntil(processEvents(env).then(() => undefined, log('events delivery failed')));
-    if (new Date(controller.scheduledTime).getUTCMinutes() % 10 !== 0) return;
-    ctx.waitUntil(processPendingFeedback(env).then(() => undefined, log('feedback retry failed')));
-    ctx.waitUntil(sweepExpiredSessions(env, Date.now()).then(() => undefined, log('social search session sweep failed')));
-    ctx.waitUntil(pruneEvents(env).then(() => undefined, log('events prune failed')));
+    // Awaited rather than left to waitUntil: delivery runs for most of the minute, within the
+    // scheduled handler's own wall-time limit instead of the shorter limit after it returns.
+    const tasks = [processEvents(env).then(() => undefined, log('events delivery failed'))];
+    if (new Date(controller.scheduledTime).getUTCMinutes() % 10 === 0) {
+      tasks.push(
+        processPendingFeedback(env).then(() => undefined, log('feedback retry failed')),
+        sweepExpiredSessions(env, Date.now()).then(() => undefined, log('social search session sweep failed')),
+        pruneEvents(env).then(() => undefined, log('events prune failed')),
+      );
+    }
+    await Promise.all(tasks);
   },
 } satisfies ExportedHandler<Env, VideoJobMessage>;
