@@ -1,6 +1,6 @@
 /** Sign-in, sign-up, password reset and the OAuth consent screen. */
 import type { Child } from 'hono/jsx';
-import { ELEVATED_SCOPES, ROLE_TEMPLATES, SCOPE_LABELS } from '../auth/roles';
+import { ELEVATED_SCOPES, isRole, oauthAdminPresetScopes, roleAtLeast, ROLE_TEMPLATES, SCOPE_LABELS, type OAuthAdminPresetId } from '../auth/roles';
 import { SSO_LABEL, type SsoProvider } from '../auth/sso';
 import type { Scope } from '../env';
 import { Icon, Logo } from './components/icons';
@@ -245,6 +245,11 @@ export function ResetPage({ token, error }: { token: string; error?: string }) {
   );
 }
 
+const ADMIN_PRESET_LABELS: Record<OAuthAdminPresetId, string> = {
+  'admin-read-only': 'Admin read-only (monitoring and reports)',
+  support: 'Support agent',
+};
+
 export function ConsentPage({
   clientName,
   clientUri,
@@ -254,6 +259,7 @@ export function ConsentPage({
   state,
   userEmail,
   role,
+  adminPresets = [],
 }: {
   clientName: string;
   clientUri?: string;
@@ -263,7 +269,14 @@ export function ConsentPage({
   state: string;
   userEmail: string;
   role: string;
+  /** Admin access presets the user may add to this connection; ignored for roles below admin. */
+  adminPresets?: readonly OAuthAdminPresetId[];
 }) {
+  const adminOptions = isRole(role) && roleAtLeast(role, 'admin')
+    ? adminPresets
+        .map((id) => ({ id, label: ADMIN_PRESET_LABELS[id], adds: oauthAdminPresetScopes(role, id).filter((s) => !scopes.includes(s)) }))
+        .filter((o) => o.adds.length)
+    : [];
   const elevated = scopes.filter((s) => ELEVATED_SCOPES.has(s));
   const basic = scopes.filter((s) => !ELEVATED_SCOPES.has(s));
   return (
@@ -297,14 +310,49 @@ export function ConsentPage({
         {requestedNothing ? <p class="mt-3 text-xs text-muted">The client did not ask for specific access, so it gets the basic set. It can ask for more later, and you will be asked again.</p> : null}
         {unavailable.length ? <p class="mt-3 text-xs text-muted">Not granted (your role does not include it): {unavailable.join(', ')}</p> : null}
       </div>
-      <form method="post" action="/oauth/authorize" class="mt-6 flex gap-3">
+      <form method="post" action="/oauth/authorize" class="mt-6">
         <input type="hidden" name="state" value={state} />
-        <button name="decision" value="deny" class="btn btn-ghost h-12 flex-1" type="submit">
-          Deny
-        </button>
-        <button name="decision" value="allow" class="btn btn-primary h-12 flex-1" type="submit">
-          Allow
-        </button>
+        {adminOptions.length ? (
+          <div class="card mb-6 p-5">
+            <fieldset data-admin-access aria-describedby="admin-access-help">
+              <legend class="text-sm font-semibold">Admin access for this connection (optional)</legend>
+              <p id="admin-access-help" class="mt-1 text-xs text-muted">
+                Elevated access to other users' data or site-wide state, added only if you choose it here. Every change the agent makes is recorded in the audit log. Revoke it anytime from Dashboard → API keys.
+              </p>
+              <div class="mt-3 space-y-2">
+                <label class="flex cursor-pointer items-start gap-2.5 rounded-xl border border-line p-3 text-sm has-[:checked]:border-ink">
+                  <input type="radio" name="admin_access" value="none" checked class="mt-0.5 accent-[#05c977]" />
+                  <span>
+                    <strong>None</strong> (default)
+                    <span class="mt-0.5 block text-xs text-muted">Only the access listed above.</span>
+                  </span>
+                </label>
+                {adminOptions.map((o) => (
+                  <label class="flex cursor-pointer items-start gap-2.5 rounded-xl border border-line p-3 text-sm has-[:checked]:border-ink">
+                    <input type="radio" name="admin_access" value={o.id} class="mt-0.5 accent-[#05c977]" />
+                    <span>
+                      <strong>{o.label}</strong>
+                      <span class="mt-1 block text-xs text-muted">Adds:</span>
+                      {o.adds.map((s) => (
+                        <span class="mt-1 block text-xs text-warn" data-admin-scope={s}>
+                          {SCOPE_LABELS[s] ?? s} <code class="opacity-70">{s}</code>
+                        </span>
+                      ))}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          </div>
+        ) : null}
+        <div class="flex gap-3">
+          <button name="decision" value="deny" class="btn btn-ghost h-12 flex-1" type="submit">
+            Deny
+          </button>
+          <button name="decision" value="allow" class="btn btn-primary h-12 flex-1" type="submit">
+            Allow
+          </button>
+        </div>
       </form>
       <p class="mt-4 text-xs text-muted">You can revoke access anytime from Dashboard → API keys.</p>
     </AuthShell>

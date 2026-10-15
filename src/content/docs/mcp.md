@@ -1,7 +1,7 @@
 ---
 title: "MCP server"
 description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp so your agents can read the public web, remember it and search it."
-updated: "2026-10-13"
+updated: "2026-10-15"
 ---
 
 anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) server. It is the main way agents use anymd as their web context layer: connect it once and your agent can read public web content as structured Markdown, recall everything it has read from your private library, and (with the right scopes) manage pages.
@@ -26,7 +26,7 @@ anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) se
 | Token | `/oauth/token` |
 | Registration | `/oauth/register` |
 
-Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert`, `library:read` and `library:write` (read the web, save to and search your own library); anything more, admin scopes above all, must be requested by name and approved on the consent screen. When a read is not saved, the result says so: `saved: false` with `not_saved_reason` (`missing_scope` means the connection lacks `library:write`). See [API keys & roles](/docs/api-keys-roles#oauth).
+Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert`, `library:read` and `library:write` (read the web, save to and search your own library); anything more, admin scopes above all, must be requested by name and approved on the consent screen, or (owners and admins only) added by choosing an admin access option there: see [Set up an admin agent](#set-up-an-admin-agent). When a read is not saved, the result says so: `saved: false` with `not_saved_reason` (`missing_scope` means the connection lacks `library:write`). See [API keys & roles](/docs/api-keys-roles#oauth).
 
 ## Client setup
 
@@ -127,7 +127,6 @@ With `downloadVideo: true` (or the saved setting), a YouTube `read_url` also sta
 | `list_posts` | `{}` | `content:read` |
 | `upsert_post` | `{ id?, slug?, title, markdown, excerpt?, tags? }` | `content:write` |
 | `publish_post` | `{ id, publish }` | `content:publish` |
-
 | `get_page_markdown` | `{ pageId }` | `pages:read` |
 | `list_page_revisions` | `{ pageId }` | `pages:read` |
 | `rotate_page_preview_token` | `{ pageId }` | `pages:write` |
@@ -156,7 +155,7 @@ The ops format, revision rules and the safe editing loop are in the admin [build
 
 Owners and admins can run the deployment from an agent: users, credentials, credits, settings, opt-outs, billing health, audit history and system usage. Every admin tool is a thin adapter over the same services the REST API uses, so the rules are identical everywhere:
 
-- **Scoped.** Each tool needs one granular scope and is hidden without it. Owner-only tools (`update_user_role`, `grant_credits`, `revoke_credit_grant`) never appear for admins.
+- **Scoped.** Each tool needs one granular scope and is hidden without it. The one exception is `get_admin_access_status`, which every signed-in caller sees because it reports only on the caller. Owner-only tools (`update_user_role`, `grant_credits`, `revoke_credit_grant`) never appear for admins.
 - **Ranked.** Nobody can act on their own account; admins only act on accounts ranked below them.
 - **Bounded.** Every list is paginated: pass `next_cursor` back as `cursor`. There is no SQL or shell tool.
 - **Safe to retry.** Mutations accept an `idempotencyKey` (required for `grant_credits`); a retry returns the first result with `replayed: true`, and a retry that arrives while the first attempt is still running gets `idempotency_in_progress` (retry shortly) instead of running the change twice. Changes guarded by `expectedRole` or `expectedVersion` fail with a conflict instead of overwriting someone else's change.
@@ -169,23 +168,46 @@ Tool annotations tell the client what to expect: read tools are `readOnlyHint`, 
 
 | Tool | Input | Needs |
 |---|---|---|
+| `get_admin_access_status` | `{}` | any signed-in caller |
 | `system_overview` | `{}` | `system:read` |
+| `get_user_stats` | `{}` | `system:read` |
+| `get_operations_health` | `{}` | `system:read` |
+| `list_failed_jobs` | `{ type?, since? (at most 30 days ago), userId?, cursor?, limit? }` | `system:read` |
+| `get_job` | `{ jobId }` | `system:read` |
 | `list_system_usage` | `{ days? (1–30, default 7), channel?, kind? }` | `system:read` |
 | `list_system_traces` | `{ sort?, status?, kind?, userId?, since? (at most 30 days ago), cursor?, limit? }` | `system:read` |
 | `get_system_trace` | `{ traceId }` | `system:read` |
 | `list_users` | `{ search?, role?, plan?, status?, createdAfter?, createdBefore?, lastLoginAfter?, lastLoginBefore?, cursor?, limit? }` | `users:read` |
 | `get_user` | `{ userId }` | `users:read` |
 | `list_user_credentials` | `{ userId }` | `users:read` |
+| `get_user_activity` | `{ userId, since? (at most 30 days ago), until?, cursor?, limit? }` | `users:read` |
 | `list_roles` | `{}` | `users:read` |
 | `list_audit_events` | `{ action?, actorUserId?, target?, targetType?, since?, until?, cursor?, limit? }` | `audit:read` |
 | `list_subscriptions` | `{ status?, plan?, userId?, cursor?, limit? }` | `billing:read` |
 | `get_subscription` | `{ subscriptionId }` | `billing:read` |
 | `get_billing_diagnostics` | `{}` | `billing:read` |
+| `get_customer_billing_summary` | `{ userId }` | `billing:read` (credit grants also need `credits:read`) |
+| `list_billing_events` | `{ status?, provider?, type?, outcome?, since? (at most 90 days ago), cursor?, limit? }` | `billing:read` |
+| `get_billing_event` | `{ eventId }` | `billing:read` |
 | `list_credit_grants` | `{ userId?, state?, source?, cursor?, limit? }` | `credits:read` |
 | `list_site_optouts` | `{ search?, cursor?, limit? }` | `optouts:read` |
 | `get_settings` | `{}` | `settings:read` |
 
 Timestamps accept epoch milliseconds or ISO 8601. `action` in `list_audit_events` takes an exact action or a prefix such as `user.*`.
+
+### What the reports count
+
+`get_user_stats` returns each number with its definition, the windows and a list of data coverage caveats, so the response is the reference. In short:
+
+- **Active users (DAU/WAU/MAU)** are distinct signed-in users with usage (any channel, success or error) or a browser sign-in in the last 24 hours, 7 days or 30 days. Windows are rolling, in UTC, and end at `generated_at`. Anonymous usage is excluded.
+- **Usage-active users** count usage only, without sign-ins, and are reported separately.
+- **Activated users** have at least one document in their library. Creating an account is not activation.
+- **Paying accounts** are users whose latest subscription entitles a non-free plan under the live billing provider's rules. The stored plan (`users.plan`) is reported separately, along with conflicts between the two.
+- **Coverage.** Sign-ins come from sessions, which are deleted at sign-out and expiry, so sign-in activity can be undercounted. No bot, internal or test accounts are excluded. A user who deletes every document no longer counts as activated.
+
+anymd stores the subscriptions that billing webhooks sync, not orders, invoices or payments. No tool reports revenue or MRR, and `get_customer_billing_summary` returns orders, invoices, payments, refunds and customers under `unsupported` instead of placeholders: look them up in the billing provider. The summary masks the user's email, and lists recent credit grants only when the caller also holds `credits:read`.
+
+`get_user_activity` returns event metadata without URLs, search queries or document contents. `get_operations_health`, `list_failed_jobs` and `get_job` return metadata only: counts, statuses, timings and truncated errors with URLs redacted, never video analysis text, feedback text or storage keys. Optional integrations are reported as configured or not (`true`/`false`), never their values. Retrying a failed job is not exposed.
 
 ### Change tools
 
@@ -206,12 +228,18 @@ Timestamps accept epoch milliseconds or ISO 8601. `action` in `list_audit_events
 
 ### Set up an admin agent
 
-Give the agent only what its job needs. Create a key from a preset (**Dashboard → API keys**, or `create_api_key`):
+Admin access is never granted by default. Give the agent only what its job needs, through one of these routes.
+
+**OAuth clients (Claude, ChatGPT).** Connect anymd as usual. If you are an owner or admin, the consent screen offers **Admin access for this connection**: **None** (the default), **Admin read-only (monitoring and reports)** or **Support agent**. Each option lists the scopes it adds. Your role caps the result, and is applied again on every call, so a demotion removes admin access from the connection immediately. Owner-only scopes (`users:roles:write`, `credits:write`, `billing:write`) are never added from the consent screen; use an API key for those. Roles below admin never see the option. To change an existing connection, disconnect anymd in the client and connect again.
+
+**OAuth step-up.** A client that can re-authorize does not need the consent option. When it calls a tool whose scope the grant lacks but your role allows, anymd answers `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` listing the current scopes plus the missing one, and the client re-authorizes with them.
+
+**API key.** Create a key from a preset (**Dashboard → API keys**, or `create_api_key`), capped by your role like every key:
 
 | Job | Preset |
 |---|---|
 | Monitoring and reports | `admin-read-only` |
-| Support: sign users out, suspend, revoke credentials, grant credits (owner) | `support` |
+| Support: sign users out, suspend, revoke credentials, grant credits (owner, API key only) | `support` |
 | Site operations: settings and opt-outs | `site-ops` |
 
 ```bash
@@ -219,7 +247,16 @@ claude mcp add --transport http anymd-admin https://anymd.cc/mcp \
   --header "Authorization: Bearer amd_…"
 ```
 
-Over OAuth, the client asks for the scopes it needs. When it calls a tool whose scope the grant lacks but your role allows, anymd answers `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` listing the current scopes plus the missing one, so the client can re-authorize (step up). With an API key the same call returns a tool error with code `insufficient_scope`; create a key that includes the scope. When your role does not allow the scope at all, the code is `forbidden`.
+With an API key, calling a tool whose scope the key lacks returns a tool error with code `insufficient_scope`; create a key that includes the scope. When your role does not allow the scope at all, the code is `forbidden`. How the consent options relate to the key presets: [API keys & roles](/docs/api-keys-roles#oauth).
+
+**Troubleshooting.** Ask the agent to call `get_admin_access_status`. It reports only on you: your role, this credential's scopes, the admin tools available now and after reconnecting, and the exact steps to fix the connection (for OAuth, also the step-up scope set). `state` is one of:
+
+| `state` | Meaning |
+|---|---|
+| `not_eligible` | Your role has no admin access. Only an owner can change roles; nothing a client or key requests adds it. |
+| `not_granted` | Your role allows admin access, but this connection holds no admin scopes. Reconnect with an admin option, or use a key from an admin preset. |
+| `partial` | The connection holds some of the admin scopes your role allows. `admin.missing` lists the rest. |
+| `full` | The connection holds every admin scope your role allows. |
 
 Things to ask an admin agent:
 
@@ -260,7 +297,7 @@ MCP has its own limits, separate from the REST API, counted per user and per cre
 | `401 invalid_api_key` | The key was revoked, expired or mistyped. Create a new one. |
 | `402 quota_exceeded` | Free plan credits are used up for the month. |
 | `revision_conflict` from `apply_page_ops` | Someone changed the page. Call `get_page`, then retry with the new `revision`. |
-| Admin tools are missing over OAuth | Grants approved before least-privilege consent lose admin scopes. Reconnect and approve the admin scopes. |
+| Admin tools are missing | Call `get_admin_access_status`: it says whether your role allows admin access and how to reconnect. See [Set up an admin agent](#set-up-an-admin-agent). |
 | `403` with `insufficient_scope` | The OAuth grant lacks the tool's scope. Re-authorize with the scopes in the `WWW-Authenticate` header. |
 | `429` / `-32005` | MCP rate limit. Wait for `Retry-After` seconds. |
 | `-32020` or `-32022` | A 2026-07-28 client sent headers that don't match the body, or an unsupported version. |

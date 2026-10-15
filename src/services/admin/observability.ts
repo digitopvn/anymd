@@ -16,7 +16,7 @@ export const LATENCY_SAMPLE = 10_000;
 export const SLOWEST_SCAN = 5_000;
 
 /** Source kind from the target URL; usage rows do not store it, so it is derived for reporting. */
-const SOURCE_SQL = `CASE
+export const SOURCE_SQL = `CASE
   WHEN target = '' THEN 'none'
   WHEN target LIKE '%github.com/%' OR target LIKE '%gist.github%' THEN 'github'
   WHEN target LIKE '%youtube.com/%' OR target LIKE '%youtu.be/%' THEN 'youtube'
@@ -56,7 +56,7 @@ export async function systemOverview(env: Env, actor: Principal) {
   };
 }
 
-async function usageTotals(env: Env, since: number, filter = '', binds: unknown[] = []) {
+export async function usageTotals(env: Env, since: number, filter = '', binds: unknown[] = []) {
   const row = await env.DB.prepare(
     `SELECT COUNT(*) AS requests, COALESCE(SUM(credits),0) AS credits, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors,
        SUM(CASE WHEN status='cached' THEN 1 ELSE 0 END) AS cached, COUNT(DISTINCT user_id) AS users

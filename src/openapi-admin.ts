@@ -5,10 +5,12 @@
  */
 import { z } from 'zod';
 import { AuditQuery } from './services/admin/audit';
-import { SubscriptionQuery } from './services/admin/billing';
+import { BillingEventQuery, SubscriptionQuery } from './services/admin/billing';
 import { GrantCreditsInput, GrantQuery, RevokeGrantInput } from './services/admin/credits';
 import { RevokeSessionsInput } from './services/admin/credentials';
 import { SystemTraceQuery, SystemUsageQuery } from './services/admin/observability';
+import { FailedJobQuery } from './services/admin/operations';
+import { UserActivityQuery } from './services/admin/stats';
 import { AddOptoutInput, OptoutQuery } from './services/admin/optouts';
 import { UpdateSettingsInput } from './services/admin/settings';
 import { SetStatusInput, UpdateRoleInput, UserQuery } from './services/admin/users';
@@ -89,6 +91,15 @@ export const ADMIN_OPS: Record<string, Record<string, Op>> = {
   '/admin/users/{id}/grants/{grantId}': {
     delete: { summary: "Revoke a user's OAuth grant", tag: 'Admin', scope: 'users:credentials:write', params: [userParam, { name: 'grantId', in: 'path', required: true, schema: str(), description: 'URL-encoded grant id' }], ok: obj({ revoked: bool() }), errors: [404] },
   },
+  '/admin/users/{id}/activity': {
+    get: { summary: 'User activity', description: 'Totals, breakdown by kind and channel, daily series, last activity, library size and a page of event metadata (no URLs, queries or document contents). Window at most 30 days.', tag: 'Admin', scope: 'users:read', params: [userParam, ...queryParams(UserActivityQuery.omit({ userId: true }))], ok: anyObject, errors: [404, 422] },
+  },
+  '/admin/users/{id}/billing': {
+    get: { summary: 'Customer billing summary', description: 'Stored vs entitled plan, subscriptions, renewal or cancellation, provider customer link (boolean) and, with credits:read, recent credit grants. Email is masked; payments, orders and invoices are reported as unsupported.', tag: 'Admin', scope: 'billing:read', params: [userParam], ok: anyObject, errors: [404] },
+  },
+  '/admin/access': {
+    get: { summary: 'My admin access', description: 'Any signed-in caller: role, effective scopes, admin scopes the role allows but this credential lacks, admin tools now and after reconnecting, and how to reconnect. Reports only on the caller.', tag: 'Admin', scope: '', ok: anyObject },
+  },
   '/admin/roles': { get: { summary: 'Role templates, scopes, key presets and plans', description: 'Plans are informational; the billing provider owns them.', tag: 'Admin', scope: '', ok: anyObject } },
   '/admin/settings': {
     get: { summary: 'Site settings', tag: 'Admin', scope: 'settings:read', ok: ref('AdminSettings') },
@@ -137,6 +148,8 @@ export const ADMIN_OPS: Record<string, Record<string, Op>> = {
   '/admin/billing/diagnostics': {
     get: { summary: 'Billing diagnostics', description: 'Provider configuration (secrets reported as present or missing, never their values), recent webhooks and outcomes, failures, subscriptions by status and plan drift.', tag: 'Admin', scope: 'billing:read', ok: anyObject },
   },
+  '/admin/billing/events': { get: { summary: 'Billing webhook deliveries', description: 'status=processed (default) or failed; filter by provider, type, outcome, since (at most 90 days ago). No payloads or signatures.', tag: 'Admin', scope: 'billing:read', params: queryParams(BillingEventQuery), ok: anyObject, errors: [422] } },
+  '/admin/billing/events/{id}': { get: { summary: 'One billing webhook delivery', description: 'Recorded outcome and every failed attempt with its sanitized error.', tag: 'Admin', scope: 'billing:read', params: [idParam('Event')], ok: anyObject, errors: [404] } },
   '/admin/audit': {
     get: { summary: 'Audit log', description: 'Who did what, through which credential and adapter. `action` accepts a prefix ending in `*`.', tag: 'Admin', scope: 'audit:read', params: queryParams(AuditQuery), ok: paged(ref('AuditEvent')) },
   },
@@ -151,6 +164,10 @@ export const ADMIN_OPS: Record<string, Record<string, Op>> = {
     },
   },
   '/admin/system/overview': { get: { summary: 'System overview', description: 'Users by role, suspensions, signups, paid plans, usage and error rate (24h/7d), documents, audit volume, webhook failures, opt-outs.', tag: 'Admin', scope: 'system:read', ok: anyObject } },
+  '/admin/system/stats': { get: { summary: 'User and product KPIs', description: 'Registered users, signups, DAU/WAU/MAU, usage-active users, activation, stored plans vs paying accounts, plan conflicts and usage, each with its definition, rolling UTC windows and data coverage.', tag: 'Admin', scope: 'system:read', ok: anyObject } },
+  '/admin/system/health': { get: { summary: 'Operations health', description: 'Video download and analysis backlog, feedback publishing backlog, webhook failures, request error rates and which optional integrations are configured (booleans).', tag: 'Admin', scope: 'system:read', ok: anyObject } },
+  '/admin/system/jobs': { get: { summary: 'Failed background jobs', description: 'type video_download (default), video_analysis or feedback; metadata and truncated errors only.', tag: 'Admin', scope: 'system:read', params: queryParams(FailedJobQuery), ok: anyObject, errors: [422] } },
+  '/admin/system/jobs/{id}': { get: { summary: 'One background job', tag: 'Admin', scope: 'system:read', params: [idParam('Job')], ok: anyObject, errors: [404] } },
   '/admin/system/usage': { get: { summary: 'System-wide usage', description: 'Totals, latency percentiles, breakdowns by channel, kind and source, daily series, top errors and recent failed conversions.', tag: 'Admin', scope: 'system:read', params: queryParams(SystemUsageQuery), ok: anyObject } },
   '/admin/system/traces': { get: { summary: 'System-wide traces', description: 'Recent (paginated) or slowest within a window, filterable by status, kind and user.', tag: 'Admin', scope: 'system:read', params: queryParams(SystemTraceQuery), ok: paged(ref('Trace')) } },
   '/admin/system/traces/{id}': { get: { summary: 'One trace with spans', tag: 'Admin', scope: 'system:read', params: [idParam('Trace')], ok: ref('Trace'), errors: [404] } },

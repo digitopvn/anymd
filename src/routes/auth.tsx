@@ -1,6 +1,7 @@
 /** Email/password and GitHub/Google sign-in, password reset, and the OAuth 2.1 consent screen for MCP clients. */
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import { consentAdminPresets, consentGrantScopes } from '../auth/consent';
 import { createSession, createUser, destroySession, getUserByEmail, hashPassword, SESSION_COOKIE, SESSION_TTL_MS, verifyPassword } from '../auth/identity';
 import { OAUTH_GRANT_VERSION, oauthConsentScopes } from '../auth/roles';
 import { beginSso, completeSso, enabledSsoProviders, isSsoProvider, SSO_ERRORS, SSO_STATE_COOKIE, SSO_STATE_TTL, SsoError, SUSPENDED_MESSAGE, type SsoErrorCode, type SsoState } from '../auth/sso';
@@ -209,7 +210,7 @@ authRoutes.get('/oauth/authorize', async (c) => {
   return renderPage(
     c,
     { title: 'Authorize MCP client', path: '/oauth/authorize', ...noindex },
-    <ConsentPage clientName={client.clientName || 'An MCP client'} clientUri={client.clientUri} scopes={granted} unavailable={unavailable} requestedNothing={!authRequest.scope.length} state={handle} userEmail={user.email} role={user.role} />,
+    <ConsentPage clientName={client.clientName || 'An MCP client'} clientUri={client.clientUri} scopes={granted} unavailable={unavailable} requestedNothing={!authRequest.scope.length} state={handle} userEmail={user.email} role={user.role} adminPresets={consentAdminPresets(user.role)} />,
   );
 });
 
@@ -224,7 +225,8 @@ authRoutes.post('/oauth/authorize', async (c) => {
       return c.redirect(denied.redirectTo);
     }
     const approved = await c.env.OAUTH_PROVIDER.approveConsent(c.req.raw, f.state ?? '');
-    const { granted: scopes } = oauthConsentScopes(user.role, approved.request.scope);
+    // Admin access is only ever added by the user's explicit choice on the consent form, capped by role.
+    const scopes = consentGrantScopes(user.role, approved.request.scope, f.admin_access);
     const client = await c.env.OAUTH_PROVIDER.lookupClient(approved.request.clientId);
     const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
       request: { ...approved.request, scope: scopes },
