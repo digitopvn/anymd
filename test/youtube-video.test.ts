@@ -359,7 +359,7 @@ describe('video analysis', () => {
 });
 
 describe('MCP events', () => {
-  const events = () => t.db.prepare('SELECT name, data_json FROM event_outbox ORDER BY created_at, name').all() as { name: string; data_json: string }[];
+  const events = () => t.db.prepare('SELECT name, data_json FROM event_outbox ORDER BY rowid').all() as { name: string; data_json: string }[];
 
   function subscribe(userId: string, name: string) {
     t.db

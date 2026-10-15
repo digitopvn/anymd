@@ -117,7 +117,7 @@ function conversion(over: Partial<ConvertResult> = {}): ConvertResult {
   };
 }
 
-const outbox = () => t.db.prepare('SELECT * FROM event_outbox ORDER BY created_at, id').all() as Record<string, any>[];
+const outbox = () => t.db.prepare('SELECT * FROM event_outbox ORDER BY rowid').all() as Record<string, any>[];
 const deliveries = () => t.db.prepare('SELECT * FROM event_deliveries ORDER BY id').all() as Record<string, any>[];
 const subscriptions = () => t.db.prepare('SELECT * FROM event_subscriptions').all() as Record<string, any>[];
 
