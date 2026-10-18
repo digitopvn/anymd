@@ -73,6 +73,16 @@ function isAdminEmail(env: Env, email: string): boolean {
     .includes(email.toLowerCase());
 }
 
+const flagOn = (value: string | undefined) => value === '1' || value?.trim().toLowerCase() === 'true';
+
+/**
+ * Whether `email` may create an account. With SIGNUP_DISABLED set, only ADMIN_EMAILS can sign up
+ * (password or SSO), so a private deployment stays closed; existing accounts still sign in.
+ */
+export function canSignUp(env: Env, email: string): boolean {
+  return !flagOn(env.SIGNUP_DISABLED) || isAdminEmail(env, email);
+}
+
 export async function createUser(env: Env, input: { email: string; name: string; password?: string; avatarUrl?: string }): Promise<UserRow> {
   const email = input.email.trim().toLowerCase();
   const ts = now();
@@ -207,3 +217,8 @@ export function sessionPrincipal(user: UserRow): Principal {
 }
 
 export const ANONYMOUS: Principal = { kind: 'anonymous', userId: null, role: 'user', scopes: ['convert'] };
+
+/** The caller without credentials. ANONYMOUS_CONVERT_DISABLED takes away its `convert` scope, so every conversion needs an account. */
+export function anonymousPrincipal(env: Env): Principal {
+  return flagOn(env.ANONYMOUS_CONVERT_DISABLED) ? { ...ANONYMOUS, scopes: [] } : ANONYMOUS;
+}

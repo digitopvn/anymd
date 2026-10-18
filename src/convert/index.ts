@@ -17,9 +17,23 @@ const ADAPTERS: SourceAdapter[] = [xAdapter, facebookAdapter, instagramAdapter, 
 
 const BLOCKED_HOSTNAMES = new Set(['localhost', 'anymd.cc', 'www.anymd.cc', 'staging.anymd.cc', 'metadata.google.internal']);
 
-function isPrivateHost(hostname: string): boolean {
+/**
+ * This deployment's own hostnames (from PUBLIC_URL and CDN_URL), so a self-hosted copy refuses to
+ * fetch itself the same way anymd.cc does.
+ */
+export function selfHostnames(env: { PUBLIC_URL?: string; CDN_URL?: string }): string[] {
+  const hosts: string[] = [];
+  for (const origin of [env.PUBLIC_URL, env.CDN_URL]) {
+    try {
+      if (origin) hosts.push(new URL(origin).hostname.toLowerCase());
+    } catch { /* A malformed var adds nothing; the built-in list still applies. */ }
+  }
+  return hosts;
+}
+
+function isPrivateHost(hostname: string, selfHosts: readonly string[]): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (BLOCKED_HOSTNAMES.has(h) || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
+  if (BLOCKED_HOSTNAMES.has(h) || selfHosts.includes(h) || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
   if (/^(127\.|10\.|0\.|169\.254\.|192\.168\.)/.test(h)) return true;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
   if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true;
@@ -29,9 +43,10 @@ function isPrivateHost(hostname: string): boolean {
 
 /**
  * Normalise user input ("example.com/a", "https://…", "//…") into an absolute http(s) URL and
- * refuse private or self-referential targets.
+ * refuse private or self-referential targets. `selfHosts` adds the deployment's own hostnames
+ * (see `selfHostnames`) to the built-in blocked list.
  */
-export function normalizeTargetUrl(raw: string): URL {
+export function normalizeTargetUrl(raw: string, selfHosts: readonly string[] = []): URL {
   let s = raw.trim();
   if (!s) throw new ConvertError('Missing URL', 400, 'invalid_url');
   s = s.replace(/^\/+/, '');
@@ -45,7 +60,7 @@ export function normalizeTargetUrl(raw: string): URL {
     throw new ConvertError('Invalid URL. Please provide a valid web address.', 400, 'invalid_url');
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new ConvertError('Only http(s) URLs are supported', 400, 'invalid_url');
-  if (!url.hostname.includes('.') || isPrivateHost(url.hostname)) throw new ConvertError('Cannot convert this URL.', 400, 'blocked_host');
+  if (!url.hostname.includes('.') || isPrivateHost(url.hostname, selfHosts)) throw new ConvertError('Cannot convert this URL.', 400, 'blocked_host');
   if (url.username || url.password) throw new ConvertError('URLs with credentials are not allowed', 400, 'invalid_url');
   url.hash = '';
   return url;

@@ -1,7 +1,7 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { AppBindings, Principal, Scope } from '../env';
-import { ANONYMOUS, API_KEY_PREFIX, principalFromApiKey, sessionPrincipal, SESSION_COOKIE, userFromSession, type UserRow } from './identity';
+import { anonymousPrincipal, API_KEY_PREFIX, principalFromApiKey, sessionPrincipal, SESSION_COOKIE, userFromSession, type UserRow } from './identity';
 
 export type AppContext = Context<AppBindings>;
 
@@ -16,7 +16,7 @@ function bearer(c: AppContext): string | null {
  * A request that presents a key which does not resolve is rejected rather than treated as anonymous.
  */
 export const resolvePrincipal: MiddlewareHandler<AppBindings> = async (c, next) => {
-  let principal: Principal = ANONYMOUS;
+  let principal: Principal = anonymousPrincipal(c.env);
   let user: UserRow | null = null;
   const key = bearer(c);
   if (key && key.startsWith(API_KEY_PREFIX)) {
@@ -49,7 +49,7 @@ export function apiError(c: AppContext, status: number, code: string, message: s
 export function requireScope(...scopes: Scope[]): MiddlewareHandler<AppBindings> {
   return async (c, next) => {
     const p = c.get('principal');
-    // Anonymous callers hold only the scopes granted to everyone (URL conversion at the anonymous limit).
+    // Anonymous callers hold only the scopes granted to everyone (URL conversion at the anonymous limit, unless disabled).
     const anonymousOk = !p.userId && scopes.every((s) => p.scopes.includes(s));
     if (!p.userId && !anonymousOk) return apiError(c, 401, 'unauthorized', 'Sign in or send an API key: Authorization: Bearer amd_…');
     const missing = scopes.filter((s) => !p.scopes.includes(s));

@@ -1,6 +1,6 @@
 import { marked } from 'marked';
 import { ENRICHMENT_CREDITS } from '../billing/plans';
-import { normalizeTargetUrl } from './index';
+import { normalizeTargetUrl, selfHostnames } from './index';
 import { findOptout } from './optouts';
 import { readBounded } from './provider-fetch';
 import { ConvertError, type ConvertContext, type ConvertResult } from './types';
@@ -19,7 +19,8 @@ export function articleImages(markdown: string, source: string): { url: string; 
 }
 
 async function imageData(raw: string, ctx: ConvertContext): Promise<string> {
-  let url = normalizeTargetUrl(raw);
+  const selfHosts = selfHostnames(ctx.env);
+  let url = normalizeTargetUrl(raw, selfHosts);
   for (let redirects = 0; redirects <= 3; redirects++) {
     if (ctx.budget && !ctx.budget.canFetch()) throw new ConvertError('Processing limit reached', 408, 'processing_limit');
     if (ctx.budget) ctx.budget.calls++;
@@ -29,7 +30,7 @@ async function imageData(raw: string, ctx: ConvertContext): Promise<string> {
       await response.body?.cancel();
       const location = response.headers.get('location');
       if (!location) break;
-      url = normalizeTargetUrl(new URL(location, url).href);
+      url = normalizeTargetUrl(new URL(location, url).href, selfHosts);
       continue;
     }
     const mime = response.headers.get('content-type')?.split(';')[0];

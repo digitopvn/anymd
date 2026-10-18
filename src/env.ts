@@ -29,6 +29,11 @@ export interface Env {
   /** Background YouTube video downloads. Optional: without it (or both VIDCAP_API_KEY and RAPIDAPI_KEY) video download is unavailable. */
   VIDEO_QUEUE?: Queue<import('./convert/youtube-video').VideoJobMessage>;
 
+  /** "true" or "1": only ADMIN_EMAILS can create accounts. Unset keeps sign-up open. */
+  SIGNUP_DISABLED?: string;
+  /** "true" or "1": converting without an account or API key is refused. Unset keeps the anonymous daily limit. */
+  ANONYMOUS_CONVERT_DISABLED?: string;
+
   // Secrets (all optional; features degrade gracefully when absent)
   ADMIN_EMAILS?: string;
   POLAR_ACCESS_TOKEN?: string;

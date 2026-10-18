@@ -102,6 +102,16 @@ describe('resolveSsoUser', () => {
     expect(db.links['google:g-1']).toBe('usr_1');
   });
 
+  it('refuses new accounts when sign-up is closed, but still signs existing ones in', async () => {
+    const db = fakeDb();
+    db.users.usr_1 = { id: 'usr_1', email: 'me@example.com', name: 'Me', password_hash: null, avatar_url: null };
+    const env = { ...baseEnv, DB: db.DB, SIGNUP_DISABLED: 'true' } as unknown as Env;
+    await expect(resolveSsoUser(env, 'github', { id: '9', email: 'new@example.com', name: 'x', avatarUrl: null })).rejects.toMatchObject({ code: 'signup_closed' });
+    expect(Object.keys(db.users)).toEqual(['usr_1']);
+    const { user } = await resolveSsoUser(env, 'github', { id: '10', email: 'me@example.com', name: 'Me', avatarUrl: null });
+    expect(user.id).toBe('usr_1');
+  });
+
   it('rejects a new identity without a verified email', async () => {
     const env = { ...baseEnv, DB: fakeDb().DB } as unknown as Env;
     await expect(resolveSsoUser(env, 'github', { id: '7', email: null, name: 'x', avatarUrl: null })).rejects.toMatchObject({ code: 'no_email' });
