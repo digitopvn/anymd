@@ -200,7 +200,8 @@ export async function searchPlatform(platform: SocialPlatform, query: string, cu
       return searchThreads(query, ctx);
     case 'linkedin': {
       const body = { search_keywords: query, sort_by: 'Latest', date_posted: '', content_type: '', from_member: [], from_company: [], mentioning_member: [], mentioning_company: [], author_company: [], author_industry: [], author_keyword: '' };
-      return parseLinkedInSearch(await rapidJson('fresh-linkedin-profile-data.p.rapidapi.com', '/search-posts', {}, ctx, { body, allowEmpty: true }));
+      // The provider usually answers in 9-13s, so the default 15s cap cut off its slower replies.
+      return parseLinkedInSearch(await rapidJson('fresh-linkedin-profile-data.p.rapidapi.com', '/search-posts', {}, ctx, { body, allowEmpty: true, timeoutMs: 30_000 }));
     }
   }
 }
