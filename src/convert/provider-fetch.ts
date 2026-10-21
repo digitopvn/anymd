@@ -26,6 +26,8 @@ export interface RapidOptions {
   body?: unknown;
   /** Return null for an empty `204 No Content` reply instead of failing. */
   allowEmpty?: boolean;
+  /** Per-call timeout cap; slow providers may wait longer, always within the budget deadline. */
+  timeoutMs?: number;
 }
 
 /** Hosts and paths are chosen in adapters, never supplied by the caller. */
@@ -33,6 +35,7 @@ export async function rapidJson(host: string, path: string, params: Record<strin
   if (!ctx.env.RAPIDAPI_KEY) throw new ConvertError('Social provider is not configured', 503, 'provider_unavailable');
   if (ctx.budget && !ctx.budget.canFetch()) throw new ConvertError('Conversion processing limit reached', 408, 'processing_limit');
   if (ctx.budget) ctx.budget.calls++;
+  const timeoutMs = options.timeoutMs ?? 15_000;
   return ctx.tracer.span('social.fetch', async () => {
     try {
       const query = new URLSearchParams(params).toString();
@@ -41,16 +44,24 @@ export async function rapidJson(host: string, path: string, params: Record<strin
         method: post ? 'POST' : 'GET',
         headers: { 'X-RapidAPI-Key': ctx.env.RAPIDAPI_KEY!, 'X-RapidAPI-Host': host, ...(post ? { 'Content-Type': 'application/json' } : {}) },
         body: post ? JSON.stringify(options.body) : undefined,
-        redirect: 'manual', signal: AbortSignal.timeout(Math.max(1, Math.min(15_000, (ctx.budget?.deadline ?? Date.now() + 15_000) - Date.now()))),
+        redirect: 'manual', signal: AbortSignal.timeout(Math.max(1, Math.min(timeoutMs, (ctx.budget?.deadline ?? Date.now() + timeoutMs) - Date.now()))),
       });
       if (response.status === 401 || response.status === 403) throw new ConvertError('Social provider subscription is unavailable', 503, 'provider_unavailable');
       if (response.status === 404) throw new ConvertError('Post not found or private', 404, 'not_found');
-      if (!response.ok) throw new ConvertError('Social provider request failed', 502, 'upstream_error');
+      // The upstream status goes into the message so traces tell quota, provider outage and bad requests apart.
+      if (response.status === 429) throw new ConvertError('Social provider rate limit or quota exceeded (HTTP 429)', 502, 'upstream_error');
+      if (!response.ok) throw new ConvertError(`Social provider request failed (HTTP ${response.status})`, 502, 'upstream_error');
       if (response.status === 204 && options.allowEmpty) return null;
-      return JSON.parse(new TextDecoder().decode(await readBounded(response)));
+      const bytes = await readBounded(response);
+      try {
+        return JSON.parse(new TextDecoder().decode(bytes));
+      } catch {
+        throw new ConvertError('Social provider returned invalid data', 502, 'upstream_error');
+      }
     } catch (e) {
       if (e instanceof ConvertError) throw e;
-      throw new ConvertError('Social provider timed out or returned invalid data', 502, 'upstream_error');
+      if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw new ConvertError(`Social provider timed out after ${timeoutMs / 1000}s`, 502, 'upstream_error');
+      throw new ConvertError('Social provider request failed (network error)', 502, 'upstream_error');
     }
   });
 }

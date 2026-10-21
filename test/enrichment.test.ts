@@ -130,6 +130,18 @@ describe('provider redirect handling', () => {
     });
   });
 
+  it('names the upstream HTTP status, quota and timeout in RapidAPI errors', async () => {
+    const ctx = { env: { RAPIDAPI_KEY: 'test-placeholder' }, tracer, budget: new ConversionBudget(100) } as unknown as ConvertContext;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 429 })));
+    await expect(rapidJson('provider.example', '/search', {}, ctx)).rejects.toMatchObject({ code: 'upstream_error', message: 'Social provider rate limit or quota exceeded (HTTP 429)' });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    await expect(rapidJson('provider.example', '/search', {}, ctx)).rejects.toMatchObject({ message: 'Social provider request failed (HTTP 503)' });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>', { status: 200 })));
+    await expect(rapidJson('provider.example', '/search', {}, ctx)).rejects.toMatchObject({ message: 'Social provider returned invalid data' });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new DOMException('The operation timed out.', 'TimeoutError'); }));
+    await expect(rapidJson('provider.example', '/search', {}, ctx, { timeoutMs: 30_000 })).rejects.toMatchObject({ message: 'Social provider timed out after 30s' });
+  });
+
   it('uses manual redirects for OpenRouter and does not charge a redirected model response', async () => {
     const fetch = vi.fn(async (input: unknown, _init?: RequestInit) => String(input).startsWith('https://openrouter.ai/')
       ? new Response(null, { status: 302, headers: { location: 'https://attacker.example/' } })
