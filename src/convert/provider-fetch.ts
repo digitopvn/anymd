@@ -46,7 +46,7 @@ export async function rapidJson(host: string, path: string, params: Record<strin
       if (response.status === 401 || response.status === 403) throw new ConvertError('Social provider subscription is unavailable', 503, 'provider_unavailable');
       if (response.status === 404) throw new ConvertError('Post not found or private', 404, 'not_found');
       // RapidAPI answers 429 when the plan's request quota or rate limit is used up: our capacity, not the caller's fault.
-      if (response.status === 429) throw new ConvertError('Social provider quota is used up. Try again later.', 503, 'provider_quota');
+      if (response.status === 429) throw new ConvertError('Social provider is rate limited or out of quota. Try again later.', 503, 'provider_quota');
       if (!response.ok) throw new ConvertError('Social provider request failed', 502, 'upstream_error');
       if (response.status === 204 && options.allowEmpty) return null;
       return JSON.parse(new TextDecoder().decode(await readBounded(response)));

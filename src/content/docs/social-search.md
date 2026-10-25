@@ -129,7 +129,7 @@ curl https://anymd.cc/api/v1/social/search \
 | 409 | `cursor_conflict` | The cursor was already used (a replay), or its page is still loading in another request; continue from the latest `next_cursor`. A request that was cut off mid-page frees its cursor within two minutes |
 | 502 | `upstream_error` | The platform provider failed (with `all`, every provider failed); nothing was charged |
 | 503 | `provider_unavailable` | Social search is not configured on this server |
-| 503 | `provider_quota` | The platform provider's request quota is used up for now (with `all`, every provider failed); nothing was charged, retry later |
+| 503 | `provider_quota` | The platform provider is rate limited or out of request quota for now (with `all`, every provider failed; read `platforms[].error` for each one); nothing was charged, retry later |
 
 ## CLI
 

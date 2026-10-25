@@ -156,7 +156,7 @@ Errors come back as JSON with a matching HTTP status:
 | 415 | `unsupported_type` | Content type anymd can't convert |
 | 422 | `empty_content` | No readable content found |
 | 503 | `provider_unavailable` | A required social or enrichment provider is not configured or subscribed |
-| 503 | `provider_quota` | A social provider's request quota is used up for now; retry later |
+| 503 | `provider_quota` | A social provider is rate limited or out of request quota for now; retry later |
 | 429 | `anonymous_limit` | Anonymous daily limit reached |
 
 Failed conversions never cost credits.

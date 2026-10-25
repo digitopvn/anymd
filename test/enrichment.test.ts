@@ -231,6 +231,27 @@ describe('Instagram media selection', () => {
     expect(calls).toEqual(['/v1/post/resolve', '/v1/post']);
   });
 
+  it('does not retry popular comments on a host that is out of quota', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, _init?: RequestInit) => {
+      const url = new URL(String(input));
+      calls.push(`${url.pathname}?${url.searchParams.get('sort') ?? ''}`);
+      if (url.pathname === '/v1/post/resolve') return json({ shortcode: 'PHOTO1' });
+      if (url.pathname === '/v1/post') return json({
+        shortcode: 'PHOTO1', type: 'photo', is_video: false,
+        display_url: 'https://cdn.example/photo.jpg', caption: 'fixture photo',
+        owner: { username: 'fixture_author' }, media_id: 'media-1',
+      });
+      if (url.pathname === '/v1/post/comments') return new Response('{}', { status: 429 });
+      throw new Error(`unexpected endpoint ${url.pathname}`);
+    }));
+
+    const result = await instagramAdapter.convert(new URL('https://www.instagram.com/p/PHOTO1/'), { ...context(), includeComments: true } as ConvertContext);
+
+    expect(result.enrichment?.comments).toMatchObject({ complete: false, reason: 'provider_quota' });
+    expect(calls.filter((c) => c.startsWith('/v1/post/comments'))).toEqual(['/v1/post/comments?recent']);
+  });
+
   it('uses the media endpoint for a carousel and keeps every returned image', async () => {
     const calls: string[] = [];
     const fetch = vi.fn(async (input: unknown, _init?: RequestInit) => {
