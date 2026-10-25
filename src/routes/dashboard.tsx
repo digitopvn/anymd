@@ -180,7 +180,7 @@ dashboardRoutes.post('/social', async (c) => {
     const known = e instanceof ConvertError;
     const error = known && e.code === 'cursor_conflict' ? `${e.message} Pages that loaded are listed under Recent searches.`
       : known && e.status < 500 ? e.message
-      : known && e.code === 'provider_unavailable' ? 'The search provider for this platform is unavailable right now. Try again later or pick another platform.'
+      : known && (e.code === 'provider_unavailable' || e.code === 'provider_quota') ? 'The search provider for this platform is unavailable right now. Try again later or pick another platform.'
       : 'Search failed. Try again in a moment.';
     if (!known) console.error('dashboard social search', e);
     return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} filters={filters.form} result={null} error={error} history={await socialHistory(c)} />, { status: known ? e.status : 500 });

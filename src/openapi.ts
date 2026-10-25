@@ -143,7 +143,7 @@ const OPS: Record<string, Record<string, Op>> = {
         ['url'],
       ),
       ok: ref('Conversion'),
-      errors: [400, 402, 422, 429, 502],
+      errors: [400, 402, 422, 429, 502, 503],
     },
   },
   '/convert/file': {
