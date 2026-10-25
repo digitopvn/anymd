@@ -792,4 +792,92 @@ describe('run: social search', () => {
     assert.match(anon.stderr, /^not_authenticated:/);
     assert.equal(bad.calls.length + missing.calls.length + anon.calls.length, 0);
   });
+
+  test('sends --period or --since/--until, prints what was filtered, and the next page needs only the cursor', async () => {
+    let body;
+    const payload = {
+      platform: 'all', query: 'q', count: 1, results: [post], next_cursor: 'amdss2.sss_0123456789.2', credits: 20, raw_count: 4, duplicate_count: 1, out_of_range_count: 2, missing_timestamp_count: 0,
+      time_range: { period: '7d', since: '2026-10-06T12:00:00.000Z', until: '2026-10-13T12:00:00.000Z' }, coverage: 'provider_limited',
+      platforms: [{ platform: 'x', count: 1, credits: 10, error: null, filter_mode: 'native' }, { platform: 'instagram', count: 0, credits: 10, error: null, filter_mode: 'post_filter' }],
+    };
+    const h = harness({ env: { ANYMD_API_KEY: KEY }, routes: { 'POST /api/v1/social/search': (call) => { body = JSON.parse(call.body); return jsonResponse(payload); } } });
+    assert.equal(await h.exec(['social', 'all', 'q', '--period', '7d']), 0);
+    assert.deepEqual(body, { platform: 'all', query: 'q', period: '7d' });
+    assert.equal(h.stderr, [
+      'range: last 7d, 2026-10-06T12:00:00.000Z → 2026-10-13T12:00:00.000Z',
+      '1 duplicate removed · 2 outside the range',
+      'partial coverage: instagram filtered by date after fetching; posts in range may be missing',
+      `20 credits · more: anymd social all "q" --cursor 'amdss2.sss_0123456789.2'`,
+      '',
+    ].join('\n'));
+    const custom = harness({ env: { ANYMD_API_KEY: KEY }, routes: { 'POST /api/v1/social/search': (call) => { body = JSON.parse(call.body); return jsonResponse({ ...payload, time_range: null, coverage: 'unfiltered', duplicate_count: 0, out_of_range_count: 0 }); } } });
+    assert.equal(await custom.exec(['social', 'x', 'q', '--since', '2026-10-01', '--until', '2026-10-05T00:00:00Z']), 0);
+    assert.deepEqual(body, { platform: 'x', query: 'q', since: '2026-10-01', until: '2026-10-05T00:00:00Z' });
+  });
+
+  test('rejects an unknown period and mixing --period with --since/--until before calling the API', async () => {
+    const bad = harness({ env: { ANYMD_API_KEY: KEY } });
+    assert.equal(await bad.exec(['social', 'x', 'q', '--period', '1y']), 1);
+    assert.match(bad.stderr, /--period must be one of 24h, 7d, 30d/);
+    const both = harness({ env: { ANYMD_API_KEY: KEY } });
+    assert.equal(await both.exec(['social', 'x', 'q', '--period', '7d', '--since', '2026-10-01']), 1);
+    assert.match(both.stderr, /either --period or --since\/--until/);
+    assert.equal(bad.calls.length + both.calls.length, 0);
+  });
+});
+
+describe('feedback', () => {
+  const created = { id: 'fb_0123456789abcdef0123', status: 'created', type: 'bug', title: '[bug] Search is empty', channel: 'cli', github: { repo: 'digitopvn/anymd', number: 7, url: 'https://github.com/digitopvn/anymd/issues/7' }, error: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' };
+  const preview = { feedback_id: created.id, repo: 'digitopvn/anymd', label: 'ai-handle', title: '[bug] Search is empty', body: 'public body', blocked: [], redacted: [] };
+  const base = ['feedback', 'submit', '--type', 'bug', '--title', 'Search is empty for short words', '--message', 'Searching two letter words returns nothing at all.'];
+
+  test('non-interactive submit refuses without --confirm-public and never calls the API', async () => {
+    const h = harness({ env: { ANYMD_API_KEY: KEY } });
+    assert.equal(await h.exec(base), 1);
+    assert.match(h.stderr, /^confirmation_required:/);
+    assert.equal(h.calls.length, 0);
+  });
+
+  test('--confirm-public publishes with a stable idempotency key and prints JSON on stdout', async () => {
+    const bodies = [];
+    const h = harness({ env: { ANYMD_API_KEY: KEY }, routes: { 'POST /api/v1/feedback': (call) => { bodies.push(JSON.parse(call.body)); return jsonResponse(created, 201); } } });
+    assert.equal(await h.exec([...base, '--confirm-public', '--json']), 0);
+    assert.equal(JSON.parse(h.stdout).github.number, 7);
+    assert.equal(await h.exec([...base, '--confirm-public', '--json']), 0);
+    assert.equal(bodies[0].confirm_public, true);
+    assert.equal(bodies[0].idempotency_key, bodies[1].idempotency_key);
+    assert.match(bodies[0].idempotency_key, /^cli-/);
+  });
+
+  test('interactive submit previews, asks, and sends nothing on a no', async () => {
+    const h = harness({ env: { ANYMD_API_KEY: KEY }, prompt: async () => 'n', routes: { 'POST /api/v1/feedback/preview': () => jsonResponse(preview) } });
+    h.io.interactive = true;
+    assert.equal(await h.exec(base), 1);
+    assert.match(h.stderr, /PUBLICLY/);
+    assert.equal(h.calls.filter((c) => c.url.endsWith('/api/v1/feedback')).length, 0);
+  });
+
+  test('interactive yes publishes; a pending report is not called published', async () => {
+    const h = harness({ env: { ANYMD_API_KEY: KEY }, prompt: async () => 'y', routes: { 'POST /api/v1/feedback/preview': () => jsonResponse(preview), 'POST /api/v1/feedback': () => jsonResponse({ ...created, status: 'pending', github: null }, 202) } });
+    h.io.interactive = true;
+    assert.equal(await h.exec(base), 0);
+    assert.match(h.stdout, /^Status: pending/);
+    assert.match(h.stderr, /not published on GitHub yet/);
+  });
+
+  test('a credential flagged by the preview stops before the prompt', async () => {
+    const h = harness({ env: { ANYMD_API_KEY: KEY }, prompt: async () => 'y', routes: { 'POST /api/v1/feedback/preview': () => jsonResponse({ ...preview, blocked: [{ field: 'description', kinds: ['github_token'] }] }) } });
+    h.io.interactive = true;
+    assert.equal(await h.exec(base), 1);
+    assert.match(h.stderr, /^secret_detected:/);
+  });
+
+  test('list and view show own feedback', async () => {
+    const h = harness({ env: { ANYMD_API_KEY: KEY }, routes: { 'GET /api/v1/feedback': () => jsonResponse({ items: [created], next_cursor: null }), [`GET /api/v1/feedback/${created.id}`]: () => jsonResponse(created) } });
+    assert.equal(await h.exec(['feedback', 'list']), 0);
+    assert.match(h.stdout, /issues\/7/);
+    const v = harness({ env: { ANYMD_API_KEY: KEY }, routes: { [`GET /api/v1/feedback/${created.id}`]: () => jsonResponse(created) } });
+    assert.equal(await v.exec(['feedback', 'view', created.id, '--json']), 0);
+    assert.equal(JSON.parse(v.stdout).id, created.id);
+  });
 });

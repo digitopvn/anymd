@@ -17,13 +17,15 @@ import { runSocialSearch, SOCIAL_SEARCH_ALL_MAX, socialSearchInput, socialSearch
 import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
 import { enrichmentOptions } from '../convert/enrichment-types';
 import { ConvertError } from '../convert/types';
-import type { Env, Principal, WaitUntil } from '../env';
+import { eventsAvailable, EventsRpcError, handleEventsMethod } from '../events/subscriptions';
+import type { Env, Principal, Scope, WaitUntil } from '../env';
 import { deleteDocument, editTags, getDocument, listDocuments, listTags, MAX_TAG_FILTERS, MAX_TAG_LENGTH, MAX_TAGS, parseStoredTags, parseTagFilter } from '../library/store';
 import { convertPayload, searchForPrincipal, usageSummary } from '../services';
 import { AdminError } from '../services/admin/shared';
 import { ACCOUNT_TOOLS } from './account-tools';
-import { ADMIN_TOOLS } from './admin-tools';
+import { accessStatusTool, ADMIN_TOOLS } from './admin-tools';
 import { CMS_PARITY_TOOLS } from './cms-parity-tools';
+import { FEEDBACK_TOOLS } from './feedback-tools';
 import {
   isModernRequest,
   LEGACY_VERSIONS,
@@ -38,13 +40,13 @@ import {
   type JsonRpcMessage,
 } from './protocol';
 import { checkMcpRate, type RateLimited } from './rate-limit';
-import { DESTRUCTIVE, IDEMPOTENT_WRITE, isMutation, READ_ONLY, ToolError, WRITE, type ToolContext, type ToolDef } from './tool-types';
+import { DESTRUCTIVE, holdsToolScope, IDEMPOTENT_WRITE, isMutation, READ_ONLY, ToolError, WRITE, type ToolContext, type ToolDef } from './tool-types';
 
 const SERVER_INFO = { name: 'anymd', title: 'anymd — the web context layer for AI agents', version: '1.1.0' };
 const INSTRUCTIONS =
   'anymd is the web context layer for AI agents: it reads public web content (web pages, GitHub, YouTube, Reddit, Hacker News, X, PDFs, Office files, images) into structured Markdown and keeps a private, searchable library of everything read. ' +
   'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document for full text, search_social to find public posts on X, Facebook, Instagram, Threads or LinkedIn (read a result with read_url). Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision. ' +
-  'Admin tools appear only for owner/admin credentials granted their scopes: start with system_overview, page with next_cursor, pass expected* values and an idempotencyKey with every change; every change lands in list_audit_events.';
+  'Admin tools appear only for owner/admin credentials granted their scopes; get_admin_access_status explains what this connection can reach and how to reconnect with admin access. Admins: start with system_overview or get_user_stats, page with next_cursor, pass expected* values and an idempotencyKey with every change; every change lands in list_audit_events.';
 
 const READ = READ_ONLY;
 const TAG_LIST_INPUT = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAGS).optional();
@@ -116,7 +118,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'search_social',
     title: 'Search social media',
-    description: `Search public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them (platform "all", merged newest first) by keyword and return normalized results (platform, url, author, text, published_at, stats) plus a per-platform status. Each page that returns results costs ${SOCIAL_SEARCH_CREDITS.x} credits on X, Facebook, Instagram or Threads and ${SOCIAL_SEARCH_CREDITS.linkedin} on LinkedIn; "all" searches every platform at once and costs the sum for the platforms that returned results (at most ${SOCIAL_SEARCH_ALL_MAX}). Empty pages are free. Pass next_cursor as cursor for the next page. Searches are kept in the dashboard history, not the library; read a post with read_url.`,
+    description: `Search public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them (platform "all", merged newest first) by keyword and return normalized results (platform, url, author, text, published_at, stats) plus a per-platform status. Optional time filter: period ("24h", "7d", "30d", anchored when the search starts) or since/until (ISO-8601, half-open [since, until) in UTC). Posts are de-duplicated by exact post identity within a page and across all pages of one search; posts without a date are excluded while a time filter is active. X filters by date at the provider; the other platforms are filtered after fetching, so coverage is "provider_limited" and a page can come back with few or no posts while next_cursor still continues. Each page where a platform returns posts costs ${SOCIAL_SEARCH_CREDITS.x} credits on X, Facebook, Instagram or Threads and ${SOCIAL_SEARCH_CREDITS.linkedin} on LinkedIn, even when filtering removes them; "all" costs the sum for the platforms that returned posts (at most ${SOCIAL_SEARCH_ALL_MAX}). Pages where the platforms return nothing are free. Pass next_cursor as cursor for the next page (it keeps the time range; next_page_credits is its most it can cost); a cursor works once and for 24 hours. Searches are kept in the dashboard history, not the library; read a post with read_url.`,
     scope: 'convert',
     input: z.object(socialSearchInput),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -160,7 +162,7 @@ const TOOLS: ToolDef[] = [
     input: z.object({ id: z.string() }),
     annotations: DESTRUCTIVE,
     run: async (a, t) => {
-      if (!(await deleteDocument(t.env, t.principal.userId, a.id))) throw new ToolError('Document not found');
+      if (!(await deleteDocument(t.env, t.principal.userId, a.id, { principal: t.principal, ctx: t.ctx }))) throw new ToolError('Document not found');
       return { ok: true };
     },
   },
@@ -180,7 +182,7 @@ const TOOLS: ToolDef[] = [
     run: async (a, t) => {
       if (a.set && (a.add || a.remove)) throw new ToolError('Use either set, or add and/or remove, not both.');
       if (!a.set && !a.add && !a.remove) throw new ToolError('Pass add, remove or set.');
-      const tags = await editTags(t.env, t.principal.userId, a.id, { add: a.add, remove: a.remove, set: a.set });
+      const tags = await editTags(t.env, t.principal.userId, a.id, { add: a.add, remove: a.remove, set: a.set }, { principal: t.principal, ctx: t.ctx });
       if (!tags) throw new ToolError('Document not found');
       return { id: a.id, tags };
     },
@@ -343,12 +345,13 @@ const TOOLS: ToolDef[] = [
 // ─── Admin control plane, account and CMS parity tools ──────────────────────
 // Defined in their own modules; appended after the core tools so existing tool order is unchanged.
 
-const ALL_TOOLS: ToolDef[] = [...TOOLS, ...CMS_PARITY_TOOLS, ...ACCOUNT_TOOLS, ...ADMIN_TOOLS];
+// The access report lists tools by scope, so it reads the finished catalog lazily.
+const ALL_TOOLS: ToolDef[] = [...TOOLS, ...CMS_PARITY_TOOLS, ...ACCOUNT_TOOLS, ...FEEDBACK_TOOLS, ...ADMIN_TOOLS, accessStatusTool(() => ALL_TOOLS)];
 const TOOL_BY_NAME = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 const inputSchemas = new Map(ALL_TOOLS.map((t) => [t.name, z.toJSONSchema(t.input, { io: 'input' })]));
 
 function visibleTools(p: Principal) {
-  return ALL_TOOLS.filter((t) => p.scopes.includes(t.scope));
+  return ALL_TOOLS.filter((t) => holdsToolScope(p, t));
 }
 
 function toolListing(p: Principal) {
@@ -357,16 +360,16 @@ function toolListing(p: Principal) {
 
 /** A tool the caller cannot use because of scope. `stepUp` when an OAuth client could request it. */
 interface ScopeDenial {
-  tool: ToolDef;
+  tool: ToolDef & { scope: Scope };
   stepUp: boolean;
   roleAllows: boolean;
 }
 
 function scopeDenial(name: string, p: Principal): ScopeDenial | null {
   const tool = TOOL_BY_NAME.get(name);
-  if (!tool || p.scopes.includes(tool.scope)) return null;
+  if (!tool || tool.scope === null || p.scopes.includes(tool.scope)) return null;
   const roleAllows = scopesForRole(p.role).includes(tool.scope);
-  return { tool, roleAllows, stepUp: roleAllows && p.kind === 'oauth' };
+  return { tool: { ...tool, scope: tool.scope }, roleAllows, stepUp: roleAllows && p.kind === 'oauth' };
 }
 
 function denialToolResult(d: ScopeDenial, p: Principal) {
@@ -437,7 +440,7 @@ async function handleMessage(msg: JsonRpcMessage, t: ToolContext, era: Era): Pro
     case 'server/discover':
       return ok({
         supportedVersions: SUPPORTED_VERSIONS,
-        capabilities: { tools: { listChanged: false } },
+        capabilities: { tools: { listChanged: false }, ...(eventsAvailable(t.env, t.principal) ? { events: { listChanged: false } } : {}) },
         instructions: INSTRUCTIONS,
         ttlMs: LIST_TTL_MS,
         cacheScope: 'private',
@@ -447,6 +450,16 @@ async function handleMessage(msg: JsonRpcMessage, t: ToolContext, era: Era): Pro
       return ok({ tools: toolListing(t.principal), ...listCache });
     case 'tools/call':
       return ok(await callTool(msg.params, t));
+  }
+  // MCP Events exist only in the modern era, and only when this deployment can store callback secrets.
+  if (era === 'modern' && msg.method.startsWith('events/') && eventsAvailable(t.env, t.principal)) {
+    try {
+      const result = await handleEventsMethod(t.env, t.principal, msg.method, msg.params);
+      if (result) return ok(msg.method === 'events/list' ? { ...result, ...listCache } : result);
+    } catch (err) {
+      if (err instanceof EventsRpcError) return rpcError(id, err.code, err.message, err.data);
+      throw err;
+    }
   }
   if (era === 'legacy') {
     switch (msg.method) {
@@ -517,9 +530,10 @@ function batchAllowed(versionHeader: string | null): boolean {
 }
 
 function callsMutation(m: JsonRpcMessage, p: Principal): boolean {
+  if (isMessageObject(m) && (m.method === 'events/subscribe' || m.method === 'events/unsubscribe')) return true;
   if (!isMessageObject(m) || m.method !== 'tools/call') return false;
   const tool = TOOL_BY_NAME.get(String(m.params?.name ?? ''));
-  return Boolean(tool && p.scopes.includes(tool.scope) && isMutation(tool));
+  return Boolean(tool && holdsToolScope(p, tool) && isMutation(tool));
 }
 
 /**

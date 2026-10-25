@@ -12,10 +12,11 @@ export const linkedinAdapter: SourceAdapter = {
     if (!urn) throw new ConvertError('Use a LinkedIn post URL containing its activity ID', 400, 'invalid_url');
     const response = object(await rapidJson(HOST, '/get-post-details', { urn }, ctx));
     const post = object(response.data);
-    if (!string(post.text) && !Array.isArray(post.images)) throw new ConvertError('Public LinkedIn post unavailable', 404, 'not_found');
+    const video = string(object(post.video).stream_url);
+    if (!string(post.text) && !Array.isArray(post.images) && !video) throw new ConvertError('Public LinkedIn post unavailable', 404, 'not_found');
     const author = object(post.poster);
     const images = Array.isArray(post.images) ? post.images.map((item) => string(object(item).url)) : [];
-    const result = socialResult(url, 'linkedin', string(post.text), [string(author.first), string(author.last)].filter(Boolean).join(' '), ctx.removeImages ? [] : images, string(post.time));
+    const result = socialResult(url, 'linkedin', string(post.text), [string(author.first), string(author.last)].filter(Boolean).join(' '), ctx.removeImages ? [] : images, string(post.time), [video]);
     let rootCount = 0;
     await collectComments(result, ctx, async (cursor) => {
       const page = Number(cursor || 1);

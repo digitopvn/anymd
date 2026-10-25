@@ -1,7 +1,7 @@
 ---
 title: "Self-hosting"
 description: "Deploy your own copy of anymd on Cloudflare Workers with D1, KV, R2, Vectorize and Workers AI, plus secrets and CI."
-updated: "2026-10-10"
+updated: "2026-10-15"
 ---
 
 anymd is MIT-licensed and runs as a single Cloudflare Worker. Everything the hosted service uses is in the repository at [github.com/digitopvn/anymd](https://github.com/digitopvn/anymd).
@@ -89,7 +89,7 @@ These scripts use the database names `anymd-staging` and `anymd-production`; adj
 npx wrangler d1 migrations apply anymd-staging --local --env staging
 ```
 
-Every migration is additive, so the previous Worker version keeps working while you roll out. `0007_admin_control_plane.sql` adds the audit, account status, credit-grant lifecycle, settings version and webhook outcome columns the admin control plane needs; apply it before deploying the Worker that uses them.
+Every migration is additive, so the previous Worker version keeps working while you roll out. `0007_admin_control_plane.sql` adds the audit, account status, credit-grant lifecycle, settings version and webhook outcome columns the admin control plane needs; apply it before deploying the Worker that uses them. `0013_mcp_events.sql` adds the MCP Events tables (`event_subscriptions`, `event_outbox`, `event_deliveries`); apply it before setting `EVENTS_SECRET_KEY` on a Worker that uses them.
 
 ## 5. Set secrets
 
@@ -113,8 +113,10 @@ npm run secrets:production   # pushes every known secret found in .env, without 
 | `RAPIDAPI_KEY`, `VIDCAP_API_KEY` | YouTube transcripts (either works; RapidAPI is tried first) and the opt-in video download (either works; VidCap is tried first, with `VIDEO_QUEUE`). `RAPIDAPI_KEY` also enables Facebook, Instagram, Threads (API4) and LinkedIn adapters and their provider-backed comments. |
 | `OPENROUTER_API_KEY` | Query fan-out and Jev via OpenRouter (Workers AI is the fan-out fallback), article-image OCR and descriptions using `qwen/qwen3.6-35b-a3b`, and the opt-in video analysis using `google/gemini-3.8-flash` |
 | `TYPESAFE_API_KEY` | Jev directly from TypeSafe, when OpenRouter isn't configured |
+| `GITHUB_FEEDBACK_TOKEN` | Publishing feedback as issues on `digitopvn/anymd`. Use a fine-grained token with only Issues: read and write on that repository, and create the `ai-handle` label there. The scheduled handler retries reports GitHub could not take every 10 minutes. Optional vars: `FEEDBACK_DAILY_LIMIT`, `FEEDBACK_WEEKLY_LIMIT`, `FEEDBACK_GLOBAL_HOURLY_LIMIT`, `FEEDBACK_MIN_ACCOUNT_AGE_HOURS` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | "Continue with GitHub" sign-in |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | "Continue with Google" sign-in |
+| `EVENTS_SECRET_KEY` | [MCP Events](/docs/mcp#events-webhooks) (webhook subscriptions). anymd derives an AES-GCM key from it to encrypt callback secrets at rest; without it `server/discover` does not offer events. Use a long random value and set it with `npx wrangler secret put EVENTS_SECRET_KEY --env <env>`, or let `npm run secrets:*` push it from `.env` (`EVENTS_SECRET_KEY` for production, `STAGING_EVENTS_SECRET_KEY` for staging, so each environment keeps its own key). Changing it makes stored callback secrets unreadable, so existing subscriptions stop delivering until clients subscribe again |
 
 ### Sign in with GitHub or Google
 
@@ -169,6 +171,8 @@ npm run deploy:production
 ```
 
 Each runs `npm run build` (Tailwind CSS and client scripts) and then `wrangler deploy` for that environment.
+
+The deploy also registers the cron trigger in `wrangler.jsonc`, which runs the Worker's `scheduled` handler every minute: MCP Events delivery and retries every minute (a no-op without `EVENTS_SECRET_KEY`), and feedback retries, expired social search sessions and old event records every tenth minute.
 
 Local development runs against the staging configuration:
 

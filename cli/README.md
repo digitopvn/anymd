@@ -75,6 +75,10 @@ These flags are available on `anymd convert` and the bare `anymd <url>` form:
 
 Flags you leave out follow your saved reading defaults (`anymd prefs`), otherwise the safe defaults: thread expansion, comments and image analysis are off. A flag on one conversion never changes the saved defaults. X posts convert as the single requested post unless you pass `--expand-thread` or save it as a default; keys no longer expand threads automatically. Facebook, Instagram, Threads and LinkedIn post adapters require a signed-in caller. JSON responses include `credit_breakdown` and `enrichment` coverage, so provider failures and partial results remain visible; cached reads are free.
 
+## Feedback
+
+`anymd feedback submit --type bug --title <t> --message <m> [--steps s] [--expected e] [--actual a] [--url u] [--page p] [--confirm-public] [--json]` sends product feedback as a **public GitHub issue** on `digitopvn/anymd`. On a terminal it prints the exact text and asks `[y/N]`. Without a terminal it refuses unless `--confirm-public` is passed, so only pass that flag when the owner of the report approved publishing it. `anymd feedback list` and `anymd feedback view <id>` show your own reports. The key needs the `feedback:write` scope.
+
 ## Configuration
 
 Precedence, highest first:

@@ -1,7 +1,7 @@
 ---
 title: "Billing & credits"
 description: "How anymd credits work, what each source costs, plans, overage, offers, and how checkout and the customer portal work."
-updated: "2026-10-10"
+updated: "2026-10-13"
 ---
 
 anymd bills in **credits**, and you pay when your agents learn something new. Processing a new source uses credits by its complexity (one credit is one web page); reusing what your agents already know is free: cached reads, library search and MCP recall cost nothing.
@@ -23,7 +23,7 @@ anymd bills in **credits**, and you pay when your agents learn something new. Pr
 | Social search: each page of results on X, Facebook, Instagram or Threads | 10 |
 | Social search: each page of LinkedIn results | 100 |
 | Social search on all platforms | Sum of the platforms that returned results |
-| Social search page with no results | 0 |
+| Social search page where the platform returned no posts (a page whose posts were all filtered out as duplicates or outside the time range is still charged) | 0 |
 | Library search, reads, MCP reads | 0 |
 | Cached result | 0 |
 | Failed conversion | 0 |

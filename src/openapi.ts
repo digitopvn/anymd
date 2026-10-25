@@ -5,7 +5,8 @@ import { arr, bool, idParam, int, nullable, obj, ref, str, type Op, type Schema 
 import { DEFAULT_READING_PREFERENCES as READ_DEFAULTS, READING_LIMITS as LIMITS } from './lib/reading-options';
 import { SOCIAL_SEARCH_CREDITS } from './billing/plans';
 import { SOCIAL_PLATFORMS } from './convert/social-search-providers';
-import { SOCIAL_SEARCH_ALL_MAX, SOCIAL_SEARCH_TARGETS } from './convert/social-search';
+import { SOCIAL_SEARCH_ALL_MAX, SOCIAL_SEARCH_PERIODS, SOCIAL_SEARCH_TARGETS } from './convert/social-search';
+import { FEEDBACK_LIMITS, FEEDBACK_TYPES } from './services/feedback';
 
 const ERROR_TEXT: Record<number, string> = {
   400: 'Bad request',
@@ -67,6 +68,52 @@ const OPS: Record<string, Record<string, Op>> = {
       ...READING_PREFERENCES_BODY,
     },
   },
+  '/feedback': {
+    post: {
+      summary: 'Submit product feedback (creates a public GitHub issue)',
+      description:
+        'Publishes feedback about anymd itself as a PERMANENT, PUBLIC GitHub issue on digitopvn/anymd with the `ai-handle` label. The repository and label are fixed server-side. Requires `confirm_public: true` and a stable `idempotency_key` (or the `Idempotency-Key` header; both must match): a retry with the same key and content never creates a second issue, a different payload under the same key is 409. **201** only once GitHub created and validated the issue; **202** when it is persisted but not published yet (`pending`, retried automatically) or held as `needs_review`: never treat 202 as published. Reports containing credentials are refused (422 `secret_detected`); emails, private URLs and token-bearing query strings are redacted. Free; no credits. Not related to the search-result ratings of the library. Responses are `Cache-Control: no-store`.',
+      tag: 'Feedback',
+      scope: 'feedback:write',
+      params: [{ name: 'Idempotency-Key', in: 'header', schema: str('Same as the idempotency_key field') }],
+      body: ref('FeedbackInput'),
+      ok: ref('Feedback'),
+      status: 201,
+      errors: [400, 409, 422, 502, 503],
+    },
+    get: {
+      summary: 'List my feedback',
+      description: 'Your own submissions, newest first. Other accounts\' records are never visible.',
+      tag: 'Feedback',
+      scope: 'feedback:write',
+      params: [
+        { name: 'limit', in: 'query', schema: int(undefined, { minimum: 1, maximum: 100, default: 20 }) },
+        { name: 'before', in: 'query', schema: int('Cursor: `next_cursor` from the previous page') },
+      ],
+      ok: obj({ items: arr(ref('Feedback')), next_cursor: nullable(int()) }, ['items']),
+    },
+  },
+  '/feedback/preview': {
+    post: {
+      summary: 'Preview the public issue',
+      description: 'Returns the exact title and Markdown body that would be published, after redaction, without storing or sending anything. `blocked` lists fields holding a high-confidence credential that must be removed before submitting. Pass `idempotency_key` to get the exact Feedback ID.',
+      tag: 'Feedback',
+      scope: 'feedback:write',
+      body: ref('FeedbackDraft'),
+      ok: obj({ feedback_id: nullable(str()), title: str(), body: str(), repo: str(), label: str(), blocked: arr(obj({ field: str(), kinds: arr(str()) })), redacted: arr(str()) }, ['title', 'body', 'repo', 'label', 'blocked', 'redacted']),
+      errors: [422],
+    },
+  },
+  '/feedback/{id}': {
+    get: {
+      summary: 'Get one of my feedback submissions',
+      tag: 'Feedback',
+      scope: 'feedback:write',
+      params: [idParam('Feedback')],
+      ok: ref('Feedback'),
+      errors: [404],
+    },
+  },
   '/convert': {
     post: {
       summary: 'Read a URL as Markdown',
@@ -96,7 +143,7 @@ const OPS: Record<string, Record<string, Op>> = {
         ['url'],
       ),
       ok: ref('Conversion'),
-      errors: [400, 402, 422, 429, 502],
+      errors: [400, 402, 422, 429, 502, 503],
     },
   },
   '/convert/file': {
@@ -168,19 +215,22 @@ const OPS: Record<string, Record<string, Op>> = {
   '/social/search': {
     post: {
       summary: 'Search social media posts',
-      description: `Searches public posts on X, Facebook, Instagram, Threads, LinkedIn, or all of them with \`platform: "all"\` (results merged newest first), and returns normalized results with a per-platform status. Requires an account. Each page that returns results costs ${SOCIAL_SEARCH_CREDITS.x} credits on X, Facebook, Instagram or Threads and ${SOCIAL_SEARCH_CREDITS.linkedin} on LinkedIn; \`all\` searches every platform at once and costs the sum for the platforms that returned results (at most ${SOCIAL_SEARCH_ALL_MAX}). Empty pages and provider failures cost nothing. Pass \`next_cursor\` as \`cursor\` for the next page. Searches appear in the dashboard history; they are not saved to the library, so convert a result URL to keep it.`,
+      description: `Searches public posts on X, Facebook, Instagram, Threads, LinkedIn, or all of them with \`platform: "all"\` (results merged newest first), and returns normalized results with a per-platform status. Requires an account. Optional time filter: \`period\` (24h, 7d, 30d, anchored when the search starts) or \`since\`/\`until\` (ISO-8601, half-open \`[since, until)\` in UTC); posts without a date are excluded while it is active. Posts are de-duplicated by exact post identity within a page and across every page of one search. X filters by date at the provider; the others are filtered after fetching, so \`coverage\` is \`provider_limited\`. Each page where a platform returns posts costs ${SOCIAL_SEARCH_CREDITS.x} credits on X, Facebook, Instagram or Threads and ${SOCIAL_SEARCH_CREDITS.linkedin} on LinkedIn, even if filtering removes every post; \`all\` costs the sum for the platforms that returned posts (at most ${SOCIAL_SEARCH_ALL_MAX}). Pages where the platform returns nothing, and provider failures, cost nothing. Pass \`next_cursor\` as \`cursor\` for the next page: it keeps the time range, works once, and expires after 24 hours. Searches appear in the dashboard history; they are not saved to the library, so convert a result URL to keep it.`,
       tag: 'Search',
       scope: 'convert',
       body: obj(
         {
           platform: str('Platform to search, or all of them', { enum: [...SOCIAL_SEARCH_TARGETS] }),
           query: str('Keywords, hashtags or a phrase (1-200 characters)', { examples: ['cloudflare workers'] }),
-          cursor: str('next_cursor from the previous page'),
+          cursor: str('next_cursor from the previous page; it keeps the time range of the first page'),
+          period: str('Only posts from the last 24h, 7d or 30d. Not with since/until', { enum: [...SOCIAL_SEARCH_PERIODS] }),
+          since: str('Only posts published at or after this time (ISO-8601 with a zone, or YYYY-MM-DD for UTC midnight)', { format: 'date-time', examples: ['2026-10-01T00:00:00Z'] }),
+          until: str('Only posts published before this time (exclusive)', { format: 'date-time', examples: ['2026-10-13T00:00:00Z'] }),
         },
         ['platform', 'query'],
       ),
       ok: ref('SocialSearchResponse'),
-      errors: [400, 402, 422, 502, 503],
+      errors: [400, 402, 409, 422, 502, 503],
     },
   },
   '/search': {
@@ -284,6 +334,39 @@ const OPS: Record<string, Record<string, Op>> = {
 };
 
 const SCHEMAS: Record<string, Schema> = {
+  FeedbackDraft: obj(
+    {
+      type: str(undefined, { enum: [...FEEDBACK_TYPES] }),
+      title: str(undefined, { minLength: FEEDBACK_LIMITS.title[0], maxLength: FEEDBACK_LIMITS.title[1] }),
+      description: str(undefined, { minLength: FEEDBACK_LIMITS.description[0], maxLength: FEEDBACK_LIMITS.description[1] }),
+      steps_to_reproduce: str(undefined, { maxLength: FEEDBACK_LIMITS.section }),
+      expected_behavior: str(undefined, { maxLength: FEEDBACK_LIMITS.section }),
+      actual_behavior: str(undefined, { maxLength: FEEDBACK_LIMITS.section }),
+      reference_url: str('Public http(s) URL; query and fragment are removed', { maxLength: FEEDBACK_LIMITS.referenceUrl }),
+      context_page: str('Page of anymd the report is about', { maxLength: FEEDBACK_LIMITS.contextPage }),
+    },
+    ['type', 'title', 'description'],
+  ),
+  FeedbackInput: {
+    allOf: [
+      ref('FeedbackDraft'),
+      obj({ confirm_public: { const: true, description: 'Must be true: the report becomes a public GitHub issue' }, idempotency_key: str('Client-generated stable key, 8–128 chars of letters, digits and . _ : -', { minLength: 8, maxLength: 128 }) }, ['confirm_public', 'idempotency_key']),
+    ],
+  },
+  Feedback: obj(
+    {
+      id: str('Opaque id, e.g. fb_…'),
+      status: str('created = published; pending = persisted, not published yet; needs_review = held for a person; failed', { enum: ['created', 'pending', 'needs_review', 'failed'] }),
+      type: str(undefined, { enum: [...FEEDBACK_TYPES] }),
+      title: str(),
+      channel: str(undefined, { enum: ['dashboard', 'api', 'mcp', 'cli'] }),
+      github: nullable(obj({ repo: str(), number: int(), url: str() }, ['repo', 'number', 'url'])),
+      error: nullable(str()),
+      created_at: str(undefined, { format: 'date-time' }),
+      updated_at: str(undefined, { format: 'date-time' }),
+    },
+    ['id', 'status', 'type', 'title', 'channel', 'github', 'created_at'],
+  ),
   Error: obj({ error: obj({ code: str(), message: str() }, ['code', 'message']) }, ['error']),
   Ok: obj({ ok: bool() }),
   Me: obj({ id: str(), email: str(), name: str(), role: str(), plan: str(), scopes: arr(str()), auth: str(undefined, { enum: ['session', 'api_key', 'oauth'] }), created_at: int() }),
@@ -320,6 +403,10 @@ const SCHEMAS: Record<string, Schema> = {
     trace_id: str(),
     duration_ms: int(),
     stats: obj({ likes: nullable(int()), retweets: nullable(int()), replies: nullable(int()), views: nullable(int()) }, [], 'X posts only'),
+    direct_video: obj({
+      url: str('Lowest-quality MP4 stream, signed by YouTube; expires after a few hours'),
+      label: str('Link text, such as `360p MP4` or `144p MP4 no audio`'),
+    }, ['url', 'label'], 'YouTube reads only, when VidCap resolved a stream. Also linked at the end of `markdown`, never saved to the library.'),
     video_download: obj({
       status: str(undefined, { enum: ['queued', 'downloading', 'ready', 'failed', 'skipped'] }),
       id: str('Job id to poll at check_url (absent when skipped)'),
@@ -371,16 +458,29 @@ const SCHEMAS: Record<string, Schema> = {
   }),
   SocialPlatformStatus: obj({
     platform: str(undefined, { enum: [...SOCIAL_PLATFORMS] }),
-    count: int('Results from this platform'),
+    count: int('Results from this platform after de-duplication and the time filter'),
     credits: int('Credits charged for this platform'),
     error: nullable(str('Why this platform failed; the other platforms still answer')),
+    raw_count: int('Posts the platform returned; raw_count = count + duplicate_count + out_of_range_count + missing_timestamp_count'),
+    duplicate_count: int('Posts already returned on this page or an earlier page of the search'),
+    out_of_range_count: int('Dated posts outside the time range'),
+    missing_timestamp_count: int('Posts without a date, excluded while a time range is active'),
+    filter_mode: str('How the time range was applied', { enum: ['none', 'native', 'post_filter'] }),
   }),
   SocialSearchResponse: obj({
     platform: str(undefined, { enum: [...SOCIAL_SEARCH_TARGETS] }),
     query: str(),
     count: int(),
+    raw_count: int('Posts the platforms returned before de-duplication and the time filter'),
+    duplicate_count: int(),
+    out_of_range_count: int(),
+    missing_timestamp_count: int(),
+    time_range: nullable(obj({ period: nullable(str(undefined, { enum: [...SOCIAL_SEARCH_PERIODS] })), since: nullable(str(undefined, { format: 'date-time' })), until: nullable(str(undefined, { format: 'date-time' })) }, undefined, 'The resolved UTC range [since, until); null without a filter')),
+    coverage: str('unfiltered (no range), native (filtered by every provider) or provider_limited (some platform filtered after fetching; posts in range may be missing)', { enum: ['unfiltered', 'native', 'provider_limited'] }),
     results: arr(ref('SocialPost')),
-    next_cursor: nullable(str()),
+    next_cursor: nullable(str('Single-use cursor for the next page, valid for 24 hours')),
+    next_page_credits: int('Most the next page can cost; 0 without a next page'),
+    session_limit_reached: { type: 'boolean', description: 'Paging stopped at the search page or remembered-post limit' },
     credits: int(),
     platforms: arr(ref('SocialPlatformStatus'), 'One entry per platform searched'),
     trace_id: str(),
@@ -451,6 +551,7 @@ export function buildOpenApi(origin: string) {
       { name: 'Usage', description: 'Credits, request logs and traces' },
       { name: 'Keys', description: 'API key management' },
       { name: 'Account', description: 'The authenticated account' },
+      { name: 'Feedback', description: 'Product feedback about anymd, published as public GitHub issues' },
       { name: 'Pages', description: 'Page builder (editor role and above)' },
       { name: 'Blog', description: 'Blog posts (author role and above)' },
       { name: 'Admin', description: 'System administration: users, roles, credentials, settings, opt-outs, credits, billing (read-only), audit and system health. Owner/admin scopes only.' },

@@ -20,12 +20,20 @@ export interface ToolDef {
   name: string;
   title: string;
   description: string;
-  scope: Scope;
+  /** The scope the caller must hold; `null` means any signed-in caller (only for tools that report on the caller alone). */
+  scope: Scope | null;
   input: z.ZodObject<z.ZodRawShape>;
   annotations?: ToolAnnotations;
+  /** Counts against the mutation rate limit even though the tool reaches the open world (e.g. publishing feedback). */
+  mutation?: boolean;
   // Arguments are validated against `input` before `run` is called; each tool narrows them itself.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   run: (args: any, t: ToolContext) => Promise<unknown>;
+}
+
+/** Whether the principal may see and call the tool. */
+export function holdsToolScope(p: Pick<Principal, 'scopes'>, tool: Pick<ToolDef, 'scope'>): boolean {
+  return tool.scope === null || p.scopes.includes(tool.scope);
 }
 
 /** A tool failure the model should see verbatim (not found, bad state). */
@@ -51,6 +59,7 @@ export const DESTRUCTIVE: ToolAnnotations = { readOnlyHint: false, destructiveHi
  * Tools that change anymd's own state count against the stricter MCP mutation bucket. Reading a URL
  * (open world) is metered by credits and the per-site budget instead.
  */
-export function isMutation(tool: Pick<ToolDef, 'annotations'>): boolean {
+export function isMutation(tool: Pick<ToolDef, 'annotations' | 'mutation'>): boolean {
+  if (tool.mutation) return true;
   return tool.annotations?.readOnlyHint !== true && tool.annotations?.openWorldHint !== true;
 }

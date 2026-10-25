@@ -99,6 +99,46 @@ function initNewKey(box: HTMLElement): void {
   box.querySelector<HTMLElement>('[data-copy]')?.focus();
 }
 
+/** Social search time filter: custom dates use the browser's time zone, and the date fields show only for "Custom range". */
+function initSocialFilters(period: HTMLSelectElement): void {
+  const form = period.form;
+  if (!form) return;
+  let zone = '';
+  try {
+    zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {
+    // Without Intl the server reads custom dates as UTC.
+  }
+  const tz = form.querySelector<HTMLInputElement>('[data-social-tz]');
+  const label = form.querySelector<HTMLElement>('[data-social-tz-label]');
+  // Dates already filled in were read in the zone the form carries; only an empty range takes the browser's zone.
+  const filled = [...form.querySelectorAll<HTMLInputElement>('input[type="date"]')].some((el) => el.value);
+  if (zone && tz && !filled) tz.value = zone;
+  if (tz && label) label.textContent = tz.value;
+  const custom = form.querySelectorAll<HTMLElement>('[data-social-custom]');
+  const sync = () => custom.forEach((el) => { el.hidden = period.value !== 'custom'; });
+  period.addEventListener('change', sync);
+  sync();
+}
+
+/** Every social search page costs credits: one submit per click, so a double-click never spends a cursor twice. */
+function initSocialForms(): void {
+  document.querySelectorAll<HTMLFormElement>('form[data-social-form]').forEach((form) => {
+    form.addEventListener('submit', (e) => {
+      if (form.dataset.submitting) return e.preventDefault();
+      form.dataset.submitting = '1';
+      form.querySelectorAll<HTMLButtonElement>('button[type="submit"]').forEach((b) => b.setAttribute('aria-busy', 'true'));
+    });
+  });
+  // Back/forward cache restores the page as it was left: let the forms submit again.
+  window.addEventListener('pageshow', () => {
+    document.querySelectorAll<HTMLFormElement>('form[data-social-form]').forEach((form) => {
+      delete form.dataset.submitting;
+      form.querySelectorAll('[aria-busy]').forEach((b) => b.removeAttribute('aria-busy'));
+    });
+  });
+}
+
 /** Runs on every page; each part only acts when its hooks exist. */
 export function initDashboard(): void {
   if ($('[data-confirm]')) initConfirm();
@@ -106,4 +146,7 @@ export function initDashboard(): void {
   if (doc) initDocument(doc);
   const key = $('[data-new-key]');
   if (key) initNewKey(key);
+  const period = $('[data-social-period]');
+  if (period instanceof HTMLSelectElement) initSocialFilters(period);
+  if ($('[data-social-form]')) initSocialForms();
 }

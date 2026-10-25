@@ -10,14 +10,17 @@ import { formatNumber, humanDate, safeJson, timeAgo } from '../lib/util';
 import type { DocumentRow, DocumentSummary } from '../library/store';
 import type { SearchMode, SearchResponse } from '../library/search';
 import { SOCIAL_SEARCH_CREDITS } from '../billing/plans';
+import { isSessionCursor } from '../convert/social-search-session';
 import { nextPageCredits, SOCIAL_SEARCH_ALL_MAX, type SocialSearchHistoryItem, type SocialSearchResponse, type SocialSearchTarget } from '../convert/social-search';
 import { Icon, Logo } from './components/icons';
 import { Converter } from './components/marketing';
 import type { StoredReadingPreferences } from '../convert/reading-preferences';
 import { ReadingPreferencesSection } from './reading-preferences-section';
 import type { ReadingFormValues } from './components/reading-options-fields';
+import type { SubscriptionView } from '../events/subscriptions';
 
-const NAV: { href: string; label: string; icon: string; min?: RoleName }[] = [
+/** `events` entries show only when MCP Events are configured on this deployment. */
+const NAV: { href: string; label: string; icon: string; min?: RoleName; events?: boolean }[] = [
   { href: '/dashboard', label: 'Overview', icon: 'home' },
   { href: '/dashboard/library', label: 'Library', icon: 'book' },
   { href: '/dashboard/search', label: 'Search', icon: 'search' },
@@ -25,6 +28,8 @@ const NAV: { href: string; label: string; icon: string; min?: RoleName }[] = [
   { href: '/dashboard/usage', label: 'Usage logs', icon: 'chart' },
   { href: '/dashboard/traces', label: 'Traces', icon: 'activity' },
   { href: '/dashboard/keys', label: 'API keys', icon: 'key' },
+  { href: '/dashboard/events', label: 'Event subscriptions', icon: 'send', events: true },
+  { href: '/dashboard/feedback', label: 'Feedback', icon: 'message' },
   { href: '/dashboard/billing', label: 'Billing', icon: 'card' },
   { href: '/dashboard/account', label: 'Account', icon: 'settings' },
 ];
@@ -37,11 +42,12 @@ const ADMIN_NAV: { href: string; label: string; icon: string; min: RoleName }[] 
   { href: '/admin/settings', label: 'Settings', icon: 'settings', min: 'admin' },
 ];
 
-export function DashShell({ user, current, title, actions, children }: { user: UserRow; current: string; title: string; actions?: Child; children: Child }) {
+export function DashShell({ user, current, title, actions, events = false, children }: { user: UserRow; current: string; title: string; actions?: Child; events?: boolean; children: Child }) {
   const role = user.role as RoleName;
+  const nav = NAV.filter((n) => events || !n.events);
   const admin = ADMIN_NAV.filter((n) => roleAtLeast(role, n.min));
   const link = (n: { href: string; label: string; icon: string }) => (
-    <a href={n.href} aria-current={current === n.href ? 'page' : undefined}>
+    <a href={n.href === '/dashboard/feedback' ? `${n.href}?from=${encodeURIComponent(current)}` : n.href} aria-current={current === n.href || (n.href === '/dashboard/feedback' && current.startsWith(`${n.href}/`)) ? 'page' : undefined}>
       <Icon name={n.icon} size={17} /> {n.label}
     </a>
   );
@@ -59,7 +65,7 @@ export function DashShell({ user, current, title, actions, children }: { user: U
           </form>
         </div>
         <nav class="dash-nav scroll-x flex gap-1 px-3 pb-3 lg:flex-col lg:overflow-visible lg:pb-0" aria-label="Dashboard">
-          {NAV.map(link)}
+          {nav.map(link)}
           {admin.length ? <p class="hidden px-3 pb-1 pt-5 font-mono text-[11px] uppercase tracking-widest text-muted lg:block">Admin</p> : null}
           {admin.map(link)}
         </nav>
@@ -491,6 +497,22 @@ const authorLabel = (a: SocialSearchResponse['results'][number]['author']) => a.
 const statLine = (s: SocialSearchResponse['results'][number]['stats']) =>
   ([['likes', s.likes], ['replies', s.replies], ['reposts', s.reposts], ['views', s.views]] as const).filter(([, n]) => n !== null).map(([label, n]) => `${formatNumber(n!)} ${label}`);
 
+/** The dashboard's time filter fields. `period` is '', a preset, or 'custom' with whole-day `from`/`to` in time zone `tz`. */
+export interface SocialFilterForm {
+  period: string;
+  from: string;
+  to: string;
+  tz: string;
+}
+const NO_FILTER: SocialFilterForm = { period: '', from: '', to: '', tz: 'UTC' };
+const PERIOD_LABELS: Record<string, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
+const utcMinute = (iso: string) => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
+/** "Last 7 days" or "Custom range", for chips. */
+const rangeLabel = (r: SocialSearchResponse['timeRange']) => (r ? (r.period ? PERIOD_LABELS[r.period] ?? r.period : 'Custom range') : null);
+/** The exact UTC interval searched, e.g. "2026-10-06 03:40 UTC → 2026-10-13 03:40 UTC". */
+const rangeSpan = (r: NonNullable<SocialSearchResponse['timeRange']>) => `${r.since ? utcMinute(r.since) : 'any time'} → ${r.until ? utcMinute(r.until) : 'now'}`;
+const plural = (n: number, one: string, many = `${one}s`) => `${formatNumber(n)} ${n === 1 ? one : many}`;
+
 /** Past searches; each link reopens the saved results without spending credits. */
 function SocialHistory({ history, current }: { history: SocialSearchHistoryItem[]; current?: string }) {
   if (!history.length) return null;
@@ -510,6 +532,7 @@ function SocialHistory({ history, current }: { history: SocialSearchHistoryItem[
               <span class="min-w-0 max-w-full truncate font-medium">{h.query}</span>
               <span class="chip !py-0 !text-[11px]">{socialLabel(h.platform)}</span>
               {h.paged ? <span class="chip !py-0 !text-[11px]">next page</span> : null}
+              {h.timeRange ? <span class="chip !py-0 !text-[11px]">{rangeLabel(h.timeRange)}</span> : null}
               {h.channel !== 'web' ? <span class="chip !py-0 !text-[11px]">{h.channel.toUpperCase()}</span> : null}
               <span class="flex-1" />
               <span class="text-muted">
@@ -523,10 +546,38 @@ function SocialHistory({ history, current }: { history: SocialSearchHistoryItem[
   );
 }
 
+/** What filtering did on this page: the range searched, what was removed, and whether coverage is partial. */
+function SocialFilterSummary({ result }: { result: SocialSearchResponse }) {
+  const removed = [
+    result.duplicateCount ? `${plural(result.duplicateCount, 'duplicate')} removed` : '',
+    result.outOfRangeCount ? `${formatNumber(result.outOfRangeCount)} outside the range` : '',
+    result.missingTimestampCount ? `${formatNumber(result.missingTimestampCount)} without a date` : '',
+  ].filter(Boolean);
+  const postFiltered = result.platforms.filter((p) => p.filterMode === 'post_filter').map((p) => socialLabel(p.platform));
+  if (!result.timeRange && !removed.length) return null;
+  return (
+    <div class="mt-1 space-y-1 text-xs text-muted">
+      {result.timeRange ? (
+        <p>
+          <span class="font-medium text-ink-2">{rangeLabel(result.timeRange)}</span>: {rangeSpan(result.timeRange)}
+        </p>
+      ) : null}
+      {removed.length ? <p>{removed.join(' · ')}</p> : null}
+      {result.coverage === 'provider_limited' && postFiltered.length ? (
+        <p>
+          Partial coverage: {postFiltered.join(', ')} {postFiltered.length === 1 ? 'is' : 'are'} filtered by date after fetching, so posts from this range may be missing and a page
+          can come back empty while more results remain.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** Posted form: every search can spend credits, so it is never a bookmarkable GET. Saved searches reopen from the history for free. */
-export function SocialSearchPage({ platform, q, result, error, history = [], saved }: {
+export function SocialSearchPage({ platform, q, filters = NO_FILTER, result, error, history = [], saved }: {
   platform: SocialSearchTarget;
   q: string;
+  filters?: SocialFilterForm;
   result: SocialSearchResponse | null;
   error?: string;
   history?: SocialSearchHistoryItem[];
@@ -534,9 +585,11 @@ export function SocialSearchPage({ platform, q, result, error, history = [], sav
 }) {
   const all = result?.platform === 'all';
   const more = result ? nextPageCredits(result) : 0;
+  // A saved page's paging cursor is single-use and short-lived, so a reopened search starts again instead of paging.
+  const pageable = Boolean(result?.nextCursor) && !(saved && isSessionCursor(result!.nextCursor!));
   return (
     <>
-      <form class="card p-3 sm:p-4" method="post" action="/dashboard/social">
+      <form class="card p-3 sm:p-4" method="post" action="/dashboard/social" data-social-form>
         <div class="flex flex-col gap-2 sm:flex-row">
           <div class="flex min-w-0 flex-1 items-center rounded-xl bg-paper px-3">
             <Icon name="search" size={18} class="shrink-0 text-muted" />
@@ -554,9 +607,41 @@ export function SocialSearchPage({ platform, q, result, error, history = [], sav
             </label>
           ))}
         </div>
+        <fieldset class="mt-3 flex flex-wrap items-end gap-2 text-sm">
+          <legend class="sr-only">Time range</legend>
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-muted">Time range</span>
+            <select name="period" class="input !h-10 !py-1" data-social-period>
+              <option value="" selected={!filters.period}>
+                Any time
+              </option>
+              {Object.entries(PERIOD_LABELS).map(([value, label]) => (
+                <option value={value} selected={filters.period === value}>
+                  {label}
+                </option>
+              ))}
+              <option value="custom" selected={filters.period === 'custom'}>
+                Custom range
+              </option>
+            </select>
+          </label>
+          <label class="flex flex-col gap-1" data-social-custom>
+            <span class="text-xs text-muted">From</span>
+            <input type="date" name="from" value={filters.from} class="input !h-10 !py-1" />
+          </label>
+          <label class="flex flex-col gap-1" data-social-custom>
+            <span class="text-xs text-muted">To (inclusive)</span>
+            <input type="date" name="to" value={filters.to} class="input !h-10 !py-1" />
+          </label>
+          <input type="hidden" name="tz" value={filters.tz} data-social-tz />
+        </fieldset>
+        <p class="mt-2 text-xs text-muted" data-social-custom>
+          Custom dates are whole days in your time zone (<span data-social-tz-label>{filters.tz}</span>). Presets count back from when you press Search and stay fixed while you page.
+        </p>
         <p class="mt-2 text-xs text-muted">
-          Per page with results: {SOCIAL_SEARCH_CREDITS.x} credits for X, Facebook, Instagram or Threads, {SOCIAL_SEARCH_CREDITS.linkedin} for LinkedIn. All adds up the platforms that
-          return results (at most {SOCIAL_SEARCH_ALL_MAX}). Empty pages are free.
+          A page costs {SOCIAL_SEARCH_CREDITS.x} credits for X, Facebook, Instagram or Threads and {SOCIAL_SEARCH_CREDITS.linkedin} for LinkedIn when the platform returns posts, even if
+          they are all removed as duplicates or outside the time range. All adds up the platforms that return posts (at most {SOCIAL_SEARCH_ALL_MAX}). Pages where the platform returns
+          nothing are free.
         </p>
       </form>
       {error ? <p class="mt-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">{error}</p> : null}
@@ -571,11 +656,12 @@ export function SocialSearchPage({ platform, q, result, error, history = [], sav
           <p class="text-sm text-muted">
             {result.results.length} results · {result.credits} credits · {result.durationMs} ms
           </p>
+          <SocialFilterSummary result={result} />
           {all ? (
             <p class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
               {result.platforms.map((p) => (
                 <span class={p.error ? 'text-danger' : ''} title={p.error ?? undefined}>
-                  {socialLabel(p.platform)}: {p.error ? 'unavailable' : String(p.count)}
+                  {socialLabel(p.platform)}: {p.error ? 'unavailable' : p.rawCount > p.count ? `${p.count} of ${p.rawCount}` : String(p.count)}
                 </span>
               ))}
             </p>
@@ -614,14 +700,33 @@ export function SocialSearchPage({ platform, q, result, error, history = [], sav
             </ol>
           ) : (
             <div class="mt-3">
-              <Empty icon="search" title="No posts found" body="Try other keywords or another platform. Empty searches are free." />
+              {result.rawCount ? (
+                <Empty
+                  icon="search"
+                  title="No new posts on this page"
+                  body={`The platform returned ${plural(result.rawCount, 'post')}, but each was a duplicate or outside the time range.${pageable ? ' Load more results to keep looking.' : ''}`}
+                />
+              ) : (
+                <Empty icon="search" title="No posts found" body="Try other keywords, another platform or a wider time range. Searches where the platform returns nothing are free." />
+              )}
             </div>
           )}
-          {result.nextCursor ? (
-            <form method="post" action="/dashboard/social" class="mt-4 flex justify-center">
+          {result.sessionLimitReached ? (
+            <p class="mt-4 text-center text-sm text-muted">This search has reached its paging limit. Narrow the query or time range for more posts.</p>
+          ) : null}
+          {result.nextCursor && !pageable ? (
+            <p class="mt-4 text-center text-sm text-muted">More results were available when this search ran. Search again to keep paging.</p>
+          ) : null}
+          {pageable ? (
+            <form method="post" action="/dashboard/social" class="mt-4 flex justify-center" data-social-form>
               <input type="hidden" name="q" value={result.query} />
               <input type="hidden" name="platform" value={result.platform} />
-              <input type="hidden" name="cursor" value={result.nextCursor} />
+              <input type="hidden" name="cursor" value={result.nextCursor ?? ''} />
+              {/* Shown again in the form on the next page; the cursor alone decides the range searched. */}
+              <input type="hidden" name="period" value={filters.period} />
+              <input type="hidden" name="from" value={filters.from} />
+              <input type="hidden" name="to" value={filters.to} />
+              <input type="hidden" name="tz" value={filters.tz} />
               <button class="btn btn-ghost" type="submit">
                 More results ({all ? 'up to ' : ''}
                 {more} credits)
@@ -874,7 +979,7 @@ export interface GrantView {
   createdAt: number;
 }
 
-export function KeysPage({ keys, newKey, grants, role, error }: { keys: ApiKeyRow[]; newKey?: string; grants: GrantView[]; role: RoleName; error?: string }) {
+export function KeysPage({ keys, newKey, grants, role, error, origin = 'https://anymd.cc' }: { keys: ApiKeyRow[]; newKey?: string; grants: GrantView[]; role: RoleName; error?: string; origin?: string }) {
   const allowed = new Set(ROLE_TEMPLATES[role].scopes);
   return (
     <>
@@ -989,8 +1094,90 @@ export function KeysPage({ keys, newKey, grants, role, error }: { keys: ApiKeyRo
               <p class="px-5 py-8 text-center text-sm text-muted">No connected apps.</p>
             )}
           </div>
+          {roleAtLeast(role, 'admin') ? (
+            <div class="card p-5" data-admin-agent-setup>
+              <p class="font-bold">Connect an admin agent</p>
+              <p class="mt-1 text-xs text-muted">Admin access is never granted by default. Pick one route; every change the agent makes is recorded in the audit log.</p>
+              <ol class="mt-3 list-decimal space-y-3 pl-5 text-sm">
+                <li>
+                  <strong>OAuth clients</strong> (ChatGPT, Claude): reconnect anymd in your MCP client and choose an admin access option on the consent screen. Then ask the agent to call <code class="font-mono text-xs">get_admin_access_status</code>.
+                </li>
+                <li>
+                  <strong>API key</strong>: create a key with the <code class="font-mono text-xs">admin-read-only</code> or <code class="font-mono text-xs">support</code> preset, then add it:
+                  <pre class="md-output mt-2 overflow-x-auto rounded-xl bg-night p-4 !whitespace-pre text-[12px]">{`claude mcp add --transport http anymd-admin \\\n  ${origin}/mcp \\\n  --header "Authorization: Bearer amd_…"`}</pre>
+                </li>
+              </ol>
+              <a href="/docs/mcp#set-up-an-admin-agent" class="mt-3 inline-block text-sm underline">
+                Set up an admin agent
+              </a>
+            </div>
+          ) : null}
         </div>
       </div>
+    </>
+  );
+}
+
+/** Callback host and path only: a query string may carry a token the subscriber put there. */
+function callbackLabel(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return 'invalid URL';
+  }
+}
+
+function expiresIn(ts: number): string {
+  const m = Math.max(0, Math.round((ts - Date.now()) / 60_000));
+  if (m < 60) return `in ${m}m`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `in ${h}h` : `on ${humanDate(ts)}`;
+}
+
+export function EventSubscriptionsPage({ subscriptions, notice, error }: { subscriptions: SubscriptionView[]; notice?: string; error?: string }) {
+  return (
+    <>
+      {notice ? <p class="mb-4 rounded-xl border border-ok-line bg-accent-soft px-4 py-3 text-sm text-accent-ink">{notice}</p> : null}
+      {error ? <p class="mb-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">{error}</p> : null}
+      {subscriptions.length ? (
+        <div class="card overflow-hidden">
+          <div class="border-b border-line px-5 py-4">
+            <p class="font-bold">Live subscriptions</p>
+            <p class="text-xs text-muted">Webhooks your MCP clients registered with events/subscribe. Deleting one stops deliveries and tells the endpoint it was terminated.</p>
+          </div>
+          <ul>
+            {subscriptions.map((s) => (
+              <li class="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3.5 last:border-0">
+                <div class="min-w-0 flex-1">
+                  <p class="flex flex-wrap items-center gap-2">
+                    <code class="font-mono text-sm font-semibold">{s.name}</code>
+                    <span class={`chip !py-0 !text-[11px] ${s.active ? 'chip-mint' : '!bg-danger-soft !text-danger !border-danger-line'}`}>{s.active ? 'active' : 'suspended'}</span>
+                    <span class="chip !py-0 !text-[11px]">{s.credential}</span>
+                  </p>
+                  <p class="mt-1 break-all font-mono text-xs">{callbackLabel(s.url)}</p>
+                  {s.arguments ? (
+                    <p class="mt-1 break-all text-xs text-muted">
+                      Filters: <code class="font-mono">{s.arguments}</code>
+                    </p>
+                  ) : null}
+                  <p class="mt-1 text-xs text-muted">
+                    expires {expiresIn(s.expiresAt)} · {s.lastDeliveryAt ? `last delivery ${timeAgo(s.lastDeliveryAt)}` : 'no deliveries yet'} · {formatNumber(s.pending)} pending · {formatNumber(s.dead)} dead
+                  </p>
+                  {s.lastError ? <p class="mt-1 break-all text-xs text-danger">Last error: {s.lastError}</p> : null}
+                </div>
+                <form method="post" action={`/dashboard/events/${encodeURIComponent(s.id)}/delete`} data-confirm="Delete this subscription? The endpoint stops receiving events.">
+                  <button class="btn btn-ghost btn-sm !text-danger" type="submit">
+                    Delete
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <Empty icon="send" title="No event subscriptions" body="MCP clients that support events can subscribe to changes in your library. Their webhooks appear here while they are live, and you can delete any of them." />
+      )}
     </>
   );
 }

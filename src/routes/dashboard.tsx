@@ -5,7 +5,7 @@ import { deleteCookie } from 'hono/cookie';
 import { markVia, requireUserPage, sameOriginWrites, type AppContext } from '../auth/middleware';
 import { billingEnabled, createCheckout, customerPortalUrl, providerName } from '../billing/provider';
 import type { PlanId } from '../billing/plans';
-import type { AppBindings } from '../env';
+import type { AppBindings, WaitUntil } from '../env';
 import { deleteAccount, documentsToMarkdown, exportDocuments } from '../lib/account';
 import { renderMarkdown } from '../lib/markdown';
 import { applyPreferencesPatch, getReadingPreferences, ReadingPreferencesError, resetReadingPreferences, saveReadingPreferences } from '../convert/reading-preferences';
@@ -15,12 +15,15 @@ import type { ReadingFormValues } from '../views/components/reading-options-fiel
 import { getDocument, librarySummary, listDocuments, listTags, normalizeTag } from '../library/store';
 import { searchForPrincipal, parseMode, usageSummary } from '../services';
 import { getSocialSearch, listSocialSearches, runSocialSearch, SOCIAL_SEARCH_TARGETS, type SocialSearchTarget } from '../convert/social-search';
+import { safeTimeZone, SOCIAL_SEARCH_PERIODS, zonedDayStart } from '../convert/social-search-results';
+import type { SocialFilterForm } from '../views/dashboard';
 import { ConvertError } from '../convert/types';
 import {
   AccountPage,
   BillingPage,
   DashShell,
   DocumentPage,
+  EventSubscriptionsPage,
   KeysPage,
   LibraryPage,
   OverviewPage,
@@ -34,6 +37,11 @@ import {
 import type { Child } from 'hono/jsx';
 import { activeKeyCount, createOwnKey, grantsOf, revokeOwnGrant, revokeOwnKey } from '../services/admin/credentials';
 import { AdminError } from '../services/admin/shared';
+import { FeedbackFormPage, FeedbackResultPage, MyFeedbackPage, type FeedbackFormValues } from '../views/feedback';
+import { assertPublishable, FeedbackDraftSchema, FeedbackError, FeedbackInputSchema, IDEMPOTENCY_KEY, listFeedback, previewFeedback, submitFeedback } from '../services/feedback';
+import { sha256 } from '../lib/util';
+import { eventsEnabled } from '../events/outbox';
+import { deleteSubscriptionForOwner, listSubscriptionsForOwner } from '../events/subscriptions';
 import { formData, originOf, renderMessage, renderPage } from './shared';
 
 export const dashboardRoutes = new Hono<AppBindings>();
@@ -45,7 +53,7 @@ function shell(c: AppContext, current: string, title: string, children: Child, o
   return renderPage(
     c,
     { title, path: current, noindex: true, markdownPath: null, variant: 'app' },
-    <DashShell user={user} current={current} title={title} actions={opts.actions}>
+    <DashShell user={user} current={current} title={title} actions={opts.actions} events={eventsEnabled(c.env)}>
       {children}
     </DashShell>,
     opts.status,
@@ -123,6 +131,27 @@ dashboardRoutes.get('/search', async (c) => {
   return shell(c, '/dashboard/search', 'Search', <SearchPage q={q} mode={mode} fanout={fanout} decide={decide} result={result} error={error} />);
 });
 
+/** Dashboard time filter fields → the search request. Custom dates are whole days in the browser's time zone (`tz`), `to` inclusive. */
+function socialFiltersFromForm(form: Record<string, string>): { request: { period?: string; since?: string; until?: string }; form: SocialFilterForm } {
+  const tz = safeTimeZone(form.tz);
+  const from = (form.from ?? '').slice(0, 10);
+  const to = (form.to ?? '').slice(0, 10);
+  const period = (SOCIAL_SEARCH_PERIODS as readonly string[]).includes(form.period) || form.period === 'custom' ? form.period : '';
+  const filters: SocialFilterForm = { period, from, to, tz };
+  if (period !== 'custom') return { request: period ? { period } : {}, form: filters };
+  return {
+    request: { since: from ? (zonedDayStart(from, tz) ?? from) : undefined, until: to ? (zonedDayStart(to, tz, 1) ?? to) : undefined },
+    form: filters,
+  };
+}
+
+/** A resolved range shown back in the form: presets as-is, custom ranges as UTC calendar days. */
+function socialFiltersFromRange(range: { period: string | null; since: string | null; until: string | null } | null): SocialFilterForm {
+  if (!range) return { period: '', from: '', to: '', tz: 'UTC' };
+  if (range.period) return { period: range.period, from: '', to: '', tz: 'UTC' };
+  return { period: 'custom', from: range.since?.slice(0, 10) ?? '', to: range.until ? new Date(Date.parse(range.until) - 1).toISOString().slice(0, 10) : '', tz: 'UTC' };
+}
+
 const socialHistory = (c: AppContext) => listSocialSearches(c.env, c.get('principal').userId!);
 
 dashboardRoutes.get('/social', async (c) =>
@@ -132,23 +161,29 @@ dashboardRoutes.get('/social', async (c) =>
 dashboardRoutes.get('/social/:id', async (c) => {
   const saved = await getSocialSearch(c.env, c.get('principal').userId!, c.req.param('id'));
   if (!saved) return renderMessage(c, 404, 'Search not found', 'Only your most recent searches are kept.', <a class="btn btn-dark" href="/dashboard/social">Social search</a>);
-  return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={saved.platform} q={saved.query} result={saved} saved={saved} history={await socialHistory(c)} />);
+  return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={saved.platform} q={saved.query} filters={socialFiltersFromRange(saved.timeRange)} result={saved} saved={saved} history={await socialHistory(c)} />);
 });
 
 dashboardRoutes.post('/social', async (c) => {
   const form = await formData(c);
   const platform: SocialSearchTarget = (SOCIAL_SEARCH_TARGETS as readonly string[]).includes(form.platform) ? (form.platform as SocialSearchTarget) : 'x';
   const q = (form.q ?? '').trim().slice(0, 200);
+  const filters = socialFiltersFromForm(form);
   try {
-    const result = await runSocialSearch(c.env, c.executionCtx, { platform, query: q, cursor: form.cursor, channel: 'web', principal: c.get('principal') });
-    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} result={result} history={await socialHistory(c)} />);
+    // A "More results" post carries only the cursor: the paging session keeps the original time range.
+    const range = form.cursor ? {} : filters.request;
+    const result = await runSocialSearch(c.env, c.executionCtx, { platform, query: q, cursor: form.cursor, ...range, channel: 'web', principal: c.get('principal') });
+    // A next page shows the filter it was posted with, unless that no longer describes the range the cursor kept.
+    const shown = form.cursor && (Boolean(filters.form.period) !== Boolean(result.timeRange)) ? socialFiltersFromRange(result.timeRange) : filters.form;
+    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} filters={shown} result={result} history={await socialHistory(c)} />);
   } catch (e) {
     const known = e instanceof ConvertError;
-    const error = known && e.status < 500 ? e.message
-      : known && e.code === 'provider_unavailable' ? 'The search provider for this platform is unavailable right now. Try again later or pick another platform.'
+    const error = known && e.code === 'cursor_conflict' ? `${e.message} Pages that loaded are listed under Recent searches.`
+      : known && e.status < 500 ? e.message
+      : known && (e.code === 'provider_unavailable' || e.code === 'provider_quota') ? 'The search provider for this platform is unavailable right now. Try again later or pick another platform.'
       : 'Search failed. Try again in a moment.';
     if (!known) console.error('dashboard social search', e);
-    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} result={null} error={error} history={await socialHistory(c)} />, { status: known ? e.status : 500 });
+    return shell(c, '/dashboard/social', 'Social search', <SocialSearchPage platform={platform} q={q} filters={filters.form} result={null} error={error} history={await socialHistory(c)} />, { status: known ? e.status : 500 });
   }
 });
 
@@ -178,7 +213,7 @@ async function keysPage(c: AppContext, extra: { newKey?: string; error?: string 
     grantsOf(c.env, user.id),
   ]);
   c.header('Cache-Control', 'no-store');
-  return shell(c, '/dashboard/keys', 'API keys', <KeysPage keys={results} grants={grants} role={c.get('principal').role} newKey={extra.newKey} error={extra.error} />, { status });
+  return shell(c, '/dashboard/keys', 'API keys', <KeysPage keys={results} grants={grants} role={c.get('principal').role} origin={originOf(c)} newKey={extra.newKey} error={extra.error} />, { status });
 }
 
 dashboardRoutes.get('/keys', (c) => keysPage(c));
@@ -214,6 +249,37 @@ dashboardRoutes.post('/grants/:id/revoke', async (c) => {
     if (!(err instanceof AdminError)) console.error('grant revoke', err instanceof Error ? err.message : err);
   });
   return c.redirect('/dashboard/keys');
+});
+
+// ─── MCP event subscriptions ───────────────────────────────────────────────
+
+const eventsUnavailable = (c: AppContext) => renderMessage(c, 404, 'Not available', 'Event subscriptions are not enabled on this deployment.', <a class="btn btn-dark" href="/dashboard">Dashboard</a>);
+
+dashboardRoutes.get('/events', async (c) => {
+  if (!eventsEnabled(c.env)) return eventsUnavailable(c);
+  const subscriptions = await listSubscriptionsForOwner(c.env, c.get('user')!.id);
+  const done = c.req.query('deleted');
+  const notice = done === '1' ? 'Subscription deleted. Its endpoint was told the subscription ended.' : undefined;
+  const error = done === '0' ? 'That subscription no longer exists. It may have expired or been deleted already.' : undefined;
+  c.header('Cache-Control', 'no-store');
+  return shell(c, '/dashboard/events', 'Event subscriptions', <EventSubscriptionsPage subscriptions={subscriptions} notice={notice} error={error} />);
+});
+
+// Scoped by owner in the helper: another user's id behaves exactly like an unknown one.
+/** The request's execution context, when there is one (in-process callers have none). */
+function waitUntilOf(c: AppContext): WaitUntil | undefined {
+  try {
+    return c.executionCtx;
+  } catch {
+    return undefined;
+  }
+}
+
+dashboardRoutes.post('/events/:id/delete', async (c) => {
+  if (!eventsEnabled(c.env)) return eventsUnavailable(c);
+  const id = c.req.param('id');
+  const deleted = id.length <= 128 && (await deleteSubscriptionForOwner(c.env, c.get('user')!.id, id, waitUntilOf(c)));
+  return c.redirect(`/dashboard/events?deleted=${deleted ? 1 : 0}`, 303);
 });
 
 // ─── Billing ────────────────────────────────────────────────────────────────
@@ -329,4 +395,67 @@ dashboardRoutes.post('/account/delete', async (c) => {
   await deleteAccount(c.env, user.id);
   deleteCookie(c, SESSION_COOKIE, { path: '/' });
   return c.redirect('/?account=deleted', 303);
+});
+
+// ─── Feedback ───────────────────────────────────────────────────────────────
+
+const FEEDBACK_FIELDS = ['type', 'title', 'description', 'steps_to_reproduce', 'expected_behavior', 'actual_behavior', 'reference_url', 'context_page'] as const;
+
+function feedbackValues(f: Record<string, string>): FeedbackFormValues {
+  const key = IDEMPOTENCY_KEY.safeParse(f.idempotency_key).success ? f.idempotency_key : crypto.randomUUID();
+  const v = (name: string) => (f[name] ?? '').replace(/\r\n?/g, '\n');
+  return { type: v('type') || 'bug', title: v('title'), description: v('description'), steps_to_reproduce: v('steps_to_reproduce'), expected_behavior: v('expected_behavior'), actual_behavior: v('actual_behavior'), reference_url: v('reference_url'), context_page: v('context_page'), idempotency_key: key };
+}
+
+/** Empty optional inputs mean "absent", as they do for the other channels. */
+function feedbackDraft(values: FeedbackFormValues) {
+  const raw: Record<string, string | undefined> = {};
+  for (const k of FEEDBACK_FIELDS) raw[k] = values[k] === '' ? undefined : values[k];
+  return FeedbackDraftSchema.safeParse(raw);
+}
+
+function feedbackPage(c: AppContext, values: FeedbackFormValues, opts: { preview?: Awaited<ReturnType<typeof previewFeedback>>; reviewed?: string; error?: string; status?: number } = {}) {
+  c.header('Cache-Control', 'no-store');
+  return shell(c, '/dashboard/feedback', 'Feedback', <FeedbackFormPage values={values} preview={opts.preview} reviewed={opts.reviewed} error={opts.error} />, { status: opts.status });
+}
+
+dashboardRoutes.get('/feedback', (c) => {
+  const from = c.req.query('from') ?? '';
+  const context = from.startsWith('/dashboard') && !from.startsWith('/dashboard/feedback') ? from.slice(0, 200) : '';
+  return feedbackPage(c, feedbackValues({ context_page: context }));
+});
+
+dashboardRoutes.post('/feedback', async (c) => {
+  markVia(c, 'web');
+  const f = await formData(c);
+  const values = feedbackValues(f);
+  const draft = feedbackDraft(values);
+  if (!draft.success) {
+    const issues = draft.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+    return feedbackPage(c, values, { error: `Check the form: ${issues}`, status: 422 });
+  }
+  try {
+    const issue = await previewFeedback(c.get('principal'), draft.data, 'dashboard', values.idempotency_key);
+    // The same checks run on publish; here they stop the preview so the user fixes the text first.
+    assertPublishable(issue);
+    const reviewed = await sha256(`${issue.feedback_id}\n${issue.title}\n${issue.body}`);
+    if (f.action !== 'submit') return feedbackPage(c, values, { preview: issue, reviewed });
+    if (f.confirm_public !== 'yes') return feedbackPage(c, values, { preview: issue, reviewed, error: 'Tick the box to confirm the report will be public.', status: 422 });
+    // Publish only what was shown: editing after the preview needs a new preview.
+    if (f.reviewed !== reviewed) return feedbackPage(c, values, { preview: issue, reviewed, error: 'The text changed after the preview. Review the updated issue below, then confirm.', status: 409 });
+    const input = FeedbackInputSchema.parse({ ...draft.data, confirm_public: true, idempotency_key: values.idempotency_key });
+    const out = await submitFeedback(c.env, c.get('principal'), input, 'dashboard');
+    c.header('Cache-Control', 'no-store');
+    return shell(c, '/dashboard/feedback', 'Feedback', <FeedbackResultPage record={out.record} />, { status: out.http });
+  } catch (err) {
+    if (!(err instanceof FeedbackError)) throw err;
+    return feedbackPage(c, values, { error: err.message, status: err.status });
+  }
+});
+
+dashboardRoutes.get('/feedback/mine', async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const before = Number(c.req.query('before'));
+  const page = await listFeedback(c.env, c.get('user')!.id, { before: Number.isFinite(before) && before > 0 ? before : undefined });
+  return shell(c, '/dashboard/feedback/mine', 'My feedback', <MyFeedbackPage items={page.items} nextCursor={page.next_cursor} />);
 });

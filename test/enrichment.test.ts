@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConversionBudget, EnrichmentOptionsSchema } from '../src/convert/enrichment-types';
 import { articleImages, enrichImages, renderEnrichment } from '../src/convert/image-enrichment';
 import { creditCost, pickAdapter } from '../src/convert/index';
+import { facebookAdapter } from '../src/convert/facebook';
 import { instagramAdapter } from '../src/convert/instagram';
+import { linkedinAdapter } from '../src/convert/linkedin';
 import { rapidJson } from '../src/convert/provider-fetch';
 import { collectComments, plainMarkdown, quote, socialResult, type SocialComment } from '../src/convert/social-common';
 import { shortcodeId, threadsAdapter } from '../src/convert/threads';
@@ -130,6 +132,16 @@ describe('provider redirect handling', () => {
     });
   });
 
+  it('maps a provider 429 to provider_quota, apart from outages', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"message":"You have exceeded the MONTHLY quota"}', { status: 429 })));
+    const ctx = { env: { RAPIDAPI_KEY: 'test-placeholder' }, tracer, budget: new ConversionBudget(100) } as unknown as ConvertContext;
+    await expect(rapidJson('provider.example', '/post', { id: '1' }, ctx))
+      .rejects.toMatchObject({ code: 'provider_quota', status: 503 });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('down', { status: 500 })));
+    await expect(rapidJson('provider.example', '/post', { id: '1' }, ctx))
+      .rejects.toMatchObject({ code: 'upstream_error', status: 502 });
+  });
+
   it('uses manual redirects for OpenRouter and does not charge a redirected model response', async () => {
     const fetch = vi.fn(async (input: unknown, _init?: RequestInit) => String(input).startsWith('https://openrouter.ai/')
       ? new Response(null, { status: 302, headers: { location: 'https://attacker.example/' } })
@@ -219,6 +231,27 @@ describe('Instagram media selection', () => {
 
     expect(articleImages(result.content, result.source).map((image) => image.url)).toEqual(['https://cdn.example/photo.jpg']);
     expect(calls).toEqual(['/v1/post/resolve', '/v1/post']);
+  });
+
+  it('does not retry popular comments on a host that is out of quota', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, _init?: RequestInit) => {
+      const url = new URL(String(input));
+      calls.push(`${url.pathname}?${url.searchParams.get('sort') ?? ''}`);
+      if (url.pathname === '/v1/post/resolve') return json({ shortcode: 'PHOTO1' });
+      if (url.pathname === '/v1/post') return json({
+        shortcode: 'PHOTO1', type: 'photo', is_video: false,
+        display_url: 'https://cdn.example/photo.jpg', caption: 'fixture photo',
+        owner: { username: 'fixture_author' }, media_id: 'media-1',
+      });
+      if (url.pathname === '/v1/post/comments') return new Response('{}', { status: 429 });
+      throw new Error(`unexpected endpoint ${url.pathname}`);
+    }));
+
+    const result = await instagramAdapter.convert(new URL('https://www.instagram.com/p/PHOTO1/'), { ...context(), includeComments: true } as ConvertContext);
+
+    expect(result.enrichment?.comments).toMatchObject({ complete: false, reason: 'provider_quota' });
+    expect(calls.filter((c) => c.startsWith('/v1/post/comments'))).toEqual(['/v1/post/comments?recent']);
   });
 
   it('uses the media endpoint for a carousel and keeps every returned image', async () => {
@@ -556,5 +589,110 @@ describe('ConversionBudget', () => {
     expect(budget.canFetch()).toBe(true);
     budget.calls++;
     expect(budget.canFetch()).toBe(false);
+  });
+});
+
+describe('social video links', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
+  const context = (removeImages = false) => ({
+    authenticated: true,
+    includeComments: false,
+    removeImages,
+    budget: new ConversionBudget(100),
+    env: { RAPIDAPI_KEY: 'test-placeholder' },
+    tracer: { span: async (_name: string, fn: () => Promise<unknown>) => fn(), note: () => undefined },
+  } as unknown as ConvertContext);
+  const stub = (routes: Record<string, unknown>) => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = new URL(String(input));
+      calls.push(url.pathname);
+      if (url.pathname in routes) return json(routes[url.pathname]);
+      throw new Error(`unexpected endpoint ${url.pathname}`);
+    }));
+    return calls;
+  };
+  const videos = (markdown: string) => [...markdown.matchAll(/\[Video\]\(<([^>]+)>\)/g)].map((m) => m[1]);
+
+  it('links an Instagram reel from video_url without the media endpoint when images are off', async () => {
+    const calls = stub({
+      '/v1/post/resolve': { shortcode: 'REEL1' },
+      '/v1/post': {
+        shortcode: 'REEL1', type: 'reel', is_video: true, caption: 'fixture reel', owner: { username: 'fixture_author' }, media_id: 'media-3',
+        video_url: 'https://cdn.example/reel.mp4', video_hd: { url: 'https://cdn.example/silent.mp4', has_audio: false },
+      },
+    });
+    const result = await instagramAdapter.convert(new URL('https://www.instagram.com/reel/REEL1/'), context(true));
+    expect(videos(result.content)).toEqual(['https://cdn.example/reel.mp4']);
+    expect(articleImages(result.content, result.source)).toEqual([]);
+    expect(calls).toEqual(['/v1/post/resolve', '/v1/post']);
+  });
+
+  it('links every video of an Instagram carousel, even with images off', async () => {
+    stub({
+      '/v1/post/resolve': { shortcode: 'MIXED1' },
+      '/v1/post': { shortcode: 'MIXED1', type: 'carousel', is_video: false, caption: 'fixture carousel', owner: { username: 'fixture_author' }, media_id: 'media-4' },
+      '/v1/post/media': { items: [
+        { is_video: false, image: { url: 'https://cdn.example/photo.jpg' } },
+        { is_video: true, image: { url: 'https://cdn.example/cover.jpg' }, video: { url: 'https://cdn.example/clip.mp4' } },
+      ] },
+    });
+    const result = await instagramAdapter.convert(new URL('https://www.instagram.com/p/MIXED1/'), context(true));
+    expect(videos(result.content)).toEqual(['https://cdn.example/clip.mp4']);
+    expect(articleImages(result.content, result.source)).toEqual([]);
+  });
+
+  it('still reads an Instagram carousel with images off when the media endpoint fails', async () => {
+    stub({
+      '/v1/post/resolve': { shortcode: 'MIXED2' },
+      '/v1/post': { shortcode: 'MIXED2', type: 'carousel', is_video: false, caption: 'fixture carousel', owner: { username: 'fixture_author' }, media_id: 'media-5' },
+      '/v1/post/media': { error: 'unavailable' },
+    });
+    const result = await instagramAdapter.convert(new URL('https://www.instagram.com/p/MIXED2/'), context(true));
+    expect(result.content).toBe('fixture carousel');
+    await expect(instagramAdapter.convert(new URL('https://www.instagram.com/p/MIXED2/'), context(false))).rejects.toMatchObject({ code: 'upstream_schema' });
+    // Running out of the request budget is not a provider gap, so it still stops the read.
+    const limited = context(true);
+    limited.budget!.calls = 38;
+    await expect(instagramAdapter.convert(new URL('https://www.instagram.com/p/MIXED2/'), limited)).rejects.toMatchObject({ code: 'processing_limit' });
+  });
+
+  it('links the first Threads video version of the post and of carousel items', async () => {
+    const post = {
+      pk: shortcodeId('VIDEO1'), user: { username: 'fixture_author' }, caption: { text: 'fixture video' },
+      video_versions: [{ type: 101, url: 'https://cdn.example/threads.mp4' }, { type: 102, url: 'https://cdn.example/threads-low.mp4' }],
+    };
+    stub({ '/api/post/detail': { data: { data: { edges: [{ node: { thread_items: [{ post }] } }] } } } });
+    const result = await threadsAdapter.convert(new URL('https://www.threads.com/@fixture_author/post/VIDEO1'), context());
+    expect(videos(result.content)).toEqual(['https://cdn.example/threads.mp4']);
+
+    const carousel = {
+      pk: shortcodeId('VIDEO2'), user: { username: 'fixture_author' }, caption: { text: 'fixture carousel' },
+      carousel_media: [
+        { image_versions2: { candidates: [{ url: 'https://cdn.example/photo.jpg' }] } },
+        { video_versions: [{ type: 101, url: 'https://cdn.example/clip.mp4' }] },
+      ],
+    };
+    stub({ '/api/post/detail': { data: { data: { edges: [{ node: { thread_items: [{ post: carousel }] } }] } } } });
+    const mixed = await threadsAdapter.convert(new URL('https://www.threads.com/@fixture_author/post/VIDEO2'), context());
+    expect(videos(mixed.content)).toEqual(['https://cdn.example/clip.mp4']);
+  });
+
+  it('links a LinkedIn video stream, even on a post without text or images', async () => {
+    stub({ '/get-post-details': { data: { poster: { first: 'Fixture' }, video: { duration: 1000, stream_url: 'https://dms.example/mp4-720p/video?e=1' } } } });
+    const result = await linkedinAdapter.convert(new URL('https://www.linkedin.com/posts/fixture-activity-7520004216116076544-abcd'), context());
+    expect(videos(result.content)).toEqual(['https://dms.example/mp4-720p/video?e=1']);
+  });
+
+  it('links the Facebook video, falling back to the HD then SD file', async () => {
+    const post = (extra: Record<string, unknown>) => ({ results: { post_id: '1', message: 'fixture post', author: { name: 'Fixture' }, ...extra } });
+    stub({ '/post': post({ video: 'https://video.example/play.mp4', video_files: { video_hd_file: 'https://video.example/hd.mp4' } }) });
+    expect(videos((await facebookAdapter.convert(new URL('https://www.facebook.com/fixture/videos/1'), context())).content)).toEqual(['https://video.example/play.mp4']);
+    stub({ '/post': post({ video_files: { video_sd_file: 'https://video.example/sd.mp4', video_hd_file: 'https://video.example/hd.mp4' } }) });
+    expect(videos((await facebookAdapter.convert(new URL('https://www.facebook.com/fixture/videos/1'), context())).content)).toEqual(['https://video.example/hd.mp4']);
+    stub({ '/post': post({}) });
+    expect(videos((await facebookAdapter.convert(new URL('https://www.facebook.com/fixture/posts/1'), context())).content)).toEqual([]);
   });
 });

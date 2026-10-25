@@ -25,6 +25,8 @@ anymd.cc (the "Service") is operated by [Digitop.ai](https://digitop.ai) ("we", 
 
 **Usage events and traces.** For each request we record the URL you converted, the result status, credits used, timing, and per-step span timings (a "trace"). These power the usage logs and traces in your dashboard and help us fix problems.
 
+**Feedback you send.** When you send product feedback, the text you confirm is published as a public GitHub issue on github.com/digitopvn/anymd, where anyone can read it and where GitHub's own terms apply. We also keep a copy with your account. Deleting your account removes our copy, but not an issue that was already published; write to hello@digitop.ai and we will remove it.
+
 **Billing data.** Payments are handled by Polar.sh. We receive your subscription status, plan, and order identifiers. We never see or store full card numbers.
 
 **Anonymous conversions.** If you convert without signing in, the output is cached for up to 1 hour so repeated requests are fast. It is not attached to an account or stored in a library.

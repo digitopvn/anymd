@@ -235,6 +235,78 @@ describe('conversion and status channels', () => {
     await expect(read({ downloadVideo: true }, null)).rejects.toMatchObject({ code: 'authentication_required' });
   });
 
+  // VidCap answers with one stream; `expire` is the signed URL's lifetime in Unix seconds.
+  const expiresIn = (seconds: number) => Math.floor(Date.now() / 1000) + seconds;
+  const vidcapWith = (file: Record<string, unknown>) => () => Response.json({ status: 1, data: { videoFiles: [{ itag: 18, mimeType: 'video/mp4; codecs="avc1, mp4a"', ...file }] } });
+
+  it('links the lowest MP4 from VidCap on every read, and still reads when none resolves', async () => {
+    const ctx = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}) };
+    const anonymous = { kind: 'anonymous', userId: null, role: 'user', scopes: [] } as unknown as Principal;
+    const read = (fresh = true) => runConversion(t.env, ctx, { url: `https://youtu.be/${VIDEO}`, channel: 'api', principal: anonymous, save: false, fresh });
+    const signed = `${STREAM}&expire=${expiresIn(6 * 3600)}`;
+
+    // ytstream links are not proven to play outside its own IP, so it is never asked for one.
+    let fetch = stubFetch();
+    expect((await read()).markdown).not.toMatch('[Video');
+    expect(fetch.mock.calls.some(([u]) => String(u).includes('ytstream'))).toBe(false);
+
+    t.env.VIDCAP_API_KEY = 'vidcap-key';
+    fetch = stubFetch(undefined, vidcapWith({ url: signed, qualityLabel: '240p' }));
+    const linked = await read();
+    expect(linked.markdown).toMatch(`[Video (240p MP4)](<${signed}>)`);
+    expect(linked.markdown).toMatch('expires after a few hours');
+    expect(linked.videoDownload).toBeNull();
+    expect(queue.sent).toHaveLength(0);
+    expect(fetch.mock.calls.some(([u]) => String(u).includes('ytstream'))).toBe(false);
+    // A cache hit keeps the same link instead of resolving a new one.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fetch.mockClear();
+    const hit = await read(false);
+    expect(hit.markdown).toMatch(`[Video (240p MP4)](<${signed}>)`);
+    expect(fetch.mock.calls.some(([u]) => String(u).includes('vidcap'))).toBe(false);
+
+    // Only a silent stream exists: it is linked and labelled as such.
+    stubFetch(undefined, vidcapWith({ url: signed, mimeType: 'video/mp4; codecs="avc1"', qualityLabel: '144p' }));
+    expect((await read()).markdown).toMatch(`[Video (144p MP4 no audio)](<${signed}>)`);
+
+    stubFetch(undefined, vidcapWith({ url: `https://rr1---sn-abc.youtube.com/videoplayback?itag=18&expire=${expiresIn(6 * 3600)}` }));
+    expect((await read()).markdown).not.toMatch('[Video');
+
+    // A link without a lifetime, or one that would expire before the one-hour cache does, is left out.
+    stubFetch(undefined, vidcapWith({ url: STREAM }));
+    expect((await read()).markdown).not.toMatch('[Video');
+    stubFetch(undefined, vidcapWith({ url: `${STREAM}&expire=${expiresIn(30 * 60)}` }));
+    expect((await read()).markdown).not.toMatch('[Video');
+
+    // Raw whitespace and an encoded `>` cannot close the link or start a second one.
+    const hostile = `${signed}&x=1&gt;\n\n[Click](https://evil.test)`;
+    stubFetch(undefined, vidcapWith({ url: hostile, qualityLabel: '360p](x)' }));
+    const injected = await read();
+    expect(injected.markdown).toMatch(`[Video (MP4)](<${signed}&x=1&gt;[Click](https://evil.test)>)`);
+    expect(injected.markdown).not.toMatch('\n[Click]');
+
+    stubFetch(undefined, () => new Response('busy', { status: 503 }));
+    const failed = await read();
+    expect(failed.markdown).toMatch('**Channel:**');
+    expect(failed.markdown).not.toMatch('[Video');
+  });
+
+  it('keeps the signed link out of the content and the saved library copy', async () => {
+    t.env.VIDCAP_API_KEY = 'vidcap-key';
+    const signed = `${STREAM}&expire=${expiresIn(6 * 3600)}`;
+    stubFetch(undefined, vidcapWith({ url: signed, qualityLabel: '240p' }));
+    const user = await seedUser(t, 'user');
+    const ctx = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}) };
+    const read = await runConversion(t.env, ctx, { url: `https://youtu.be/${VIDEO}`, channel: 'api', principal: principalOf(user.id), save: true, fresh: true });
+    expect(read.documentId).not.toBeNull();
+    expect(read.markdown).toMatch(signed);
+    expect(read.result.content).not.toMatch('googlevideo');
+    expect(read.result.directVideo).toEqual({ url: signed, label: '240p MP4' });
+    const saved = t.db.prepare('SELECT markdown FROM documents WHERE id = ?').get(read.documentId) as { markdown: string };
+    expect(saved.markdown).toMatch('**Channel:**');
+    expect(saved.markdown).not.toMatch('googlevideo');
+  });
+
   it('resolves per-request video options against saved settings', () => {
     const saved = { ...DEFAULT_READING_PREFERENCES, downloadVideo: true, analyzeVideo: true };
     expect(resolveReadingOptions({}, saved)).toMatchObject({ downloadVideo: true, analyzeVideo: true });
@@ -355,5 +427,56 @@ describe('video analysis', () => {
     const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`, true)) as { id: string };
     await processVideoJob(t.env, state.id, 1);
     expect(job(state.id)).toMatchObject({ status: 'failed', analysis_status: 'failed', analysis_error: 'download_failed' });
+  });
+});
+
+describe('MCP events', () => {
+  const events = () => t.db.prepare('SELECT name, data_json FROM event_outbox ORDER BY rowid').all() as { name: string; data_json: string }[];
+
+  function subscribe(userId: string, name: string) {
+    t.db
+      .prepare('INSERT INTO event_subscriptions (id,user_id,principal,principal_hash,name,arguments_json,url,secret_enc,scope,active,verified_at,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,1,0,?,0,0)')
+      .run(`sub_${name}`, userId, 'api_key:key_1', 'h', name, '{}', 'https://hooks.example.com/x', 'v1.x.y', 'convert', Date.now() + 3600_000);
+  }
+
+  beforeEach(() => {
+    t.env.EVENTS_SECRET_KEY = 'test-events-key';
+    t.env.VIDCAP_API_KEY = 'vidcap-key';
+    t.env.OPENROUTER_API_KEY = 'or-key';
+  });
+
+  it('writes one event when a download and its analysis become ready, even if re-run', async () => {
+    stubFetch();
+    const user = await seedUser(t, 'user');
+    for (const name of ['anymd.video.ready', 'anymd.video.failed', 'anymd.video.analysis.ready', 'anymd.video.analysis.failed']) subscribe(user.id, name);
+    const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`, true)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    await processVideoJob(t.env, state.id, 2);
+    await processVideoAnalysis(t.env, state.id, 1);
+    await processVideoAnalysis(t.env, state.id, 2);
+    expect(events().map((e) => e.name)).toEqual(['anymd.video.ready', 'anymd.video.analysis.ready']);
+    expect(JSON.parse(events()[0].data_json)).toMatchObject({ job_id: state.id, resource_type: 'video_job', status: 'ready' });
+  });
+
+  it('writes the failure of a download and of its requested analysis once each', async () => {
+    stubFetch(() => Response.json({ status: 'fail' }), () => Response.json({ status: 0 }));
+    const user = await seedUser(t, 'user');
+    for (const name of ['anymd.video.failed', 'anymd.video.analysis.failed']) subscribe(user.id, name);
+    const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'api', `https://youtu.be/${VIDEO}`, true)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    await processVideoJob(t.env, state.id, 2);
+    expect(events().map((e) => e.name).sort()).toEqual(['anymd.video.analysis.failed', 'anymd.video.failed']);
+    expect(JSON.parse(events().find((e) => e.name === 'anymd.video.analysis.failed')!.data_json)).toMatchObject({ status: 'failed', error_code: 'download_failed' });
+  });
+
+  it('writes nothing for another owner or without a subscription', async () => {
+    stubFetch();
+    const owner = await seedUser(t, 'user');
+    const stranger = await seedUser(t, 'user');
+    subscribe(stranger.id, 'anymd.video.ready');
+    const state = (await startVideoDownload(t.env, principalOf(owner.id), 'free', 'api', `https://youtu.be/${VIDEO}`)) as { id: string };
+    await processVideoJob(t.env, state.id, 1);
+    expect(job(state.id).status).toBe('ready');
+    expect(events()).toEqual([]);
   });
 });

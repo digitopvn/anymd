@@ -42,10 +42,12 @@ import { newId } from '../lib/util';
 import { convertPayload, searchForPrincipal, usageSummary } from '../services';
 import { buildOpenApi } from '../openapi';
 import { createOwnKey, listOwnKeys, revokeOwnKey } from '../services/admin/credentials';
+import { FeedbackDraftSchema, FeedbackError, FeedbackInputSchema, getFeedback, listFeedback, previewFeedback, submitFeedback, type FeedbackChannel } from '../services/feedback';
 import { getOwnTrace, listOwnTraces } from '../services/admin/observability';
 import { AdminError } from '../services/admin/shared';
 import { adminControlPlane } from './api-admin-control-plane';
 import { clientIp, originOf } from './shared';
+import type { EventOrigin } from '../events/outbox';
 
 export const api = new Hono<AppBindings>();
 
@@ -72,6 +74,11 @@ export function handleApiError(c: AppContext, err: unknown) {
     if (err.status === 429) c.header('Retry-After', '60');
     return apiError(c, err.status, err.code, err.message, err.details !== undefined ? { details: err.details } : {});
   }
+  if (err instanceof FeedbackError) {
+    if (err.retryAfter) c.header('Retry-After', String(err.retryAfter));
+    c.header('Cache-Control', 'no-store');
+    return apiError(c, err.status, err.code, err.message, err.details !== undefined ? { details: err.details } : {});
+  }
   if (err instanceof PageError) return apiError(c, err.status, err.code, err.message, err.details ? { details: err.details } : {});
   if (err instanceof ConvertError) return apiError(c, err.status, err.code, err.message);
   if (err instanceof z.ZodError) return apiError(c, 422, 'invalid_request', 'Request body failed validation', { details: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })) });
@@ -90,6 +97,17 @@ async function body<T extends z.ZodTypeAny>(c: AppContext, schema: T): Promise<z
 
 function me(c: AppContext): Principal & { userId: string } {
   return c.get('principal') as Principal & { userId: string };
+}
+
+/** Who made a library change, for MCP Events loop avoidance and prompt delivery. */
+function eventOrigin(c: AppContext): EventOrigin {
+  let ctx: EventOrigin['ctx'];
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    // No execution context (in-process callers); delivery then waits for the scheduler.
+  }
+  return { principal: c.get('principal'), ctx };
 }
 
 function channelFor(c: AppContext): 'api' | 'cli' | 'web' {
@@ -166,6 +184,61 @@ api.delete('/account/reading-preferences', requireAccount, requirePreferencesWri
   return c.json(preferencesBody(await resetReadingPreferences(c.env, c.get('principal'))));
 });
 
+// ─── Feedback ───────────────────────────────────────────────────────────────
+
+/** Product feedback becomes a public GitHub issue, so it needs its own explicit scope, never `convert`. */
+const feedbackWriter = requireScope('feedback:write');
+
+function feedbackChannel(c: AppContext): FeedbackChannel {
+  const channel = channelFor(c);
+  return channel === 'web' ? 'dashboard' : channel;
+}
+
+/** The Idempotency-Key header and the body field name the same key; both present must agree. */
+async function feedbackBody(c: AppContext): Promise<Record<string, unknown>> {
+  const raw = await c.req.json().catch(() => {
+    throw Object.assign(new Error('Body must be JSON'), { status: 400, code: 'invalid_json' });
+  });
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Object.assign(new Error('Body must be a JSON object'), { status: 400, code: 'invalid_json' });
+  const input = raw as Record<string, unknown>;
+  const header = c.req.header('Idempotency-Key')?.trim();
+  if (header) {
+    if (input.idempotency_key !== undefined && input.idempotency_key !== header) throw Object.assign(new Error('Idempotency-Key header and idempotency_key field differ'), { status: 400, code: 'idempotency_key_mismatch' });
+    input.idempotency_key = header;
+  }
+  return input;
+}
+
+api.post('/feedback/preview', feedbackWriter, async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const input = await feedbackBody(c);
+  const draft = FeedbackDraftSchema.parse(input);
+  const key = typeof input.idempotency_key === 'string' ? input.idempotency_key : undefined;
+  const { feedback_id, ...issue } = await previewFeedback(me(c), draft, feedbackChannel(c), key);
+  return c.json({ feedback_id, ...issue });
+});
+
+api.post('/feedback', feedbackWriter, async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const input = FeedbackInputSchema.parse(await feedbackBody(c));
+  const out = await submitFeedback(c.env, c.get('principal'), input, feedbackChannel(c));
+  if (out.replayed) c.header('Idempotent-Replayed', 'true');
+  if (out.http === 202 && out.retryAfter) c.header('Retry-After', String(out.retryAfter));
+  return c.json(out.record, out.http);
+});
+
+api.get('/feedback', feedbackWriter, async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const limit = Number(c.req.query('limit') ?? 20);
+  const before = Number(c.req.query('before'));
+  return c.json(await listFeedback(c.env, me(c).userId, { limit: Number.isFinite(limit) ? limit : 20, before: Number.isFinite(before) && before > 0 ? before : undefined }));
+});
+
+api.get('/feedback/:id', feedbackWriter, async (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(await getFeedback(c.env, me(c).userId, c.req.param('id')));
+});
+
 // ─── Convert ────────────────────────────────────────────────────────────────
 
 const ConvertBody = z.object({
@@ -235,7 +308,7 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
     let documentId: string | null = null;
     let notSavedReason: NotSavedReason | null = form.save === '0' ? 'not_requested' : !p.scopes.includes('library:write') ? 'missing_scope' : null;
     if (!notSavedReason) {
-      const saved = await saveDocument(c.env, p.userId, result, markdown, getPlan(user?.plan ?? 'free').libraryLimit);
+      const saved = await saveDocument(c.env, p.userId, result, markdown, getPlan(user?.plan ?? 'free').libraryLimit, eventOrigin(c));
       documentId = saved?.id ?? null;
       if (!saved) notSavedReason = 'library_limit';
       if (saved?.changed) c.executionCtx.waitUntil(embedDocument(c.env, p.userId, saved.id).catch(() => 0));
@@ -260,8 +333,13 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
 
 /** Search public posts on X, Facebook, Instagram, Threads or LinkedIn. Each non-empty page costs credits. */
 api.post('/social/search', requireScope('convert'), async (c) => {
-  const b = await body(c, z.object({ platform: z.unknown(), query: z.unknown().optional(), q: z.unknown().optional(), cursor: z.unknown().optional() }));
-  const r = await runSocialSearch(c.env, c.executionCtx, { platform: b.platform, query: b.query ?? b.q, cursor: b.cursor, channel: channelFor(c), principal: c.get('principal') });
+  const b = await body(c, z.object({
+    platform: z.unknown(), query: z.unknown().optional(), q: z.unknown().optional(), cursor: z.unknown().optional(),
+    period: z.unknown().optional(), since: z.unknown().optional(), until: z.unknown().optional(),
+  }));
+  const r = await runSocialSearch(c.env, c.executionCtx, {
+    platform: b.platform, query: b.query ?? b.q, cursor: b.cursor, period: b.period, since: b.since, until: b.until, channel: channelFor(c), principal: c.get('principal'),
+  });
   c.header('X-Anymd-Credits', String(r.credits));
   c.header('X-Anymd-Trace', r.traceId);
   return c.json(socialSearchPayload(r));
@@ -287,7 +365,7 @@ api.post('/library/:id/tags', requireScope('library:write'), async (c) => {
   const b = await body(c, z.object({ add: TagList.optional(), remove: TagList.optional(), set: TagList.optional() }).strict());
   if (b.set && (b.add || b.remove)) return apiError(c, 422, 'invalid_request', 'Use either `set`, or `add` and/or `remove`, not both.');
   if (!b.set && !b.add && !b.remove) return apiError(c, 422, 'invalid_request', 'Pass `add`, `remove` or `set`.');
-  const tags = await editTags(c.env, me(c).userId, c.req.param('id'), b);
+  const tags = await editTags(c.env, me(c).userId, c.req.param('id'), b, eventOrigin(c));
   if (!tags) return apiError(c, 404, 'not_found', 'Document not found');
   return c.json({ id: c.req.param('id'), tags });
 });
@@ -304,13 +382,13 @@ api.get('/library/:id', requireScope('library:read'), async (c) => {
 
 api.patch('/library/:id', requireScope('library:write'), async (c) => {
   const b = await body(c, z.object({ tags: z.array(z.string().max(40)).max(20) }));
-  const ok = await updateTags(c.env, me(c).userId, c.req.param('id'), b.tags);
+  const ok = await updateTags(c.env, me(c).userId, c.req.param('id'), b.tags, eventOrigin(c));
   if (!ok) return apiError(c, 404, 'not_found', 'Document not found');
   return c.json({ ok: true });
 });
 
 api.delete('/library/:id', requireScope('library:write'), async (c) => {
-  const ok = await deleteDocument(c.env, me(c).userId, c.req.param('id'));
+  const ok = await deleteDocument(c.env, me(c).userId, c.req.param('id'), eventOrigin(c));
   if (!ok) return apiError(c, 404, 'not_found', 'Document not found');
   return c.json({ ok: true });
 });

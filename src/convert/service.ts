@@ -15,7 +15,7 @@ import { normalizeStoredPreferences, resolveReadingOptions, wantsEnrichment, typ
 import { enrichImages, renderEnrichment } from './image-enrichment';
 import { reserveConversion, settleConversion } from '../lib/conversion-budget';
 import { findOptout } from './optouts';
-import { startVideoDownload, videoDownloadMarkdown, type VideoDownloadState } from './youtube-video';
+import { directVideoMarkdown, startVideoDownload, videoDownloadMarkdown, type VideoDownloadState } from './youtube-video';
 import { ConvertError, countWords, type ConvertResult } from './types';
 
 export interface ConvertRequest extends EnrichmentOptions {
@@ -190,6 +190,8 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
     }
 
     let markdown = formatMarkdown(result, { frontmatter: req.frontmatter !== false });
+    // The signed link changes on every resolution; keeping it out of the saved copy keeps library saves stable.
+    if (result.directVideo) markdown = `${markdown.trimEnd()}\n\n${directVideoMarkdown(result.directVideo)}\n`;
     // Per-account and asynchronous, so it runs after the shared cache and is never cached itself.
     let videoDownload: VideoDownloadState | null = null;
     if (result.sourceKind === 'youtube' && principal.userId && options.downloadVideo) {
@@ -202,7 +204,7 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
     let documentId: string | null = null;
     let notSavedReason: NotSavedReason | null = req.save === false ? 'not_requested' : !principal.userId ? 'anonymous' : !principal.scopes.includes('library:write') ? 'missing_scope' : null;
     if (!notSavedReason && principal.userId) {
-      const saved = await tracer.span('library.save', () => saveDocument(env, principal.userId!, result!, formatMarkdown(result!, { frontmatter: false }), getPlan(plan).libraryLimit));
+      const saved = await tracer.span('library.save', () => saveDocument(env, principal.userId!, result!, formatMarkdown(result!, { frontmatter: false }), getPlan(plan).libraryLimit, { principal, ctx }));
       documentId = saved?.id ?? null;
       if (!saved) notSavedReason = 'library_limit';
       if (saved?.changed) ctx.waitUntil(embedDocument(env, principal.userId, saved.id).catch(() => 0));

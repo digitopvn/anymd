@@ -1,7 +1,7 @@
 import type { RoleName, Scope } from '../env';
 
 /** Scopes every customer account holds. Anything outside this set is "elevated" (staff) access. */
-const CUSTOMER: Scope[] = ['convert', 'library:read', 'library:write', 'usage:read', 'keys:manage'];
+const CUSTOMER: Scope[] = ['convert', 'library:read', 'library:write', 'usage:read', 'keys:manage', 'feedback:write'];
 const CONTENT_READ: Scope[] = ['content:read', 'pages:read'];
 const CONTENT_WRITE: Scope[] = ['content:write', 'pages:write'];
 const CONTENT_PUBLISH: Scope[] = ['content:publish', 'pages:publish'];
@@ -54,9 +54,11 @@ export const ALL_SCOPES: Scope[] = ROLE_TEMPLATES.owner.scopes;
 
 /**
  * Scopes shown as elevated on the consent screen: everything that reaches other users' data or
- * site-wide state, plus `keys:manage`, which manages long-lived credentials of the account.
+ * site-wide state, plus `keys:manage`, which manages long-lived credentials of the account, and
+ * `feedback:write`, which publishes a permanent public GitHub issue and so is never granted silently
+ * (grants and keys made before it existed never hold it).
  */
-export const ELEVATED_SCOPES: ReadonlySet<Scope> = new Set([...ALL_SCOPES.filter((s) => !CUSTOMER.includes(s)), 'keys:manage']);
+export const ELEVATED_SCOPES: ReadonlySet<Scope> = new Set([...ALL_SCOPES.filter((s) => !CUSTOMER.includes(s)), 'keys:manage', 'feedback:write']);
 
 /** Admin control-plane scopes (everything outside customer and content work). */
 export const ADMIN_SCOPES: ReadonlySet<Scope> = new Set([...ADMIN_READ, ...ADMIN_WRITE, ...OWNER_ONLY]);
@@ -73,6 +75,7 @@ export const SCOPE_LABELS: Record<Scope, string> = {
   'library:read': 'Read and search your library',
   'library:write': 'Save and delete library documents',
   'usage:read': 'Read your usage and traces',
+  'feedback:write': 'Publish product feedback as a public GitHub issue (permanent, visible to everyone)',
   'keys:manage': 'Manage your API keys, connected apps and saved reading defaults',
   'content:read': 'Read blog posts',
   'content:write': 'Write blog posts',
@@ -100,6 +103,7 @@ export const SCOPE_LABELS: Record<Scope, string> = {
 export const KEY_PRESETS: { id: string; label: string; scopes: Scope[] }[] = [
   { id: 'convert-only', label: 'Convert only', scopes: ['convert'] },
   { id: 'library', label: 'Convert + library (agents)', scopes: ['convert', 'library:read', 'library:write'] },
+  { id: 'feedback', label: 'Product feedback (public GitHub issues)', scopes: ['feedback:write'] },
   { id: 'read-only', label: 'Read-only', scopes: ['library:read', 'usage:read'] },
   { id: 'content-editor', label: 'Content editor (AI CMS)', scopes: ['content:read', 'content:write', 'content:publish', 'pages:read', 'pages:write', 'pages:publish'] },
   { id: 'admin-read-only', label: 'Admin read-only (monitoring agent)', scopes: [...ADMIN_READ, ...CONTENT_READ] },
@@ -107,6 +111,26 @@ export const KEY_PRESETS: { id: string; label: string; scopes: Scope[] }[] = [
   { id: 'site-ops', label: 'Site operations', scopes: ['settings:read', 'settings:write', 'optouts:read', 'optouts:write', 'audit:read', 'system:read'] },
   { id: 'full', label: 'Everything my role allows', scopes: ALL_SCOPES },
 ];
+
+/**
+ * Admin access an owner or admin may add on the OAuth consent screen. It is opt-in per connection
+ * (unchecked by default, never implied by a client's request) and capped by the role, so clients
+ * that cannot request admin scopes themselves (or step up) can still be connected as admin agents.
+ */
+export const OAUTH_ADMIN_PRESET_IDS = ['admin-read-only', 'support'] as const;
+export type OAuthAdminPresetId = (typeof OAUTH_ADMIN_PRESET_IDS)[number];
+
+export function isOAuthAdminPreset(v: unknown): v is OAuthAdminPresetId {
+  return typeof v === 'string' && (OAUTH_ADMIN_PRESET_IDS as readonly string[]).includes(v);
+}
+
+/** The scopes of an admin consent preset this role can hold (empty for roles below admin). */
+export function oauthAdminPresetScopes(role: RoleName, presetId: OAuthAdminPresetId): Scope[] {
+  if (!roleAtLeast(role, 'admin')) return [];
+  const preset = KEY_PRESETS.find((p) => p.id === presetId);
+  // Owner-only scopes (roles, credits, billing changes) are never granted to a third-party client in one click.
+  return preset ? capScopes(role, preset.scopes).filter((s) => !OWNER_ONLY.includes(s)) : [];
+}
 
 export function isRole(v: unknown): v is RoleName {
   return typeof v === 'string' && v in ROLE_TEMPLATES;
