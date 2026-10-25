@@ -1,8 +1,10 @@
 /**
  * YouTube adapter — inherited from nextlevelbuilder/defuddle.
- * Metadata via oEmbed; transcript via RapidAPI youtube-transcript3, falling back to VidCap.
+ * Metadata via oEmbed; transcript via RapidAPI youtube-transcript3, falling back to VidCap; a direct
+ * lowest-quality MP4 link via VidCap, falling back to RapidAPI ytstream.
  */
 import { countWords, ConvertError, type ConvertContext, type ConvertResult, type SourceAdapter } from './types';
+import { resolveDirectVideo } from './youtube-video';
 
 const YOUTUBE_URL_PATTERN =
   /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch\?|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/live\/)/;
@@ -141,14 +143,19 @@ async function convertYoutube(url: URL, ctx: ConvertContext): Promise<ConvertRes
     return vidcapKey ? fetchTranscript(canonicalUrl, vidcapKey, ctx.language).catch(() => null) : null;
   };
 
-  const [oembed, transcript] = await Promise.all([
+  const [oembed, transcript, video] = await Promise.all([
     ctx.tracer.span('youtube.oembed', () => fetchOEmbed(canonicalUrl)),
     rapidKey || vidcapKey ? ctx.tracer.span('youtube.transcript', loadTranscript) : Promise.resolve(null),
+    rapidKey || vidcapKey ? ctx.tracer.span('youtube.video', () => resolveDirectVideo(ctx.env, videoId)) : Promise.resolve(null),
   ]);
 
   const thumb = oembed.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
   const parts = [`[![${oembed.title.replace(/[[\]]/g, '')}](${thumb})](${canonicalUrl})`];
   parts.push(`**Channel:** [${oembed.author_name}](${oembed.author_url})`);
+  if (video) {
+    const label = [video.quality, 'MP4', video.audio ? '' : 'no audio'].filter(Boolean).join(' ');
+    parts.push(`[Video (${label})](<${video.url}>)\n\n> The MP4 link is signed by YouTube and expires after a few hours; read the video again for a fresh link.`);
+  }
   if (transcript) parts.push(transcript);
   else parts.push('> Transcript unavailable for this video.');
   const content = parts.join('\n\n');

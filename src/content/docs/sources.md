@@ -54,6 +54,8 @@ Every read converts the requested post. Signed-in callers can opt in to the root
 
 Facebook, Instagram, Threads and LinkedIn adapters require an account and a configured `RAPIDAPI_KEY`; they accept public post URLs and cost 10 credits for the base post. Comments are opt-in with `includeComments=1` and are charged in started batches of 20. The response can include media without enabling comment retrieval.
 
+A post with a video gets a `[Video](<…>)` link to its MP4 file, one per video in a carousel, as X posts do. The link comes from the provider's own response, at no extra cost: `video_url` on Instagram (the stream with sound), the first `video_versions` entry on Threads, `video.stream_url` on LinkedIn and `video` (or the HD, then SD file) on Facebook. `images=0` removes images but keeps video links. These URLs are signed by the platform's CDN and expire, so download the file soon after reading or read the post again for a new link.
+
 Comment retrieval depends on upstream provider availability. Threads uses the `threads-api4.p.rapidapi.com` provider and supports nested replies within the bounded request budget. When that provider reports `has_next_page: true` without a cursor, anymd marks coverage `source_incomplete` instead of treating the page as a successful complete result. Instagram base post, media and image analysis are available, but chronological comments can time out and fall back to a popular subset; reply requests can return 429, so reply coverage is not fully proven. Check `enrichment.comments.complete`, `count` and `reason` instead of assuming comments are complete.
 
 ## YouTube
@@ -69,6 +71,16 @@ Watch, `youtu.be`, Shorts and Live URLs. Title, channel and thumbnail come from 
 ```
 
 Pass `lang=vi` (or any language code) to prefer a transcript language. When no transcript is available, the output says so and still includes the video's metadata. That conversion is still charged.
+
+Every read, anonymous ones included, also links the video's lowest-quality MP4 that has sound, at no extra cost, right below the channel:
+
+```markdown
+[Video (360p MP4)](<https://rr1---sn-….googlevideo.com/videoplayback?…>)
+
+> The MP4 link is signed by YouTube and expires after a few hours; read the video again for a fresh link.
+```
+
+The stream comes from the same providers as the download below (VidCap, then RapidAPI ytstream). The link is signed by YouTube, expires after a few hours, and may only play from the network that resolved it. For a lasting copy, use the CDN download. When neither provider returns a stream, the line is left out and the read still succeeds.
 
 ### Video download to the anymd CDN
 

@@ -11,8 +11,13 @@ export function publicUrl(value: unknown): string {
 export const plainMarkdown = (value: string) => value.replace(/[\\`*_[\]{}<>#!|~+.=\-]/g, '\\$&');
 export const quote = (value: string) => plainMarkdown(value).split('\n').map((line) => `> ${line}`).join('\n');
 
-export function socialResult(url: URL, kind: SourceKind, text: string, author: string, images: string[], published = ''): ConvertResult {
-  const content = [plainMarkdown(text), ...[...new Set(images.map(publicUrl).filter(Boolean))].map((image) => `![Post image](<${image}>)`)].filter(Boolean).join('\n\n');
+/** `[Video](<url>)` lines for public MP4 URLs, deduplicated; provider URLs are signed and expire. */
+export function videoLinks(videos: unknown[]): string[] {
+  return [...new Set(videos.map(publicUrl).filter(Boolean))].map((video) => `[Video](<${video}>)`);
+}
+
+export function socialResult(url: URL, kind: SourceKind, text: string, author: string, images: string[], published = '', videos: unknown[] = []): ConvertResult {
+  const content = [plainMarkdown(text), ...[...new Set(images.map(publicUrl).filter(Boolean))].map((image) => `![Post image](<${image}>)`), ...videoLinks(videos)].filter(Boolean).join('\n\n');
   if (!content) throw new ConvertError('Public post content is unavailable', 404, 'not_found');
   return { title: `${author || kind} post`, author, published, description: text.slice(0, 200), domain: url.hostname,
     content, wordCount: countWords(content), source: url.href, sourceKind: kind, site: kind };

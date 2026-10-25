@@ -14,18 +14,23 @@ export const instagramAdapter: SourceAdapter = {
     if (!shortcode) throw new ConvertError('Instagram post unavailable', 404, 'not_found');
     const post = object(await rapidJson(HOST, '/v1/post', { url: shortcode }, ctx));
     if (string(post.shortcode) !== shortcode) throw new ConvertError('Post data unavailable', 502, 'upstream_schema');
-    const images: string[] = [];
-    if (!ctx.removeImages) {
-      const photo = post.type === 'photo' && publicUrl(post.display_url);
-      if (photo) images.push(photo);
-      else {
-        const media = object(await rapidJson(HOST, '/v1/post/media', { url: shortcode }, ctx));
-        if (!Array.isArray(media.items)) throw new ConvertError('Post media unavailable', 502, 'upstream_schema');
-        for (const item of media.items) images.push(string(object(object(item).image).url));
+    const photo = post.type === 'photo' && publicUrl(post.display_url);
+    const images: string[] = photo ? [photo] : [];
+    // `video_url` is the MP4 with sound (`video_hd` is often a silent video-only stream). A carousel
+    // lists its videos only on the media endpoint, so that is read for videos even without images.
+    const single = post.type !== 'carousel' && publicUrl(post.video_url);
+    const videos: string[] = single ? [single] : [];
+    if (!photo && (!ctx.removeImages || !single)) {
+      const media = object(await rapidJson(HOST, '/v1/post/media', { url: shortcode }, ctx));
+      if (!Array.isArray(media.items)) throw new ConvertError('Post media unavailable', 502, 'upstream_schema');
+      for (const value of media.items) {
+        const item = object(value);
+        images.push(string(object(item.image).url));
+        if (!single && item.is_video === true) videos.push(string(object(item.video).url));
       }
     }
-    const result = socialResult(url, 'instagram', string(post.caption), string(object(post.owner).username), images,
-      typeof post.taken_at === 'number' ? new Date(post.taken_at * 1000).toISOString() : '');
+    const result = socialResult(url, 'instagram', string(post.caption), string(object(post.owner).username), ctx.removeImages ? [] : images,
+      typeof post.taken_at === 'number' ? new Date(post.taken_at * 1000).toISOString() : '', videos);
     const mediaId = string(post.media_id);
     const queue: { path: string; params: Record<string, string> }[] = [
       { path: '/v1/post/comments', params: { media_id: mediaId, sort: 'recent' } },

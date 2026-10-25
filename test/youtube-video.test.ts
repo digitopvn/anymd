@@ -235,6 +235,27 @@ describe('conversion and status channels', () => {
     await expect(read({ downloadVideo: true }, null)).rejects.toMatchObject({ code: 'authentication_required' });
   });
 
+  it('links the lowest MP4 directly on every read, and still reads when no provider resolves one', async () => {
+    const ctx = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}) };
+    const anonymous = { kind: 'anonymous', userId: null, role: 'user', scopes: [] } as unknown as Principal;
+    const read = () => runConversion(t.env, ctx, { url: `https://youtu.be/${VIDEO}`, channel: 'api', principal: anonymous, save: false, fresh: true });
+    stubFetch();
+    const linked = await read();
+    expect(linked.markdown).toMatch(`[Video (360p MP4)](<${STREAM}>)`);
+    expect(linked.markdown).toMatch('expires after a few hours');
+    expect(linked.videoDownload).toBeNull();
+    expect(queue.sent).toHaveLength(0);
+
+    stubFetch(() => Response.json({ status: 'OK', formats: [{ itag: 18, url: 'https://evil.test/v.mp4', mimeType: 'video/mp4; codecs="avc1, mp4a"' }] }));
+    const unsafe = await read();
+    expect(unsafe.markdown).not.toMatch('[Video');
+
+    stubFetch(() => new Response('busy', { status: 503 }));
+    const failed = await read();
+    expect(failed.markdown).toMatch('**Channel:**');
+    expect(failed.markdown).not.toMatch('[Video');
+  });
+
   it('resolves per-request video options against saved settings', () => {
     const saved = { ...DEFAULT_READING_PREFERENCES, downloadVideo: true, analyzeVideo: true };
     expect(resolveReadingOptions({}, saved)).toMatchObject({ downloadVideo: true, analyzeVideo: true });

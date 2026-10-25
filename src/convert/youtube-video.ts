@@ -289,10 +289,10 @@ export function isYoutubeMediaUrl(raw: string): boolean {
 }
 
 /** Calls a format provider and maps transport failures to job errors. */
-async function providerJson(url: string, headers: Record<string, string>): Promise<unknown> {
+async function providerJson(url: string, headers: Record<string, string>, timeoutMs = 30_000): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(url, { headers: { Accept: 'application/json', ...headers }, redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+    response = await fetch(url, { headers: { Accept: 'application/json', ...headers }, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
   } catch {
     throw new VideoJobError('provider_timeout', true);
   }
@@ -304,7 +304,7 @@ async function providerJson(url: string, headers: Record<string, string>): Promi
 
 interface VideoProvider {
   name: string;
-  formats(videoId: string): Promise<StreamFormat[]>;
+  formats(videoId: string, timeoutMs?: number): Promise<StreamFormat[]>;
 }
 
 /** Configured providers in order: VidCap first, RapidAPI ytstream as the fallback. */
@@ -314,9 +314,9 @@ function videoProviders(env: Env): VideoProvider[] {
   if (vidcapKey) {
     providers.push({
       name: 'vidcap',
-      async formats(videoId) {
+      async formats(videoId, timeoutMs) {
         const url = `${VIDCAP_API_BASE}/youtube/media?${new URLSearchParams({ url: `https://www.youtube.com/watch?v=${videoId}` })}`;
-        const data = (await providerJson(url, { 'X-API-Key': vidcapKey })) as { status?: number; data?: { videoFiles?: StreamFormat[] } } | null;
+        const data = (await providerJson(url, { 'X-API-Key': vidcapKey }, timeoutMs)) as { status?: number; data?: { videoFiles?: StreamFormat[] } } | null;
         if (!data || data.status !== 1) throw new VideoJobError('video_unavailable');
         return data.data?.videoFiles ?? [];
       },
@@ -326,9 +326,9 @@ function videoProviders(env: Env): VideoProvider[] {
   if (rapidKey) {
     providers.push({
       name: 'ytstream',
-      async formats(videoId) {
+      async formats(videoId, timeoutMs) {
         const url = `https://${YTSTREAM_HOST}/dl?${new URLSearchParams({ id: videoId })}`;
-        const data = (await providerJson(url, { 'X-RapidAPI-Key': rapidKey, 'X-RapidAPI-Host': YTSTREAM_HOST })) as { status?: string; lengthSeconds?: string; formats?: StreamFormat[]; adaptiveFormats?: StreamFormat[] } | null;
+        const data = (await providerJson(url, { 'X-RapidAPI-Key': rapidKey, 'X-RapidAPI-Host': YTSTREAM_HOST }, timeoutMs)) as { status?: string; lengthSeconds?: string; formats?: StreamFormat[]; adaptiveFormats?: StreamFormat[] } | null;
         if (!data || (data.status && data.status !== 'OK')) throw new VideoJobError('video_unavailable');
         return [...(data.formats ?? []), ...(data.adaptiveFormats ?? [])].map((f) => ({ lengthSeconds: data.lengthSeconds, ...f }));
       },
@@ -337,11 +337,31 @@ function videoProviders(env: Env): VideoProvider[] {
   return providers;
 }
 
-async function resolveFormat(provider: VideoProvider, videoId: string): Promise<{ format: StreamFormat; audio: boolean }> {
-  const picked = pickLowestFormat(await provider.formats(videoId));
+async function resolveFormat(provider: VideoProvider, videoId: string, timeoutMs?: number): Promise<{ format: StreamFormat; audio: boolean }> {
+  const picked = pickLowestFormat(await provider.formats(videoId, timeoutMs));
   if (!picked) throw new VideoJobError('no_downloadable_format');
   if (!isYoutubeMediaUrl(picked.format.url!)) throw new VideoJobError('invalid_stream_url');
   return picked;
+}
+
+/** How long a read waits for a provider's stream list before it moves on. */
+export const DIRECT_VIDEO_TIMEOUT_MS = 8_000;
+
+/**
+ * The lowest-quality MP4 stream a read links directly, trying each provider in turn. The URL is
+ * signed by YouTube and expires after a few hours. Null when no provider resolves one; a read never
+ * fails over it.
+ */
+export async function resolveDirectVideo(env: Env, videoId: string): Promise<{ url: string; quality: string | null; audio: boolean } | null> {
+  for (const provider of videoProviders(env)) {
+    try {
+      const { format, audio } = await resolveFormat(provider, videoId, DIRECT_VIDEO_TIMEOUT_MS);
+      return { url: format.url!, quality: format.qualityLabel ?? null, audio };
+    } catch (err) {
+      console.warn('direct video provider failed', provider.name, err instanceof VideoJobError ? err.code : err);
+    }
+  }
+  return null;
 }
 
 /**
