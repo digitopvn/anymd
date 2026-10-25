@@ -406,7 +406,7 @@ const SCHEMAS: Record<string, Schema> = {
     direct_video: obj({
       url: str('Lowest-quality MP4 stream, signed by YouTube; expires after a few hours'),
       label: str('Link text, such as `360p MP4` or `144p MP4 no audio`'),
-    }, ['url', 'label'], 'YouTube reads only, when a provider resolved a stream. Also linked at the end of `markdown`, never saved to the library.'),
+    }, ['url', 'label'], 'YouTube reads only, when VidCap resolved a stream. Also linked at the end of `markdown`, never saved to the library.'),
     video_download: obj({
       status: str(undefined, { enum: ['queued', 'downloading', 'ready', 'failed', 'skipped'] }),
       id: str('Job id to poll at check_url (absent when skipped)'),

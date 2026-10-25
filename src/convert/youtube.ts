@@ -146,7 +146,7 @@ async function convertYoutube(url: URL, ctx: ConvertContext): Promise<ConvertRes
   const [oembed, transcript, video] = await Promise.all([
     ctx.tracer.span('youtube.oembed', () => fetchOEmbed(canonicalUrl)),
     rapidKey || vidcapKey ? ctx.tracer.span('youtube.transcript', loadTranscript) : Promise.resolve(null),
-    rapidKey || vidcapKey ? ctx.tracer.span('youtube.video', () => resolveDirectVideo(ctx.env, videoId)) : Promise.resolve(null),
+    vidcapKey ? ctx.tracer.span('youtube.video', () => resolveDirectVideo(ctx.env, videoId)) : Promise.resolve(null),
   ]);
 
   const thumb = oembed.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;

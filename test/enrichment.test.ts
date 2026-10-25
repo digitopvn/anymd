@@ -622,6 +622,10 @@ describe('social video links', () => {
     const result = await instagramAdapter.convert(new URL('https://www.instagram.com/p/MIXED2/'), context(true));
     expect(result.content).toBe('fixture carousel');
     await expect(instagramAdapter.convert(new URL('https://www.instagram.com/p/MIXED2/'), context(false))).rejects.toMatchObject({ code: 'upstream_schema' });
+    // Running out of the request budget is not a provider gap, so it still stops the read.
+    const limited = context(true);
+    limited.budget!.calls = 38;
+    await expect(instagramAdapter.convert(new URL('https://www.instagram.com/p/MIXED2/'), limited)).rejects.toMatchObject({ code: 'processing_limit' });
   });
 
   it('links the first Threads video version of the post and of carousel items', async () => {

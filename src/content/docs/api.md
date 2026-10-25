@@ -169,6 +169,8 @@ data = res.json()
 print(res.headers.get("X-Anymd-Credits"), res.headers.get("X-Anymd-Cache"))
 ```
 
+The JSON of a YouTube read also carries `direct_video` (`{ url, label }`) when VidCap resolves a stream: a signed link to the lowest-quality MP4, valid for a few hours, that the Markdown links at its end. It costs nothing, and it is never saved to the library. See [Sources → YouTube](/docs/sources#youtube).
+
 ### Deep reading options and saved defaults
 
 Every option above resolves with one rule, in every channel (web converter, URL API, REST, CLI, MCP, WebMCP):
@@ -215,8 +217,6 @@ curl -X PUT https://anymd.cc/api/v1/account/reading-preferences \
 Removes the saved defaults; the safe defaults apply again. Same rule as PUT (any signed-in session, or `keys:manage` for keys and OAuth clients); audited. The same settings live in the dashboard under [Account → Deep reading defaults](/dashboard/account#reading-defaults).
 
 ### GET /videos/:id
-
-Every YouTube read also returns `direct_video` (`{ url, label }`) when a provider resolves a stream: a signed link to the lowest-quality MP4, valid for a few hours, that the Markdown links at its end. It costs nothing, and it is never saved to the library. See [Sources → YouTube](/docs/sources#youtube).
 
 With `downloadVideo` on (sent with the request, or saved as a default), a YouTube read returns at once and downloads the lowest-quality MP4 to the anymd CDN in the background. The convert response then carries `video_download` (`{ id, status, check_url, … }`, or `{ status: "skipped", reason }` with `unavailable` or `quota_exceeded`), and the Markdown ends with a **Video download** section naming the job id and this endpoint. Poll the job every 15–30 seconds (`Retry-After` is set while it runs):
 

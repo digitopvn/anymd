@@ -30,8 +30,10 @@ export const instagramAdapter: SourceAdapter = {
           if (!single && item.is_video === true) videos.push(string(object(item.video).url));
         }
       } catch (error) {
-        // Without images the call only adds video links, so the post still reads when it fails.
-        if (!ctx.removeImages) throw error;
+        // Without images the call only adds video links, so the post still reads when the provider
+        // has no media for it; budget and timeout errors still stop the read.
+        const code = error instanceof ConvertError ? error.code : '';
+        if (!ctx.removeImages || !(code.startsWith('upstream') || code === 'not_found')) throw error;
       }
     }
     const result = socialResult(url, 'instagram', string(post.caption), string(object(post.owner).username), ctx.removeImages ? [] : images,

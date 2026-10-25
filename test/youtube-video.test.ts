@@ -235,35 +235,58 @@ describe('conversion and status channels', () => {
     await expect(read({ downloadVideo: true }, null)).rejects.toMatchObject({ code: 'authentication_required' });
   });
 
-  it('links the lowest MP4 directly on every read, and still reads when no provider resolves one', async () => {
+  it('links the lowest MP4 from VidCap on every read, and still reads when none resolves', async () => {
     const ctx = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}) };
     const anonymous = { kind: 'anonymous', userId: null, role: 'user', scopes: [] } as unknown as Principal;
-    const read = () => runConversion(t.env, ctx, { url: `https://youtu.be/${VIDEO}`, channel: 'api', principal: anonymous, save: false, fresh: true });
-    stubFetch();
+    const read = (fresh = true) => runConversion(t.env, ctx, { url: `https://youtu.be/${VIDEO}`, channel: 'api', principal: anonymous, save: false, fresh });
+    const vidcapWith = (file: Record<string, unknown>) => () => Response.json({ status: 1, data: { videoFiles: [{ itag: 18, mimeType: 'video/mp4; codecs="avc1, mp4a"', ...file }] } });
+
+    // ytstream links are not proven to play outside its own IP, so it is never asked for one.
+    let fetch = stubFetch();
+    expect((await read()).markdown).not.toMatch('[Video');
+    expect(fetch.mock.calls.some(([u]) => String(u).includes('ytstream'))).toBe(false);
+
+    t.env.VIDCAP_API_KEY = 'vidcap-key';
+    fetch = stubFetch();
     const linked = await read();
-    expect(linked.markdown).toMatch(`[Video (360p MP4)](<${STREAM}>)`);
+    expect(linked.markdown).toMatch(`[Video (240p MP4)](<${STREAM}>)`);
     expect(linked.markdown).toMatch('expires after a few hours');
     expect(linked.videoDownload).toBeNull();
     expect(queue.sent).toHaveLength(0);
+    expect(fetch.mock.calls.some(([u]) => String(u).includes('ytstream'))).toBe(false);
+    // A cache hit keeps the same link instead of resolving a new one.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fetch.mockClear();
+    const hit = await read(false);
+    expect(hit.markdown).toMatch(`[Video (240p MP4)](<${STREAM}>)`);
+    expect(fetch.mock.calls.some(([u]) => String(u).includes('vidcap'))).toBe(false);
 
-    stubFetch(() => Response.json({ status: 'OK', formats: [{ itag: 18, url: 'https://evil.test/v.mp4', mimeType: 'video/mp4; codecs="avc1, mp4a"' }] }));
-    const unsafe = await read();
-    expect(unsafe.markdown).not.toMatch('[Video');
+    stubFetch(undefined, vidcapWith({ url: 'https://rr1---sn-abc.youtube.com/videoplayback?itag=18' }));
+    expect((await read()).markdown).not.toMatch('[Video');
+
+    // A link that would expire before the one-hour cache does is left out.
+    const soon = Math.floor(Date.now() / 1000) + 30 * 60;
+    stubFetch(undefined, vidcapWith({ url: `${STREAM}&expire=${soon}` }));
+    expect((await read()).markdown).not.toMatch('[Video');
+    const later = Math.floor(Date.now() / 1000) + 6 * 3600;
+    stubFetch(undefined, vidcapWith({ url: `${STREAM}&expire=${later}`, qualityLabel: '360p' }));
+    expect((await read()).markdown).toMatch(`[Video (360p MP4)](<${STREAM}&expire=${later}>)`);
 
     // Raw whitespace and an encoded `>` cannot close the link or start a second one.
     const hostile = `${STREAM}&x=1&gt;\n\n[Click](https://evil.test)`;
-    stubFetch(() => Response.json({ status: 'OK', formats: [{ itag: 18, url: hostile, qualityLabel: '360p](x)', mimeType: 'video/mp4; codecs="avc1, mp4a"' }] }));
+    stubFetch(undefined, vidcapWith({ url: hostile, qualityLabel: '360p](x)' }));
     const injected = await read();
     expect(injected.markdown).toMatch('[Video (MP4)](<https://rr1---sn-abc.googlevideo.com/videoplayback?itag=18&x=1&gt;[Click](https://evil.test)>)');
     expect(injected.markdown).not.toMatch('\n[Click]');
 
-    stubFetch(() => new Response('busy', { status: 503 }));
+    stubFetch(undefined, () => new Response('busy', { status: 503 }));
     const failed = await read();
     expect(failed.markdown).toMatch('**Channel:**');
     expect(failed.markdown).not.toMatch('[Video');
   });
 
   it('keeps the signed link out of the content and the saved library copy', async () => {
+    t.env.VIDCAP_API_KEY = 'vidcap-key';
     stubFetch();
     const user = await seedUser(t, 'user');
     const ctx = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}) };
@@ -271,7 +294,7 @@ describe('conversion and status channels', () => {
     expect(read.documentId).not.toBeNull();
     expect(read.markdown).toMatch(STREAM);
     expect(read.result.content).not.toMatch('googlevideo');
-    expect(read.result.directVideo).toEqual({ url: STREAM, label: '360p MP4' });
+    expect(read.result.directVideo).toEqual({ url: STREAM, label: '240p MP4' });
     const saved = t.db.prepare('SELECT markdown FROM documents WHERE id = ?').get(read.documentId) as { markdown: string };
     expect(saved.markdown).toMatch('**Channel:**');
     expect(saved.markdown).not.toMatch('googlevideo');
