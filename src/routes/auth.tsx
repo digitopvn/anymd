@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { consentAdminPresets, consentGrantScopes } from '../auth/consent';
-import { createSession, createUser, destroySession, getUserByEmail, hashPassword, SESSION_COOKIE, SESSION_TTL_MS, verifyPassword } from '../auth/identity';
+import { canSignUp, createSession, createUser, destroySession, getUserByEmail, hashPassword, SESSION_COOKIE, SESSION_TTL_MS, verifyPassword } from '../auth/identity';
 import { OAUTH_GRANT_VERSION, oauthConsentScopes } from '../auth/roles';
 import { beginSso, completeSso, enabledSsoProviders, isSsoProvider, SSO_ERRORS, SSO_STATE_COOKIE, SSO_STATE_TTL, SsoError, SUSPENDED_MESSAGE, type SsoErrorCode, type SsoState } from '../auth/sso';
 import type { AppBindings } from '../env';
@@ -82,6 +82,7 @@ authRoutes.post('/signup', async (c) => {
   if (await throttled(c, 'signup')) return fail('Too many attempts. Wait a minute and try again.', 429);
   if (!EMAIL_RE.test(email)) return fail('Enter a valid email address.');
   if ((f.password ?? '').length < 8) return fail('Password must be at least 8 characters.');
+  if (!canSignUp(c.env, email)) return fail('Sign-up is closed on this instance.', 403);
   if (!f.terms) return fail('Please accept the Terms and Privacy Policy.');
   if (await getUserByEmail(c.env, email)) return fail('An account with this email already exists. Log in instead.', 409);
   const user = await createUser(c.env, { email, name, password: f.password });

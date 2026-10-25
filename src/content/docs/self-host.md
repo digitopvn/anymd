@@ -72,7 +72,16 @@ The index dimension (1024) matches the `bge-m3` embedding model used by the libr
 
 Serve the R2 bucket from a custom domain (Cloudflare dashboard → R2 → your bucket → Custom domains) and put that origin in `CDN_URL`.
 
-The SSRF guard in `src/convert/index.ts` refuses to convert anymd's own hostnames. Add your hostnames to its blocked list so your deployment can't be asked to fetch itself.
+The SSRF guard in `src/convert/index.ts` refuses to convert anymd's own hostnames, and also the hosts of your `PUBLIC_URL` and `CDN_URL`, so your deployment can't be asked to fetch itself.
+
+### Private deployments
+
+Two optional vars close a copy you run only for yourself or your team. Both default to off, which keeps the hosted behavior:
+
+- `SIGNUP_DISABLED`: `"true"` lets only the emails in `ADMIN_EMAILS` create accounts, by password or by GitHub/Google sign-in. Existing accounts still sign in.
+- `ANONYMOUS_CONVERT_DISABLED`: `"true"` refuses conversions without an account or API key (`401 authentication_required`) on the URL, REST and file endpoints, instead of allowing the anonymous daily limit.
+
+Sign up with your `ADMIN_EMAILS` address right after the first deploy: sign-up does not verify email, so whoever registers that address first becomes the owner.
 
 ## 4. Apply database migrations
 

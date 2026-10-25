@@ -9,7 +9,7 @@ import { embedDocument, saveDocument } from '../library/store';
 import { Tracer } from '../lib/tracer';
 import { canSpend, recordUsage, type Channel } from '../lib/usage';
 import { newId, sha256 } from '../lib/util';
-import { convertUrl, creditCost, formatMarkdown, normalizeTargetUrl, pickAdapter } from './index';
+import { convertUrl, creditCost, formatMarkdown, normalizeTargetUrl, pickAdapter, selfHostnames } from './index';
 import { ConversionBudget, EnrichmentOptionsSchema, type EnrichmentOptions, type CreditBreakdown } from './enrichment-types';
 import { normalizeStoredPreferences, resolveReadingOptions, wantsEnrichment, type ResolvedReadingOptions } from './reading-preferences';
 import { enrichImages, renderEnrichment } from './image-enrichment';
@@ -113,9 +113,10 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
       throw new ConvertError(`Invalid enrichment options${issue ? `: ${issue.path.join('.')} ${issue.message}` : ''}`, 400, 'invalid_options');
     }
     if (req.removeImages && req.analyzeImages) throw new ConvertError('analyzeImages cannot be combined with removeImages', 400, 'invalid_options');
+    if (!principal.userId && !principal.scopes.includes('convert')) throw new ConvertError('Sign in or send an API key: Authorization: Bearer amd_…', 401, 'authentication_required');
     if (!principal.userId && (req.expandThread || req.includeComments || req.analyzeImages)) throw new ConvertError('Enrichment requires an account', 401, 'authentication_required');
     if (!principal.userId && (req.downloadVideo || req.analyzeVideo)) throw new ConvertError('Video download and analysis require an account', 401, 'authentication_required');
-    const url = normalizeTargetUrl(req.url);
+    const url = normalizeTargetUrl(req.url, selfHostnames(env));
     targetForLog = url.href;
     const optout = await tracer.span('optout', () => findOptout(env, url.hostname));
     if (optout) {

@@ -4,7 +4,7 @@
  */
 import type { Env } from '../env';
 import { base64url, now, randomToken } from '../lib/util';
-import { createUser, getUser, getUserByEmail, type UserRow } from './identity';
+import { canSignUp, createUser, getUser, getUserByEmail, type UserRow } from './identity';
 
 export type SsoProvider = 'github' | 'google';
 export const SSO_PROVIDERS: readonly SsoProvider[] = ['github', 'google'];
@@ -27,7 +27,7 @@ export interface SsoState {
 }
 
 /** Error codes shown on /login; the page maps them to fixed copy so nothing from the URL is echoed. */
-export type SsoErrorCode = 'unavailable' | 'denied' | 'expired' | 'no_email' | 'failed' | 'suspended';
+export type SsoErrorCode = 'unavailable' | 'denied' | 'expired' | 'no_email' | 'failed' | 'suspended' | 'signup_closed';
 /** Shown when a suspended account tries to sign in. */
 export const SUSPENDED_MESSAGE = 'This account is suspended. Contact support if you think this is a mistake.';
 
@@ -38,6 +38,7 @@ export const SSO_ERRORS: Record<SsoErrorCode, string> = {
   no_email: 'Your account has no verified email address. Verify one with the provider, or sign up with email.',
   failed: 'We could not complete sign-in with that provider. Please try again.',
   suspended: SUSPENDED_MESSAGE,
+  signup_closed: 'Sign-up is closed on this instance. Sign in with an existing account.',
 };
 
 export class SsoError extends Error {
@@ -159,6 +160,7 @@ export async function resolveSsoUser(env: Env, provider: SsoProvider, profile: S
   const email = profile.email.trim().toLowerCase();
   let user = await getUserByEmail(env, email);
   const created = !user;
+  if (!user && !canSignUp(env, email)) throw new SsoError('signup_closed');
   if (!user) user = await createUser(env, { email, name: profile.name.slice(0, 80), avatarUrl: profile.avatarUrl ?? undefined });
   else {
     // Sign-up does not verify email, so a password on this account may have been set by someone
