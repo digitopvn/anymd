@@ -169,6 +169,8 @@ data = res.json()
 print(res.headers.get("X-Anymd-Credits"), res.headers.get("X-Anymd-Cache"))
 ```
 
+The JSON of a YouTube read also carries `direct_video` (`{ url, label }`) when VidCap resolves a stream: a signed link to the lowest-quality MP4, valid for a few hours, that the Markdown links at its end. It costs nothing, and it is never saved to the library. See [Sources → YouTube](/docs/sources#youtube).
+
 ### Deep reading options and saved defaults
 
 Every option above resolves with one rule, in every channel (web converter, URL API, REST, CLI, MCP, WebMCP):

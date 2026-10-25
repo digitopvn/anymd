@@ -12,10 +12,11 @@ export const facebookAdapter: SourceAdapter = {
     if (!string(data.post_id)) throw new ConvertError('Public Facebook post is unavailable', 404, 'not_found');
     const images = [string(object(data.image).uri)];
     if (Array.isArray(data.album_preview)) for (const item of data.album_preview) images.push(string(object(object(item).image).uri));
+    // `video` is the playable MP4; the HD/SD files are the fallback when the provider leaves it out.
+    const files = object(data.video_files);
     const result = socialResult(url, 'facebook', string(data.message), string(object(data.author).name), ctx.removeImages ? [] : images,
-      typeof data.timestamp === 'number' ? new Date(data.timestamp * 1000).toISOString() : '');
-    const video = publicUrl(data.video);
-    if (video) result.content += `\n\n[Video](<${video}>)`;
+      typeof data.timestamp === 'number' ? new Date(data.timestamp * 1000).toISOString() : '',
+      [publicUrl(data.video) || publicUrl(files.video_hd_file) || publicUrl(files.video_sd_file)]);
     const postId = string(data.post_id);
     // Each queue item represents a provider cursor, including reply expansions.
     const queue: { path: string; params: Record<string, string> }[] = [{ path: '/post/comments', params: { post_id: postId } }];

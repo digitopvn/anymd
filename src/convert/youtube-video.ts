@@ -289,10 +289,10 @@ export function isYoutubeMediaUrl(raw: string): boolean {
 }
 
 /** Calls a format provider and maps transport failures to job errors. */
-async function providerJson(url: string, headers: Record<string, string>): Promise<unknown> {
+async function providerJson(url: string, headers: Record<string, string>, timeoutMs = 30_000): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(url, { headers: { Accept: 'application/json', ...headers }, redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+    response = await fetch(url, { headers: { Accept: 'application/json', ...headers }, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
   } catch {
     throw new VideoJobError('provider_timeout', true);
   }
@@ -304,7 +304,7 @@ async function providerJson(url: string, headers: Record<string, string>): Promi
 
 interface VideoProvider {
   name: string;
-  formats(videoId: string): Promise<StreamFormat[]>;
+  formats(videoId: string, timeoutMs?: number): Promise<StreamFormat[]>;
 }
 
 /** Configured providers in order: VidCap first, RapidAPI ytstream as the fallback. */
@@ -314,9 +314,9 @@ function videoProviders(env: Env): VideoProvider[] {
   if (vidcapKey) {
     providers.push({
       name: 'vidcap',
-      async formats(videoId) {
+      async formats(videoId, timeoutMs) {
         const url = `${VIDCAP_API_BASE}/youtube/media?${new URLSearchParams({ url: `https://www.youtube.com/watch?v=${videoId}` })}`;
-        const data = (await providerJson(url, { 'X-API-Key': vidcapKey })) as { status?: number; data?: { videoFiles?: StreamFormat[] } } | null;
+        const data = (await providerJson(url, { 'X-API-Key': vidcapKey }, timeoutMs)) as { status?: number; data?: { videoFiles?: StreamFormat[] } } | null;
         if (!data || data.status !== 1) throw new VideoJobError('video_unavailable');
         return data.data?.videoFiles ?? [];
       },
@@ -326,9 +326,9 @@ function videoProviders(env: Env): VideoProvider[] {
   if (rapidKey) {
     providers.push({
       name: 'ytstream',
-      async formats(videoId) {
+      async formats(videoId, timeoutMs) {
         const url = `https://${YTSTREAM_HOST}/dl?${new URLSearchParams({ id: videoId })}`;
-        const data = (await providerJson(url, { 'X-RapidAPI-Key': rapidKey, 'X-RapidAPI-Host': YTSTREAM_HOST })) as { status?: string; lengthSeconds?: string; formats?: StreamFormat[]; adaptiveFormats?: StreamFormat[] } | null;
+        const data = (await providerJson(url, { 'X-RapidAPI-Key': rapidKey, 'X-RapidAPI-Host': YTSTREAM_HOST }, timeoutMs)) as { status?: string; lengthSeconds?: string; formats?: StreamFormat[]; adaptiveFormats?: StreamFormat[] } | null;
         if (!data || (data.status && data.status !== 'OK')) throw new VideoJobError('video_unavailable');
         return [...(data.formats ?? []), ...(data.adaptiveFormats ?? [])].map((f) => ({ lengthSeconds: data.lengthSeconds, ...f }));
       },
@@ -337,11 +337,50 @@ function videoProviders(env: Env): VideoProvider[] {
   return providers;
 }
 
-async function resolveFormat(provider: VideoProvider, videoId: string): Promise<{ format: StreamFormat; audio: boolean }> {
-  const picked = pickLowestFormat(await provider.formats(videoId));
+async function resolveFormat(provider: VideoProvider, videoId: string, timeoutMs?: number): Promise<{ format: StreamFormat; audio: boolean }> {
+  const picked = pickLowestFormat(await provider.formats(videoId, timeoutMs));
   if (!picked) throw new VideoJobError('no_downloadable_format');
   if (!isYoutubeMediaUrl(picked.format.url!)) throw new VideoJobError('invalid_stream_url');
   return picked;
+}
+
+/** Longest a read waits for a direct stream, so the link never slows it much. */
+export const DIRECT_VIDEO_BUDGET_MS = 5_000;
+/** A linked stream must stay valid past the one-hour read cache, with a margin for the download itself. */
+const DIRECT_VIDEO_MIN_LIFETIME_MS = 90 * 60 * 1000;
+
+export interface DirectVideo {
+  url: string;
+  /** Link text, such as `360p MP4` or `144p MP4 no audio`. */
+  label: string;
+}
+
+/**
+ * The lowest-quality MP4 stream a read links directly. Only VidCap is asked: its signed googlevideo
+ * URLs play from any IP, while ytstream's are not proven to, so ytstream stays a download fallback.
+ * The URL expires after a few hours. Null when no stream resolves in time; a read never fails over it.
+ */
+export async function resolveDirectVideo(env: Env, videoId: string): Promise<DirectVideo | null> {
+  const provider = videoProviders(env).find((p) => p.name === 'vidcap');
+  if (!provider) return null;
+  try {
+    const { format, audio } = await resolveFormat(provider, videoId, DIRECT_VIDEO_BUDGET_MS);
+    // The parsed href, not the provider's raw string, is what the Markdown link may contain.
+    const url = new URL(format.url!);
+    if (!url.hostname.endsWith('.googlevideo.com')) throw new VideoJobError('invalid_stream_url');
+    const expire = Number(url.searchParams.get('expire'));
+    if (!expire || expire * 1000 - Date.now() < DIRECT_VIDEO_MIN_LIFETIME_MS) throw new VideoJobError('invalid_stream_url');
+    const quality = /^\d{3,4}p\d{0,2}$/.test(format.qualityLabel ?? '') ? format.qualityLabel : '';
+    return { url: url.href, label: [quality, 'MP4', audio ? '' : 'no audio'].filter(Boolean).join(' ') };
+  } catch (err) {
+    console.warn('direct video provider failed', provider.name, err instanceof VideoJobError ? err.code : err);
+    return null;
+  }
+}
+
+/** Markdown for the direct link; added to the response only, never to the saved library copy. */
+export function directVideoMarkdown(video: DirectVideo): string {
+  return `[Video (${video.label})](<${video.url}>)\n\n> The MP4 link is signed by YouTube and expires after a few hours; read the video again later for a fresh link.`;
 }
 
 /**

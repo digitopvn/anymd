@@ -15,6 +15,10 @@ function image(post: Data): string {
   const candidates = object(post.image_versions2).candidates;
   return Array.isArray(candidates) ? string(object(candidates[0]).url) : '';
 }
+/** The first `video_versions` entry, the MP4 the app plays; photos have none. */
+function video(post: Data): string {
+  return Array.isArray(post.video_versions) ? string(object(post.video_versions[0]).url) : '';
+}
 function dataOf(response: unknown): Data {
   const envelope = object(response);
   const data = object(object(envelope.data).data);
@@ -35,7 +39,7 @@ export const threadsAdapter: SourceAdapter = {
     if (!post || object(post.user).text_post_app_is_private === true) throw new ConvertError('Public Threads post unavailable', 404, 'not_found');
     const media = Array.isArray(post.carousel_media) ? post.carousel_media.map(object) : [post];
     const result = socialResult(url, 'threads', string(object(post.caption).text), string(object(post.user).username), ctx.removeImages ? [] : media.map(image),
-      typeof post.taken_at === 'number' ? new Date(post.taken_at * 1000).toISOString() : '');
+      typeof post.taken_at === 'number' ? new Date(post.taken_at * 1000).toISOString() : '', media.map(video));
     const queue: { id: string; cursor: string }[] = [{ id, cursor: '' }];
     const expanded = new Set([id]);
     const seenCursors = new Set<string>();

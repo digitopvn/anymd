@@ -1,8 +1,10 @@
 /**
  * YouTube adapter — inherited from nextlevelbuilder/defuddle.
- * Metadata via oEmbed; transcript via RapidAPI youtube-transcript3, falling back to VidCap.
+ * Metadata via oEmbed; transcript via RapidAPI youtube-transcript3, falling back to VidCap; a direct
+ * lowest-quality MP4 link via VidCap only (ytstream links are not proven to play from other IPs).
  */
 import { countWords, ConvertError, type ConvertContext, type ConvertResult, type SourceAdapter } from './types';
+import { resolveDirectVideo } from './youtube-video';
 
 const YOUTUBE_URL_PATTERN =
   /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch\?|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/live\/)/;
@@ -141,9 +143,10 @@ async function convertYoutube(url: URL, ctx: ConvertContext): Promise<ConvertRes
     return vidcapKey ? fetchTranscript(canonicalUrl, vidcapKey, ctx.language).catch(() => null) : null;
   };
 
-  const [oembed, transcript] = await Promise.all([
+  const [oembed, transcript, video] = await Promise.all([
     ctx.tracer.span('youtube.oembed', () => fetchOEmbed(canonicalUrl)),
     rapidKey || vidcapKey ? ctx.tracer.span('youtube.transcript', loadTranscript) : Promise.resolve(null),
+    vidcapKey ? ctx.tracer.span('youtube.video', () => resolveDirectVideo(ctx.env, videoId)) : Promise.resolve(null),
   ]);
 
   const thumb = oembed.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
@@ -165,6 +168,7 @@ async function convertYoutube(url: URL, ctx: ConvertContext): Promise<ConvertRes
     sourceKind: 'youtube',
     image: thumb,
     site: 'YouTube',
+    ...(video ? { directVideo: video } : {}),
   };
 }
 
