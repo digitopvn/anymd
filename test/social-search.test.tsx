@@ -158,6 +158,15 @@ describe('runSocialSearch', () => {
     expect(t!.db.prepare("SELECT status, credits FROM usage_events").all()).toEqual([{ status: 'error', credits: 0 }]);
   });
 
+  it('reports a spent provider quota as provider_quota, not an outage, and charges nothing', async () => {
+    const { env, user, principal } = await setup();
+    providerReturns(429);
+    await expect(runSocialSearch(env, ctx, { platform: 'facebook', query: 'x', channel: 'api', principal })).rejects.toMatchObject({ status: 503, code: 'provider_quota' });
+    await flush();
+    expect(await creditsUsedThisMonth(env, user.id)).toBe(0);
+    expect(t!.db.prepare("SELECT status, http_status, credits FROM usage_events").all()).toEqual([{ status: 'error', http_status: 503, credits: 0 }]);
+  });
+
   it('refuses before calling the provider: anonymous, invalid input, no key, too few credits', async () => {
     const { env, user, principal } = await setup();
     const fetch = providerReturns(200, { timeline: [tweet('1')] });

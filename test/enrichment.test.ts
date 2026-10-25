@@ -130,6 +130,20 @@ describe('provider redirect handling', () => {
     });
   });
 
+  it('maps a RapidAPI 429 to provider_quota and records the provider host on the trace span', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"message":"You have exceeded the MONTHLY quota"}', { status: 429 })));
+    const spans: { name: string; meta?: Record<string, unknown> }[] = [];
+    const ctx = {
+      env: { RAPIDAPI_KEY: 'test-placeholder' },
+      tracer: { span: async (name: string, fn: () => Promise<unknown>, meta?: Record<string, unknown>) => { spans.push({ name, meta }); return fn(); } },
+      budget: new ConversionBudget(100),
+    } as unknown as ConvertContext;
+
+    await expect(rapidJson('provider.example', '/post', { id: '1' }, ctx))
+      .rejects.toMatchObject({ code: 'provider_quota', status: 503 });
+    expect(spans).toEqual([{ name: 'social.fetch', meta: { host: 'provider.example' } }]);
+  });
+
   it('uses manual redirects for OpenRouter and does not charge a redirected model response', async () => {
     const fetch = vi.fn(async (input: unknown, _init?: RequestInit) => String(input).startsWith('https://openrouter.ai/')
       ? new Response(null, { status: 302, headers: { location: 'https://attacker.example/' } })

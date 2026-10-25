@@ -20,7 +20,7 @@ const ERROR_TEXT: Record<number, string> = {
   422: 'Validation failed',
   429: 'Rate limited — see Retry-After',
   502: 'The source site failed or blocked the fetch',
-  503: 'A required provider is unavailable or not configured',
+  503: 'A required provider is unavailable, not configured or out of request quota',
 };
 
 const bounded = (key: keyof typeof LIMITS, description: string): Schema => int(description, { minimum: LIMITS[key].min, maximum: LIMITS[key].max, default: LIMITS[key].default });
@@ -143,7 +143,7 @@ const OPS: Record<string, Record<string, Op>> = {
         ['url'],
       ),
       ok: ref('Conversion'),
-      errors: [400, 402, 422, 429, 502],
+      errors: [400, 402, 422, 429, 502, 503],
     },
   },
   '/convert/file': {

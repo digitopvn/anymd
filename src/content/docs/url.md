@@ -1,7 +1,7 @@
 ---
 title: "URL API"
 description: "Prefix any link with anymd.cc/ to get clean Markdown back. Formats, options, headers, limits and Markdown twins."
-updated: "2026-10-09"
+updated: "2026-10-25"
 ---
 
 The simplest API there is: put `https://anymd.cc/` in front of a URL.
@@ -156,6 +156,7 @@ Errors come back as JSON with a matching HTTP status:
 | 415 | `unsupported_type` | Content type anymd can't convert |
 | 422 | `empty_content` | No readable content found |
 | 503 | `provider_unavailable` | A required social or enrichment provider is not configured or subscribed |
+| 503 | `provider_quota` | A social provider's request quota or rate limit is used up; try again later |
 | 429 | `anonymous_limit` | Anonymous daily limit reached |
 
 Failed conversions never cost credits.
