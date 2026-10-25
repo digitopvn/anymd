@@ -1,7 +1,7 @@
 ---
 title: "REST API"
 description: "The anymd REST API v1: authentication, errors, conversion, library, search, usage, keys and admin endpoints with curl, JavaScript and Python examples."
-updated: "2026-10-15"
+updated: "2026-10-25"
 ---
 
 Base URL: `https://anymd.cc/api/v1`. Everything is JSON unless noted.
@@ -49,7 +49,7 @@ Every error has the same shape and a matching HTTP status:
 | 415 | `unsupported_type` |
 | 422 | `empty_content`, `document_failed`, `invalid_props`, `idempotency_mismatch`, `invalid_request`, `too_many_tags`, `invalid_preferences`, `invalid_setting`, `plan_managed_by_billing` |
 | 429 | `anonymous_limit`, rate limits |
-| 503 | `provider_unavailable`, `oauth_store_unavailable` |
+| 503 | `provider_unavailable`, `provider_quota`, `oauth_store_unavailable` |
 | 502 | `fetch_failed`, `upstream_status` |
 
 Read `code`, not `message`. Messages are for humans and may change.

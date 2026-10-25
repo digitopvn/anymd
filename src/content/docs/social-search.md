@@ -1,7 +1,7 @@
 ---
 title: "Social search"
 description: "Search public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them at once from the dashboard, REST API, CLI or MCP, filter them by date, then convert the ones you need."
-updated: "2026-10-13"
+updated: "2026-10-25"
 ---
 
 Social search finds public posts by keyword on five platforms, or on all of them at once, and returns them in one normalized shape. Use it to discover what to read, then convert the posts you want into your library.
@@ -129,6 +129,7 @@ curl https://anymd.cc/api/v1/social/search \
 | 409 | `cursor_conflict` | The cursor was already used (a replay), or its page is still loading in another request; continue from the latest `next_cursor`. A request that was cut off mid-page frees its cursor within two minutes |
 | 502 | `upstream_error` | The platform provider failed (with `all`, every provider failed); nothing was charged |
 | 503 | `provider_unavailable` | Social search is not configured on this server |
+| 503 | `provider_quota` | The platform provider is rate limited or out of request quota for now (with `all`, every provider failed; read `platforms[].error` for each one); nothing was charged, retry later |
 
 ## CLI
 
