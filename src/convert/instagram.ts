@@ -21,12 +21,17 @@ export const instagramAdapter: SourceAdapter = {
     const single = post.type !== 'carousel' && publicUrl(post.video_url);
     const videos: string[] = single ? [single] : [];
     if (!photo && (!ctx.removeImages || !single)) {
-      const media = object(await rapidJson(HOST, '/v1/post/media', { url: shortcode }, ctx));
-      if (!Array.isArray(media.items)) throw new ConvertError('Post media unavailable', 502, 'upstream_schema');
-      for (const value of media.items) {
-        const item = object(value);
-        images.push(string(object(item.image).url));
-        if (!single && item.is_video === true) videos.push(string(object(item.video).url));
+      try {
+        const media = object(await rapidJson(HOST, '/v1/post/media', { url: shortcode }, ctx));
+        if (!Array.isArray(media.items)) throw new ConvertError('Post media unavailable', 502, 'upstream_schema');
+        for (const value of media.items) {
+          const item = object(value);
+          images.push(string(object(item.image).url));
+          if (!single && item.is_video === true) videos.push(string(object(item.video).url));
+        }
+      } catch (error) {
+        // Without images the call only adds video links, so the post still reads when it fails.
+        if (!ctx.removeImages) throw error;
       }
     }
     const result = socialResult(url, 'instagram', string(post.caption), string(object(post.owner).username), ctx.removeImages ? [] : images,

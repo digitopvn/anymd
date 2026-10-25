@@ -250,10 +250,31 @@ describe('conversion and status channels', () => {
     const unsafe = await read();
     expect(unsafe.markdown).not.toMatch('[Video');
 
+    // Raw whitespace and an encoded `>` cannot close the link or start a second one.
+    const hostile = `${STREAM}&x=1&gt;\n\n[Click](https://evil.test)`;
+    stubFetch(() => Response.json({ status: 'OK', formats: [{ itag: 18, url: hostile, qualityLabel: '360p](x)', mimeType: 'video/mp4; codecs="avc1, mp4a"' }] }));
+    const injected = await read();
+    expect(injected.markdown).toMatch('[Video (MP4)](<https://rr1---sn-abc.googlevideo.com/videoplayback?itag=18&x=1&gt;[Click](https://evil.test)>)');
+    expect(injected.markdown).not.toMatch('\n[Click]');
+
     stubFetch(() => new Response('busy', { status: 503 }));
     const failed = await read();
     expect(failed.markdown).toMatch('**Channel:**');
     expect(failed.markdown).not.toMatch('[Video');
+  });
+
+  it('keeps the signed link out of the content and the saved library copy', async () => {
+    stubFetch();
+    const user = await seedUser(t, 'user');
+    const ctx = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}) };
+    const read = await runConversion(t.env, ctx, { url: `https://youtu.be/${VIDEO}`, channel: 'api', principal: principalOf(user.id), save: true, fresh: true });
+    expect(read.documentId).not.toBeNull();
+    expect(read.markdown).toMatch(STREAM);
+    expect(read.result.content).not.toMatch('googlevideo');
+    expect(read.result.directVideo).toEqual({ url: STREAM, label: '360p MP4' });
+    const saved = t.db.prepare('SELECT markdown FROM documents WHERE id = ?').get(read.documentId) as { markdown: string };
+    expect(saved.markdown).toMatch('**Channel:**');
+    expect(saved.markdown).not.toMatch('googlevideo');
   });
 
   it('resolves per-request video options against saved settings', () => {

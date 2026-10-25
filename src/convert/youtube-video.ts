@@ -344,24 +344,42 @@ async function resolveFormat(provider: VideoProvider, videoId: string, timeoutMs
   return picked;
 }
 
-/** How long a read waits for a provider's stream list before it moves on. */
-export const DIRECT_VIDEO_TIMEOUT_MS = 8_000;
+/** Total time a read waits for a direct stream across all providers, so the link never slows it much. */
+export const DIRECT_VIDEO_BUDGET_MS = 5_000;
+/** A provider is not tried with less time than this left. */
+const MIN_PROVIDER_MS = 500;
+
+export interface DirectVideo {
+  url: string;
+  /** Link text, such as `360p MP4` or `144p MP4 no audio`. */
+  label: string;
+}
 
 /**
- * The lowest-quality MP4 stream a read links directly, trying each provider in turn. The URL is
- * signed by YouTube and expires after a few hours. Null when no provider resolves one; a read never
- * fails over it.
+ * The lowest-quality MP4 stream a read links directly, trying each provider in turn within one time
+ * budget. The URL is signed by YouTube and expires after a few hours. Null when no provider resolves
+ * one in time; a read never fails over it.
  */
-export async function resolveDirectVideo(env: Env, videoId: string): Promise<{ url: string; quality: string | null; audio: boolean } | null> {
+export async function resolveDirectVideo(env: Env, videoId: string): Promise<DirectVideo | null> {
+  const deadline = Date.now() + DIRECT_VIDEO_BUDGET_MS;
   for (const provider of videoProviders(env)) {
+    const left = deadline - Date.now();
+    if (left < MIN_PROVIDER_MS) break;
     try {
-      const { format, audio } = await resolveFormat(provider, videoId, DIRECT_VIDEO_TIMEOUT_MS);
-      return { url: format.url!, quality: format.qualityLabel ?? null, audio };
+      const { format, audio } = await resolveFormat(provider, videoId, left);
+      // The parsed href, not the provider's raw string, is what the Markdown link may contain.
+      const quality = /^\d{3,4}p\d{0,2}$/.test(format.qualityLabel ?? '') ? format.qualityLabel : '';
+      return { url: new URL(format.url!).href, label: [quality, 'MP4', audio ? '' : 'no audio'].filter(Boolean).join(' ') };
     } catch (err) {
       console.warn('direct video provider failed', provider.name, err instanceof VideoJobError ? err.code : err);
     }
   }
   return null;
+}
+
+/** Markdown for the direct link; added to the response only, never to the saved library copy. */
+export function directVideoMarkdown(video: DirectVideo): string {
+  return `[Video (${video.label})](<${video.url}>)\n\n> The MP4 link is signed by YouTube and expires after a few hours; read the video again later for a fresh link.`;
 }
 
 /**

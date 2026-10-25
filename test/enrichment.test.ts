@@ -613,6 +613,17 @@ describe('social video links', () => {
     expect(articleImages(result.content, result.source)).toEqual([]);
   });
 
+  it('still reads an Instagram carousel with images off when the media endpoint fails', async () => {
+    stub({
+      '/v1/post/resolve': { shortcode: 'MIXED2' },
+      '/v1/post': { shortcode: 'MIXED2', type: 'carousel', is_video: false, caption: 'fixture carousel', owner: { username: 'fixture_author' }, media_id: 'media-5' },
+      '/v1/post/media': { error: 'unavailable' },
+    });
+    const result = await instagramAdapter.convert(new URL('https://www.instagram.com/p/MIXED2/'), context(true));
+    expect(result.content).toBe('fixture carousel');
+    await expect(instagramAdapter.convert(new URL('https://www.instagram.com/p/MIXED2/'), context(false))).rejects.toMatchObject({ code: 'upstream_schema' });
+  });
+
   it('links the first Threads video version of the post and of carousel items', async () => {
     const post = {
       pk: shortcodeId('VIDEO1'), user: { username: 'fixture_author' }, caption: { text: 'fixture video' },

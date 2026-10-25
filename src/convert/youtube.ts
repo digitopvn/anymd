@@ -152,10 +152,6 @@ async function convertYoutube(url: URL, ctx: ConvertContext): Promise<ConvertRes
   const thumb = oembed.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
   const parts = [`[![${oembed.title.replace(/[[\]]/g, '')}](${thumb})](${canonicalUrl})`];
   parts.push(`**Channel:** [${oembed.author_name}](${oembed.author_url})`);
-  if (video) {
-    const label = [video.quality, 'MP4', video.audio ? '' : 'no audio'].filter(Boolean).join(' ');
-    parts.push(`[Video (${label})](<${video.url}>)\n\n> The MP4 link is signed by YouTube and expires after a few hours; read the video again for a fresh link.`);
-  }
   if (transcript) parts.push(transcript);
   else parts.push('> Transcript unavailable for this video.');
   const content = parts.join('\n\n');
@@ -172,6 +168,7 @@ async function convertYoutube(url: URL, ctx: ConvertContext): Promise<ConvertRes
     sourceKind: 'youtube',
     image: thumb,
     site: 'YouTube',
+    ...(video ? { directVideo: video } : {}),
   };
 }
 

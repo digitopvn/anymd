@@ -1,6 +1,7 @@
 import type { Env } from '../env';
 import type { Tracer } from '../lib/tracer';
 import type { ConversionBudget, Enrichment, EnrichmentOptions } from './enrichment-types';
+import type { DirectVideo } from './youtube-video';
 
 export type SourceKind =
   | 'web'
@@ -38,6 +39,8 @@ export interface ConvertResult {
   favicon?: string;
   image?: string;
   site?: string;
+  /** YouTube: a signed, expiring MP4 stream. Shown in the response Markdown, never saved to the library. */
+  directVideo?: DirectVideo;
   /** Size of the fetched HTML, for the "smaller than HTML" ratio. */
   sourceBytes?: number;
   // Engagement stats (X/Twitter only)
