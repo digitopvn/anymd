@@ -1,7 +1,7 @@
 ---
 title: "REST API"
 description: "The anymd REST API v1: authentication, errors, conversion, library, search, usage, keys and admin endpoints with curl, JavaScript and Python examples."
-updated: "2026-10-15"
+updated: "2026-10-25"
 ---
 
 Base URL: `https://anymd.cc/api/v1`. Everything is JSON unless noted.

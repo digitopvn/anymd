@@ -1,7 +1,7 @@
 ---
 title: "Supported sources"
 description: "What anymd converts today (web pages, social posts, X, YouTube, GitHub, Reddit, Hacker News, PDFs, Office files and images), what each returns, limits, and what's planned."
-updated: "2026-10-10"
+updated: "2026-10-25"
 ---
 
 anymd picks a converter per URL. Specialised adapters go first; everything else goes through the general web pipeline. The `kind` field in the frontmatter (and the `X-Anymd-Kind` header) tells you which one ran.
@@ -54,7 +54,7 @@ Every read converts the requested post. Signed-in callers can opt in to the root
 
 Facebook, Instagram, Threads and LinkedIn adapters require an account and a configured `RAPIDAPI_KEY`; they accept public post URLs and cost 10 credits for the base post. Comments are opt-in with `includeComments=1` and are charged in started batches of 20. The response can include media without enabling comment retrieval.
 
-A post with a video gets a `[Video](<…>)` link to its MP4 file, one per video in a carousel, as X posts do. The link comes from the provider's own response, at no extra cost: `video_url` on Instagram (the stream with sound), the first `video_versions` entry on Threads, `video.stream_url` on LinkedIn and `video` on Facebook (the HD, then SD file, when the provider sends only those). `images=0` removes images but keeps video links. These URLs are signed by the platform's CDN and expire, so download the file soon after reading, or read the post again for a new link once the one-hour cache has expired. Video links are part of the post's content, like its image URLs, so a copy saved to your library keeps the link from the read that saved it, and that link stops working once it expires.
+A post with a video gets a `[Video](<…>)` link to its MP4 file, one per video in a carousel, as X posts do. The link comes from the provider's own response, at no extra cost: `video_url` on Instagram (the stream with sound), the first `video_versions` entry on Threads, `video.stream_url` on LinkedIn and `video` on Facebook (the HD, then SD file, when the provider sends only those). `images=0` removes images but keeps video links. These URLs are signed by the platform's CDN and expire, so download the file soon after reading, or read the post again for a new link once the one-hour cache has expired (or with `fresh=1`). Video links are part of the post's content, like its image URLs, so a copy saved to your library keeps the link from the read that saved it, and that link stops working once it expires.
 
 Comment retrieval depends on upstream provider availability. Threads uses the `threads-api4.p.rapidapi.com` provider and supports nested replies within the bounded request budget. When that provider reports `has_next_page: true` without a cursor, anymd marks coverage `source_incomplete` instead of treating the page as a successful complete result. Instagram base post, media and image analysis are available, but chronological comments can time out and fall back to a popular subset; reply requests can return 429, so reply coverage is not fully proven. Check `enrichment.comments.complete`, `count` and `reason` instead of assuming comments are complete.
 
@@ -72,7 +72,7 @@ Watch, `youtu.be`, Shorts and Live URLs. Title, channel and thumbnail come from 
 
 Pass `lang=vi` (or any language code) to prefer a transcript language. When no transcript is available, the output says so and still includes the video's metadata. That conversion is still charged.
 
-Every read, anonymous ones included, also links the video's lowest-quality MP4 that has sound, at no extra cost. The link goes at the end of the Markdown:
+Every read, anonymous ones included, also links the video's lowest-quality MP4 that has sound (a silent stream, labelled `no audio`, only when no other exists), at no extra cost. The link goes at the end of the Markdown:
 
 ```markdown
 [Video (360p MP4)](<https://rr1---sn-….googlevideo.com/videoplayback?…>)
@@ -80,7 +80,7 @@ Every read, anonymous ones included, also links the video's lowest-quality MP4 t
 > The MP4 link is signed by YouTube and expires after a few hours; read the video again later for a fresh link.
 ```
 
-The JSON response carries the same link in `direct_video` (`{ url, label }`). It is not part of `content`, and it is not saved to your library, because a new signed link would otherwise change the saved document on every read. The stream comes from VidCap only (the download below can also fall back to RapidAPI ytstream), and the read waits at most 5 seconds for it. When VidCap returns no stream in time, or one that would expire within 90 minutes, the link is left out and the read still succeeds. Reads are cached for an hour, with or without the link, so reading again only gives a new link after that. For a lasting copy, use the CDN download.
+The JSON response carries the same link in `direct_video` (`{ url, label }`). It is not part of `content`, and it is not saved to your library, because a new signed link would otherwise change the saved document on every read. The stream comes from VidCap only (the download below can also fall back to RapidAPI ytstream), and the read waits at most 5 seconds for it. When VidCap returns no stream in time, or one that would expire within 90 minutes, the link is left out and the read still succeeds. Reads are cached for an hour, with or without the link, so reading again gives a new link only after that, or right away with `fresh=1`. For a lasting copy, use the CDN download.
 
 ### Video download to the anymd CDN
 

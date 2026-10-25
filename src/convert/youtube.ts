@@ -1,7 +1,7 @@
 /**
  * YouTube adapter — inherited from nextlevelbuilder/defuddle.
  * Metadata via oEmbed; transcript via RapidAPI youtube-transcript3, falling back to VidCap; a direct
- * lowest-quality MP4 link via VidCap, falling back to RapidAPI ytstream.
+ * lowest-quality MP4 link via VidCap only (ytstream links are not proven to play from other IPs).
  */
 import { countWords, ConvertError, type ConvertContext, type ConvertResult, type SourceAdapter } from './types';
 import { resolveDirectVideo } from './youtube-video';

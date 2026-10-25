@@ -636,6 +636,17 @@ describe('social video links', () => {
     stub({ '/api/post/detail': { data: { data: { edges: [{ node: { thread_items: [{ post }] } }] } } } });
     const result = await threadsAdapter.convert(new URL('https://www.threads.com/@fixture_author/post/VIDEO1'), context());
     expect(videos(result.content)).toEqual(['https://cdn.example/threads.mp4']);
+
+    const carousel = {
+      pk: shortcodeId('VIDEO2'), user: { username: 'fixture_author' }, caption: { text: 'fixture carousel' },
+      carousel_media: [
+        { image_versions2: { candidates: [{ url: 'https://cdn.example/photo.jpg' }] } },
+        { video_versions: [{ type: 101, url: 'https://cdn.example/clip.mp4' }] },
+      ],
+    };
+    stub({ '/api/post/detail': { data: { data: { edges: [{ node: { thread_items: [{ post: carousel }] } }] } } } });
+    const mixed = await threadsAdapter.convert(new URL('https://www.threads.com/@fixture_author/post/VIDEO2'), context());
+    expect(videos(mixed.content)).toEqual(['https://cdn.example/clip.mp4']);
   });
 
   it('links a LinkedIn video stream, even on a post without text or images', async () => {

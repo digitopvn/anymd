@@ -369,7 +369,7 @@ export async function resolveDirectVideo(env: Env, videoId: string): Promise<Dir
     const url = new URL(format.url!);
     if (!url.hostname.endsWith('.googlevideo.com')) throw new VideoJobError('invalid_stream_url');
     const expire = Number(url.searchParams.get('expire'));
-    if (expire && expire * 1000 - Date.now() < DIRECT_VIDEO_MIN_LIFETIME_MS) throw new VideoJobError('invalid_stream_url');
+    if (!expire || expire * 1000 - Date.now() < DIRECT_VIDEO_MIN_LIFETIME_MS) throw new VideoJobError('invalid_stream_url');
     const quality = /^\d{3,4}p\d{0,2}$/.test(format.qualityLabel ?? '') ? format.qualityLabel : '';
     return { url: url.href, label: [quality, 'MP4', audio ? '' : 'no audio'].filter(Boolean).join(' ') };
   } catch (err) {

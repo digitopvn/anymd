@@ -31,7 +31,7 @@ export const instagramAdapter: SourceAdapter = {
         }
       } catch (error) {
         // Without images the call only adds video links, so the post still reads when the provider
-        // has no media for it; budget and timeout errors still stop the read.
+        // fails or times out (`upstream_*`) or has no media; budget and subscription errors still stop it.
         const code = error instanceof ConvertError ? error.code : '';
         if (!ctx.removeImages || !(code.startsWith('upstream') || code === 'not_found')) throw error;
       }
