@@ -39,7 +39,7 @@ export const instagramAdapter: SourceAdapter = {
       try { data = object(await rapidJson(HOST, job.path, job.params, ctx)); }
       catch (error) {
         // Popular comments are a different, finite subset; expose that limitation explicitly.
-        if (job.params.sort !== 'recent' || job.params.cursor) throw error;
+        if (job.params.sort !== 'recent' || job.params.cursor || (error instanceof ConvertError && error.code === 'provider_quota')) throw error;
         data = object(await rapidJson(HOST, job.path, { ...job.params, sort: 'popular' }, ctx));
         complete = false;
       }

@@ -130,18 +130,16 @@ describe('provider redirect handling', () => {
     });
   });
 
-  it('maps a RapidAPI 429 to provider_quota and records the provider host on the trace span', async () => {
+  it('maps a RapidAPI 429 to provider_quota', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"message":"You have exceeded the MONTHLY quota"}', { status: 429 })));
-    const spans: { name: string; meta?: Record<string, unknown> }[] = [];
     const ctx = {
       env: { RAPIDAPI_KEY: 'test-placeholder' },
-      tracer: { span: async (name: string, fn: () => Promise<unknown>, meta?: Record<string, unknown>) => { spans.push({ name, meta }); return fn(); } },
+      tracer,
       budget: new ConversionBudget(100),
     } as unknown as ConvertContext;
 
     await expect(rapidJson('provider.example', '/post', { id: '1' }, ctx))
       .rejects.toMatchObject({ code: 'provider_quota', status: 503 });
-    expect(spans).toEqual([{ name: 'social.fetch', meta: { host: 'provider.example' } }]);
   });
 
   it('uses manual redirects for OpenRouter and does not charge a redirected model response', async () => {
@@ -261,6 +259,27 @@ describe('Instagram media selection', () => {
       'https://cdn.example/second.jpg',
     ]);
     expect(calls).toEqual(['/v1/post/resolve', '/v1/post', '/v1/post/media']);
+  });
+
+  it('does not retry comments with popular sort when the provider quota is spent', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = new URL(String(input));
+      calls.push(`${url.pathname}${url.searchParams.has('sort') ? `?sort=${url.searchParams.get('sort')}` : ''}`);
+      if (url.pathname === '/v1/post/resolve') return json({ shortcode: 'PHOTO1' });
+      if (url.pathname === '/v1/post') return json({
+        shortcode: 'PHOTO1', type: 'photo', is_video: false,
+        display_url: 'https://cdn.example/photo.jpg', caption: 'fixture photo',
+        owner: { username: 'fixture_author' }, media_id: 'media-1',
+      });
+      if (url.pathname === '/v1/post/comments') return new Response('{}', { status: 429 });
+      throw new Error(`unexpected endpoint ${url.pathname}`);
+    }));
+
+    const result = await instagramAdapter.convert(new URL('https://www.instagram.com/p/PHOTO1/'), { ...context(), includeComments: true } as ConvertContext);
+
+    expect(result.enrichment?.comments).toMatchObject({ complete: false, count: 0, reason: 'provider_quota' });
+    expect(calls).toEqual(['/v1/post/resolve', '/v1/post', '/v1/post/comments?sort=recent']);
   });
 });
 
