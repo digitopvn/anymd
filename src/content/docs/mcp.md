@@ -79,7 +79,7 @@ anymd connects to ChatGPT as an app over OAuth, with no API key to paste:
 2. Sign in to anymd when ChatGPT opens the consent screen, and approve the requested access.
 3. Ask something like *"Read https://en.wikipedia.org/wiki/Markdown and summarize it with the source link"* or *"What have I saved about vector search?"*
 
-ChatGPT registers itself through Dynamic Client Registration and uses PKCE. A connection that asks for no scopes gets `convert`, `library:read` and `library:write`; admin tools never appear unless an owner or admin approves them by name. The anymd app reads with `save: false` unless you ask it to save. Disconnect it from **Dashboard → API keys → Connected apps**, or from ChatGPT's settings. Help: [Support](/docs/support).
+ChatGPT registers itself through Dynamic Client Registration and uses PKCE. A connection that asks for no scopes gets `convert`, `library:read` and `library:write`; admin tools never appear unless an owner or admin approves them by name. `read_url` saves by default on every client; the anymd app's skills ask ChatGPT to pass `save: false` unless you ask it to save, and a custom app without those skills saves as any other client does. Disconnect it from **Dashboard → API keys → Connected apps**, or from ChatGPT's settings. Help: [Support](/docs/support).
 
 ### Any other client
 
@@ -99,6 +99,8 @@ Tools are listed only when the caller holds the scope they need.
 `submit_feedback` publishes a public GitHub issue and cannot be undone: call it only when your user asked to send feedback and approved the text. See [Send feedback](/docs/feedback).
 
 ### Conversion and library
+
+MCP results leave out the diagnostics REST returns (`trace_id`, `duration_ms`, `took_ms`); find them in the dashboard's usage log and traces.
 
 | Tool | Input | Needs |
 |---|---|---|

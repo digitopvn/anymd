@@ -111,9 +111,9 @@ AI features run only to perform the conversion or search you asked for. Document
 
 You can connect an AI assistant such as ChatGPT, Claude or Cursor to your anymd account through our MCP server, either by signing in through OAuth or by giving it an API key.
 
-- **What the assistant sends us.** Only the tool calls it makes on your behalf: the URL to read, your search query, a document id, tags, and whether to save a result. We do not receive your conversation with the assistant.
+- **What the assistant sends us.** Only the tool calls it makes on your behalf: the URL or search you ask for, the options for that read or search, document ids and tags, and whether to save a result. We do not receive your conversation with the assistant.
 - **What we send back.** Only what the tool returns: the Markdown of the page or document you asked for, search results from your own library, and whether a read was saved. Read and search results carry no internal trace ids or timings.
-- **What we store.** Calls are recorded like any other request (see *Usage events and traces*). Pages are saved to your library only when the assistant asks to save them, which our ChatGPT plugin does only when you ask. For an OAuth connection we also keep the client's name and redirect address, the scopes you approved, and hashed access and refresh tokens. Access tokens expire after 1 hour and refresh tokens after 30 days.
+- **What we store.** Calls are recorded like any other request (see *Usage events and traces*). A read is saved to your library unless the assistant passes `save: false`; our ChatGPT app is instructed to do that unless you ask it to save. For an OAuth connection we also keep the client's name and redirect address, the scopes you approved, and hashed access and refresh tokens. Access tokens expire after 1 hour and refresh tokens after 30 days.
 - **Who else sees it.** The assistant's provider receives the tool results under its own privacy policy (for ChatGPT, OpenAI's). We do not share your library with the provider beyond the results you request.
 - **Disconnecting.** Open **Dashboard → API keys → Connected apps** and choose **Disconnect**, or revoke the API key you gave the assistant. Its tokens stop working immediately. Documents it saved stay in your library until you delete them.
 

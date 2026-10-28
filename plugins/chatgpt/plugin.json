@@ -41,7 +41,7 @@
           "positive": [
             {
               "description": "Read a public page without saving it",
-              "prompt": "Read https://en.wikipedia.org/wiki/Markdown and give me a three-sentence summary with the source link.",
+              "prompt": "Without saving it, read https://en.wikipedia.org/wiki/Markdown and give me a three-sentence summary with the source link.",
               "tools_triggered": "read_url",
               "expected_behavior": "Calls read_url with save=false. Returns a short summary of the Markdown article that matches the page, with the Wikipedia URL as the source. The result reports saved=false and nothing is added to the library."
             },
@@ -49,13 +49,13 @@
               "description": "Recall a saved source by meaning",
               "prompt": "What have I saved about vector search?",
               "tools_triggered": "search_library",
-              "expected_behavior": "Returns the 'Vector search primer (synthetic sample)' document from the review account's library with its title and source URL, and summarizes the snippet without inventing content."
+              "expected_behavior": "Returns the review account's vector-search-primer.md sample (heading 'Vector search primer (synthetic sample)') with its source URL, and summarizes it without inventing content."
             },
             {
               "description": "Open a saved source and quote it",
               "prompt": "Open my Project Lighthouse launch plan and list its action items.",
               "tools_triggered": "search_library, get_document",
-              "expected_behavior": "Finds the 'Project Lighthouse launch plan (synthetic sample)' document, opens it with get_document and lists exactly the three action items it contains, citing the document's source URL."
+              "expected_behavior": "Finds the lighthouse-launch-plan.md sample (heading 'Project Lighthouse launch plan (synthetic sample)'), opens it with get_document and lists exactly the three action items it contains, citing the document's source URL."
             },
             {
               "description": "Save a page only when asked",
@@ -67,7 +67,7 @@
               "description": "Answer from the library before reading the web again",
               "prompt": "According to my release checklist, how long should we watch error rates after a release?",
               "tools_triggered": "search_library, get_document",
-              "expected_behavior": "Answers '30 minutes' from the 'Release checklist (synthetic sample)' document, quotes the step and cites the document. It does not read any web page."
+              "expected_behavior": "Answers '30 minutes' from the release-checklist.md sample (heading 'Release checklist (synthetic sample)'), quotes the step and cites the document. It does not read any web page."
             }
           ],
           "negative": [

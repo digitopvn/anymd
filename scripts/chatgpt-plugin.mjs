@@ -3,17 +3,21 @@
 //   node scripts/chatgpt-plugin.mjs validate          (default; offline)
 //   node scripts/chatgpt-plugin.mjs check-urls        (fetches every listing URL and the MCP endpoint)
 //   node scripts/chatgpt-plugin.mjs pack [out.zip]    (validates first; leaves review/ out of the upload)
-//   ANYMD_REVIEWER_KEY=amd_… node scripts/chatgpt-plugin.mjs seed [--base https://anymd.cc]
+//   ANYMD_REVIEWER_KEY=amd_… node scripts/chatgpt-plugin.mjs seed [--ref <commit>] [--base https://anymd.cc]
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const PLUGIN_DIR = join(ROOT, 'plugins/chatgpt');
-const SAMPLES_BASE = 'https://github.com/digitopvn/anymd/blob/dev/plugins/chatgpt/review/samples';
-// Files the reviewer never uploads: samples feed the reviewer library, they are not part of the package.
-const PACK_EXCLUDE = ['review'];
+// Raw files are read as text, so the stored document is exactly the sample, titled by its file name.
+const SAMPLES_RAW = 'https://raw.githubusercontent.com/digitopvn/anymd';
+// The only top-level entries the upload holds. review/ feeds the reviewer library and is never uploaded.
+const PACKAGE_ENTRIES = ['plugin.json', 'mcp.json', 'assets', 'skills'];
+const ALLOWED_ENTRIES = new Set([...PACKAGE_ENTRIES, 'review']);
+// Credential shapes that must never appear in shipped text: anymd keys, OpenAI-style keys, bearer tokens.
+const SECRET_PATTERNS = [/\bamd_[A-Za-z0-9]{8,}/, /\bsk-[A-Za-z0-9_-]{16,}/, /\bBearer\s+(?!amd_…)[A-Za-z0-9._~+/=-]{16,}/];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const FORBIDDEN_KEYS = new Set(['test_credentials', 'reviewer_instructions', 'clientSecret', 'client_secret', 'password']);
@@ -28,6 +32,7 @@ function pngSize(file) {
 }
 
 function findForbidden(value, path, out) {
+  if (typeof value === 'string' && SECRET_PATTERNS.some((re) => re.test(value))) out.push(`${path} looks like it holds a credential`);
   if (Array.isArray(value)) value.forEach((v, i) => findForbidden(v, `${path}[${i}]`, out));
   else if (value && typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) {
@@ -36,6 +41,23 @@ function findForbidden(value, path, out) {
       findForbidden(v, `${path}.${k}`, out);
     }
   }
+}
+
+/** Files under `rel` (relative to `dir`), depth first. Symlinks are listed, never followed. */
+function walk(dir, rel = '') {
+  return readdirSync(join(dir, rel)).flatMap((name) => {
+    const p = rel ? `${rel}/${name}` : name;
+    return lstatSync(join(dir, p)).isDirectory() ? walk(dir, p) : [p];
+  });
+}
+
+/** MCP tool names the shipped skills tell the assistant to call. */
+export function skillToolNames(dir = PLUGIN_DIR) {
+  const names = new Set();
+  for (const f of walk(dir, 'skills').filter((p) => p.endsWith('.md'))) {
+    for (const m of readFileSync(join(dir, f), 'utf8').matchAll(/`((?:read|search|get|list|tag|delete|convert)_[a-z_]+)`/g)) names.add(m[1]);
+  }
+  return [...names];
 }
 
 /** Every listing URL the directory shows, for the live check. */
@@ -98,7 +120,7 @@ export function validatePlugin(dir = PLUGIN_DIR, plugin = undefined) {
   }
   // Every skill shipped in the package needs the same frontmatter.
   const skillsDir = join(dir, 'skills');
-  if (existsSync(skillsDir)) for (const s of readdirSync(skillsDir)) {
+  if (existsSync(skillsDir)) for (const s of readdirSync(skillsDir).filter((d) => statSync(join(skillsDir, d)).isDirectory())) {
     const f = join(skillsDir, s, 'SKILL.md');
     need(existsSync(f) && /^---\n[\s\S]*?\bname:\s*\S[\s\S]*?\bdescription:\s*\S[\s\S]*?\n---/.test(readFileSync(f, 'utf8')), `skills/${s}/SKILL.md must exist with name and description frontmatter`);
   }
@@ -124,6 +146,12 @@ export function validatePlugin(dir = PLUGIN_DIR, plugin = undefined) {
 
   findForbidden(plugin, 'plugin.json', errors);
   findForbidden(mcp, 'mcp.json', errors);
+  // The upload is an allowlist; anything unexpected (dotfiles, backups, links out of the package) fails here.
+  for (const name of readdirSync(dir)) need(ALLOWED_ENTRIES.has(name), `${name} is not part of the package; remove it`);
+  for (const f of PACKAGE_ENTRIES.filter((e) => existsSync(join(dir, e))).flatMap((e) => (lstatSync(join(dir, e)).isDirectory() ? walk(dir, e) : [e]))) {
+    if (lstatSync(join(dir, f)).isSymbolicLink()) errors.push(`${f} is a symlink; ship real files only`);
+    else if (/\.(md|json|txt)$/.test(f) && SECRET_PATTERNS.some((re) => re.test(readFileSync(join(dir, f), 'utf8')))) errors.push(`${f} looks like it holds a credential`);
+  }
   return errors;
 }
 
@@ -135,7 +163,7 @@ export async function checkUrls(dir = PLUGIN_DIR) {
     results.push({ url, status: res.status, ok: res.status === 200 });
   }
   for (const s of Object.values(readJson(join(dir, 'mcp.json')).mcpServers)) {
-    const res = await fetch(s.url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}', signal: AbortSignal.timeout(20000) });
+    const res = await fetch(s.url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}', signal: AbortSignal.timeout(20000) }).catch(() => ({ status: 0, headers: new Headers() }));
     const challenge = res.headers.get('www-authenticate') ?? '';
     results.push({ url: s.url, status: res.status, ok: res.status === 401 && challenge.includes('resource_metadata=') });
   }
@@ -147,21 +175,31 @@ function pack(out) {
   if (errors.length) throw new Error(`Package is not valid:\n- ${errors.join('\n- ')}`);
   const version = readJson(join(PLUGIN_DIR, 'plugin.json')).version;
   const target = resolve(out ?? join(ROOT, `dist/anymd-chatgpt-plugin-${version}.zip`));
-  execFileSync('mkdir', ['-p', dirname(target)]);
+  mkdirSync(dirname(target), { recursive: true });
   rmSync(target, { force: true });
-  execFileSync('zip', ['-r', '-X', '-q', target, '.', ...PACK_EXCLUDE.flatMap((d) => ['-x', `${d}/*`])], { cwd: PLUGIN_DIR });
+  try {
+    execFileSync('zip', ['-r', '-X', '-q', '-y', target, ...PACKAGE_ENTRIES], { cwd: PLUGIN_DIR });
+  } catch (e) {
+    throw new Error(e.code === 'ENOENT' ? 'The zip command is not installed; install it or zip plugin.json, mcp.json, assets/ and skills/ by hand.' : e.message);
+  }
   return target;
 }
 
-async function seed(base) {
+async function seed(base, ref) {
   const key = process.env.ANYMD_REVIEWER_KEY;
   if (!key?.startsWith('amd_')) throw new Error('Set ANYMD_REVIEWER_KEY to an API key (amd_…) of the reviewer account.');
+  if (!/^[\w./-]+$/.test(ref ?? '')) throw new Error('Pass --ref <commit or tag> that is pushed to GitHub, so the samples match this checkout.');
+  const origin = new URL(base).origin;
   const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+  const json = async (res, name) => {
+    try { return await res.json(); } catch { throw new Error(`${name}: ${res.status} with a non-JSON body`); }
+  };
   for (const name of readdirSync(join(PLUGIN_DIR, 'review/samples')).filter((f) => f.endsWith('.md')).sort()) {
-    const res = await fetch(`${base}/api/v1/convert`, { method: 'POST', headers, body: JSON.stringify({ url: `${SAMPLES_BASE}/${name}`, save: true }), signal: AbortSignal.timeout(70000) });
-    const data = await res.json();
+    const url = `${SAMPLES_RAW}/${ref}/plugins/chatgpt/review/samples/${name}`;
+    const res = await fetch(`${origin}/api/v1/convert`, { method: 'POST', headers, body: JSON.stringify({ url, save: true, fresh: true }), signal: AbortSignal.timeout(70000) });
+    const data = await json(res, name);
     if (!res.ok || !data.document_id) throw new Error(`${name}: convert failed (${res.status} ${data.error?.code ?? data.not_saved_reason ?? ''})`);
-    const tag = await fetch(`${base}/api/v1/library/${data.document_id}/tags`, { method: 'POST', headers, body: JSON.stringify({ add: ['review-sample'] }) });
+    const tag = await fetch(`${origin}/api/v1/library/${data.document_id}/tags`, { method: 'POST', headers, body: JSON.stringify({ add: ['review-sample'] }), signal: AbortSignal.timeout(20000) });
     if (!tag.ok) throw new Error(`${name}: tagging failed (${tag.status})`);
     console.log(`${name} → ${data.document_id} "${data.title}"`);
   }
@@ -181,8 +219,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     } else if (mode === 'pack') {
       console.log(pack(rest[0]));
     } else if (mode === 'seed') {
-      const i = rest.indexOf('--base');
-      await seed(i >= 0 ? rest[i + 1] : 'https://anymd.cc');
+      const flag = (name, fallback) => (rest.includes(name) ? rest[rest.indexOf(name) + 1] : fallback);
+      await seed(flag('--base', 'https://anymd.cc'), flag('--ref', undefined));
     } else {
       throw new Error(`Unknown mode "${mode}". Use validate, check-urls, pack or seed.`);
     }

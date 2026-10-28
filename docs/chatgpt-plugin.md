@@ -18,10 +18,10 @@ plugins/chatgpt/
 
 | Mode | What it does |
 |---|---|
-| `validate` (default) | Offline check against the directory rules: required fields and lengths (display name and short description ≤ 30, long description ≤ 4000, 1–3 default prompts ≤ 128), https listing URLs, square PNG assets 48 px–5 MiB, skill frontmatter, exactly 5 positive and 3 negative test cases, OAuth with DCR on a streamable-http server, and no `test_credentials`, `reviewer_instructions`, client secrets or non-empty headers. `test/chatgpt-plugin-package.test.ts` runs the same check in `npm test`. |
+| `validate` (default) | Offline check against the directory rules: required fields and lengths (display name and short description ≤ 30, long description ≤ 4000, 1–3 default prompts ≤ 128), https listing URLs, square PNG assets 48 px–5 MiB, skill frontmatter, exactly 5 positive and 3 negative test cases, OAuth with DCR (or CIMD) on a streamable-http server, no `test_credentials`, `reviewer_instructions`, client secrets or non-empty headers, no credential-shaped strings in any shipped text, and no files or symlinks outside the allowlist. `test/chatgpt-plugin-package.test.ts` runs the same check in `npm test`. |
 | `check-urls` | Fetches the four listing URLs (expects 200) and posts `tools/list` to the MCP URL (expects 401 with `resource_metadata`). |
-| `pack [out.zip]` | Validates, then zips the package without `review/` to `dist/anymd-chatgpt-plugin-<version>.zip`. |
-| `seed [--base URL]` | Reads each `review/samples/*.md` from GitHub into the account behind `ANYMD_REVIEWER_KEY` with `save: true` and tags it `review-sample`. |
+| `pack [out.zip]` | Validates, then zips exactly `plugin.json`, `mcp.json`, `assets/` and `skills/` (symlinks stored, never followed) to `dist/anymd-chatgpt-plugin-<version>.zip`. Needs the `zip` command. |
+| `seed --ref <commit> [--base URL]` | Reads each `review/samples/*.md` as raw text from GitHub at that pushed commit into the account behind `ANYMD_REVIEWER_KEY` with `save: true`, and tags it `review-sample`. |
 
 `mcp.json` puts `auth` under `extensions["com.openai"]`, as OpenAI's plugin docs show. The generic agent-plugins `mcp.schema.json` does not list `extensions`; the OpenAI portal is the validator that counts.
 
@@ -32,8 +32,9 @@ plugins/chatgpt/
 | OAuth discovery, DCR, PKCE S256, RFC 9207 `iss` on success and denial, RFC 8707 resource check | `@cloudflare/workers-oauth-provider` configured in `src/worker.ts` | `test/chatgpt-connector.test.ts` |
 | ChatGPT redirect URI `https://chatgpt.com/connector_platform_oauth_redirect` | Accepted by DCR like any https redirect | same test |
 | Least privilege by default | No-scope clients get `convert library:read library:write`; admin tools need named scopes | same test, `test/oauth-scopes.test.ts` |
-| Disconnect revokes access | Dashboard → API keys → Connected apps, or token revocation | `test/chatgpt-connector.test.ts` (revoked token gets 401) |
-| Response minimization | `read_url` results drop `trace_id` and `duration_ms` (`src/mcp/server.ts`) | same test |
+| Disconnect revokes access | Dashboard → API keys → Connected apps, or token revocation | `test/chatgpt-connector.test.ts` (both paths: the token then gets 401) |
+| Response minimization | `read_url`, `search_library` and `search_social` results drop `trace_id`, `duration_ms` and `took_ms` (`withoutDiagnostics` in `src/mcp/server.ts`) | same test |
+| Save only on request | `read_url` saves by default for every client (public contract); the shipped skills tell ChatGPT to pass `save: false` unless the user asks, and P1's prompt says so explicitly | `plugins/chatgpt/skills/*/SKILL.md` |
 | No upsell in tool output | Quota errors say "Plans are described at …/pricing" | `src/convert/service.ts`, `src/convert/social-search.ts`, `src/routes/api.ts` |
 | Tool annotations | `src/mcp/tool-types.ts` presets per tool | `test/chatgpt-connector.test.ts` (destructive set on a default connection) |
 | Domain verification | `GET /.well-known/openai-apps-challenge` returns `OPENAI_APPS_CHALLENGE` as text, 404 while unset (`src/routes/public.tsx`) | same test |
@@ -57,9 +58,9 @@ The reviewer must reach a working library without MFA, customer data or a paid p
 2. Keep it on the free plan (500 credits a month); the test pack spends a few credits per run.
 3. Create an API key for it with the **Convert + library (agents)** preset and seed the library:
    ```bash
-   ANYMD_REVIEWER_KEY=amd_… npm run plugin:chatgpt -- seed
+   ANYMD_REVIEWER_KEY=amd_… npm run plugin:chatgpt -- seed --ref <pushed commit or tag>
    ```
-   The library then holds exactly the three synthetic samples, titled "Vector search primer (synthetic sample)", "Project Lighthouse launch plan (synthetic sample)" and "Release checklist (synthetic sample)". Check the titles in the dashboard, then revoke the API key: ChatGPT uses OAuth.
+   The library then holds exactly the three synthetic samples, stored as text and titled by file name: `lighthouse-launch-plan.md`, `release-checklist.md` and `vector-search-primer.md`. Check them in the dashboard, then revoke the API key: ChatGPT uses OAuth.
 4. Before each submission, delete anything else from the library (the "save" test case adds stephango.com/saw) and disconnect stale ChatGPT grants under Connected apps.
 
 ## Test pack

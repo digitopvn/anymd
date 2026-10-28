@@ -26,6 +26,7 @@ vi.mock('../src/convert/service', async (importOriginal) => {
 
 import worker from '../src/worker';
 import { normalizeTargetUrl } from '../src/convert';
+import { readPlugin, skillToolNames } from '../scripts/chatgpt-plugin.mjs';
 import { SESSION_COOKIE } from '../src/auth/identity';
 import { createTestEnv, seedSession, seedUser, type TestEnv } from './helpers/sqlite-env';
 
@@ -160,6 +161,12 @@ describe('ChatGPT connector OAuth', () => {
 
     const search = await mcp(token.access_token, 'tools/call', { name: 'search_library', arguments: { query: 'nothing saved yet', mode: 'fulltext' } });
     expect(search.body.result.isError).toBeFalsy();
+    expect(search.body.result.structuredContent.took_ms).toBeUndefined();
+
+    // Every tool the review test pack and the skills name exists on a default connection.
+    const pack = readPlugin().extensions['com.openai'].review.test_cases.positive as { tools_triggered: string }[];
+    for (const tool of pack.flatMap((c) => c.tools_triggered.split(',').map((x) => x.trim()))) expect(names.includes(tool), tool).toBe(true);
+    for (const tool of skillToolNames()) expect(names.includes(tool), tool).toBe(true);
   });
 
   it('returns iss with the access_denied redirect when the user declines', async () => {
@@ -201,6 +208,29 @@ describe('ChatGPT connector OAuth', () => {
     expect(revoke.status).toBe(200);
     const after = await mcp(token.access_token, 'tools/list');
     expect(after.status).toBe(401);
+  });
+});
+
+describe('Disconnecting from the dashboard', () => {
+  it('revokes the ChatGPT grant from Connected apps so its token stops working', async () => {
+    const clientId = await register();
+    const { verifier, challenge } = await pkce();
+    const code = (await consent(clientId, challenge, 'allow')).searchParams.get('code')!;
+    const token = (await (
+      await call('/oauth/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: CHATGPT_REDIRECT, client_id: clientId, code_verifier: verifier, resource: `${ORIGIN}/mcp` }),
+      })
+    ).json()) as { access_token: string };
+    expect((await mcp(token.access_token, 'tools/list')).status).toBe(200);
+
+    const keys = await (await call('/dashboard/keys', { headers: { cookie } })).text();
+    const action = /action="(\/dashboard\/grants\/[^"]+\/revoke)"/.exec(keys)?.[1];
+    expect(action, 'Connected apps lists the grant').toBeTruthy();
+    const res = await call(action!.replace(/&amp;/g, '&'), { method: 'POST', headers: { cookie, origin: ORIGIN } });
+    expect(res.status).toBe(302);
+    expect((await mcp(token.access_token, 'tools/list')).status).toBe(401);
   });
 });
 
