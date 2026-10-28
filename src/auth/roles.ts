@@ -63,6 +63,11 @@ export const ELEVATED_SCOPES: ReadonlySet<Scope> = new Set([...ALL_SCOPES.filter
 /** Admin control-plane scopes (everything outside customer and content work). */
 export const ADMIN_SCOPES: ReadonlySet<Scope> = new Set([...ADMIN_READ, ...ADMIN_WRITE, ...OWNER_ONLY]);
 
+/** Whether the role may hold any admin control-plane scope (owner and admin today). */
+export function roleHasAdminAccess(role: RoleName): boolean {
+  return ROLE_TEMPLATES[role].scopes.some((s) => ADMIN_SCOPES.has(s));
+}
+
 /**
  * What an OAuth client gets when it asks for no scopes: read the web, and save to and recall its
  * own library. Nothing elevated: no other users' data, no site state, no credential management.
