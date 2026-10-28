@@ -46,7 +46,7 @@ import { DESTRUCTIVE, holdsToolScope, IDEMPOTENT_WRITE, isMutation, READ_ONLY, T
 const SERVER_INFO = { name: 'anymd', title: 'anymd — the web context layer for AI agents', version: '1.1.0' };
 const INSTRUCTIONS_CORE =
   'anymd is the web context layer for AI agents: it reads public web content (web pages, GitHub, YouTube, Reddit, Hacker News, X, PDFs, Office files, images) into structured Markdown and keeps a private, searchable library of everything read. ' +
-  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document for full text, search_social to find public posts on X, Facebook, Instagram, Threads or LinkedIn (read a result with read_url).';
+  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document to open a saved document (long Markdown comes in windows: pass next_offset as offset to continue), search_social to find public posts on X, Facebook, Instagram, Threads or LinkedIn (read a result with read_url).';
 const INSTRUCTIONS_PAGES = 'Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision.';
 const INSTRUCTIONS_ADMIN =
   'Admin tools appear only for owner/admin credentials granted their scopes; get_admin_access_status explains what this connection can reach and how to reconnect with admin access. Admins: start with system_overview or get_user_stats, page with next_cursor, pass expected* values and an idempotencyKey with every change; every change lands in list_audit_events.';
