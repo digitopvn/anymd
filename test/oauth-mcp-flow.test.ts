@@ -84,6 +84,8 @@ interface AuthorizeOptions {
   redirect?: string;
   method?: string;
   resource?: string;
+  /** Extra consent form fields, as the user's choices on the consent screen. */
+  form?: Record<string, string>;
 }
 
 function authorizeQuery(o: AuthorizeOptions, challenge: string): string {
@@ -104,7 +106,7 @@ async function connect(who: Login, o: AuthorizeOptions) {
   const decided = await call('/oauth/authorize', {
     method: 'POST',
     headers: { cookie: `${who.cookie}; ${cookiesOf(page)}`, 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN },
-    body: new URLSearchParams({ state: handle!, decision: 'allow' }).toString(),
+    body: new URLSearchParams({ ...o.form, state: handle!, decision: 'allow' }).toString(),
   });
   expect(decided.status).toBe(302);
   const back = new URL(decided.headers.get('location')!);
@@ -234,7 +236,25 @@ describe('connect and reconnect', () => {
     expect(conn.html.includes('Example Agent')).toBe(true);
     expect(conn.html.includes(`Client ID: ${clientId}`)).toBe(true);
     expect(conn.html.includes('client.example')).toBe(true);
+    expect(/data-client-host[^>]*>\s*App identity: <strong[^>]*>client\.example<\/strong>/.test(conn.html)).toBe(true);
     expect((await mcp(conn.access_token, 'tools/list')).status).toBe(200);
+  });
+
+  it('shows a plain error, without the fetch failure, when a metadata-URL client cannot be loaded', async () => {
+    const clientId = 'https://broken.example/oauth/client.json';
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url !== clientId) return realFetch(input, init);
+      return new Response('upstream secret detail', { status: 500 });
+    });
+    const who = await login();
+    const { challenge } = await pkce();
+    const page = await call(`/oauth/authorize?${authorizeQuery({ clientId, redirect: 'https://broken.example/cb' }, challenge)}`, { headers: { cookie: who.cookie } });
+    expect(page.status).toBe(400);
+    const html = await page.text();
+    expect(html.includes('Could not load this app')).toBe(true);
+    expect(html.includes('upstream secret detail')).toBe(false);
   });
 });
 
@@ -277,6 +297,22 @@ describe('scopes, read-only and destructive tools', () => {
     const ok = await mcp(elevated.access_token, 'tools/call', { name: 'delete_document', arguments: { id: doc!.id } });
     expect(((await ok.json()) as { result: { isError?: boolean } }).result.isError).toBeUndefined();
     expect(t.db.prepare('SELECT COUNT(*) AS n FROM documents WHERE id = ?').get(doc!.id)).toEqual({ n: 0 });
+  });
+
+  it('offers deletion as an unchecked consent option, so a client that never asks for scopes can still be allowed to delete', async () => {
+    const who = await login();
+    const clientId = await register();
+    const base = await connect(who, { clientId });
+    expect(base.html.includes('name="allow_delete"')).toBe(true);
+    expect(base.html.includes('name="allow_delete" value="1" checked')).toBe(false);
+    expect((await toolNames(base.access_token)).includes('delete_document')).toBe(false);
+
+    const allowed = await connect(who, { clientId, form: { allow_delete: '1' } });
+    expect(allowed.scope.split(' ')).toEqual(expect.arrayContaining(['convert', 'library:read', 'library:write', 'library:delete']));
+    expect((await toolNames(allowed.access_token)).includes('delete_document')).toBe(true);
+    // Any other value of the field adds nothing.
+    const forged = await connect(who, { clientId, form: { allow_delete: 'true' } });
+    expect(forged.scope.split(' ').includes('library:delete')).toBe(false);
   });
 
   it('never reaches another account\'s documents', async () => {
@@ -354,7 +390,7 @@ describe('expired, revoked and dead credentials', () => {
     expect((res.headers.get('www-authenticate') ?? '').includes('resource_metadata=')).toBe(true);
   });
 
-  it('logs auth failures without the token and rate limits repeated failures per IP', async () => {
+  it('logs auth failures without the token and rate limits a credential replayed from one IP', async () => {
     t.env.RL_ANON = counter(2);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const bad = 'user-x:grant-y:not-a-real-secret-value';
@@ -363,6 +399,10 @@ describe('expired, revoked and dead credentials', () => {
     const limited = await mcp(bad, 'tools/list');
     expect(limited.status).toBe(429);
     expect(limited.headers.get('retry-after')).toBe('60');
+    // The challenge survives, so a client that refreshes on invalid_token still knows to.
+    expect((limited.headers.get('www-authenticate') ?? '').includes('invalid_token')).toBe(true);
+    // Another user's token from the same shared egress IP still gets its own 401.
+    expect((await mcp('user-z:grant-w:another-unknown-value', 'tools/list')).status).toBe(401);
     const lines = warn.mock.calls.map((c) => c.map(String).join(' '));
     expect(lines.some((l) => l.includes('"event":"oauth.auth_failed"') && l.includes('"reason":"token_not_found"'))).toBe(true);
     expect(lines.some((l) => l.includes('auth_failure_rate_limited'))).toBe(true);
@@ -371,7 +411,7 @@ describe('expired, revoked and dead credentials', () => {
     expect((await call('/mcp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(401);
   });
 
-  it('counts a rejected API key against the same failure budget', async () => {
+  it('rate limits a rejected API key replayed from one IP', async () => {
     t.env.RL_ANON = counter(1);
     const send = () => call('/mcp', { method: 'POST', headers: { authorization: 'Bearer amd_definitely_not_a_key', 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.8' }, body: '{}' });
     expect((await send()).status).toBe(401);

@@ -11,11 +11,17 @@ export function consentAdminPresets(role: RoleName): OAuthAdminPresetId[] {
  * Scopes granted when the user approves consent: the client's requested scopes (capped by role,
  * least-privilege default when it asked for none), plus the admin preset the user explicitly chose.
  * `adminAccess` is raw form input: anything that is not a known preset, or a preset chosen by a role
- * below admin, adds nothing. The result is re-capped by the role, so it can never exceed it.
+ * below admin, adds nothing. `allowDelete` is the raw "also allow deleting" checkbox: only the value
+ * `'1'` adds `library:delete`. The result is re-capped by the role, so it can never exceed it.
  */
-export function consentGrantScopes(role: RoleName, requested: readonly string[], adminAccess: unknown): Scope[] {
+export function consentGrantScopes(role: RoleName, requested: readonly string[], adminAccess: unknown, allowDelete?: unknown): Scope[] {
   const { granted } = oauthConsentScopes(role, requested);
-  if (!isOAuthAdminPreset(adminAccess) || !consentAdminPresets(role).includes(adminAccess)) return granted;
-  const extra = oauthAdminPresetScopes(role, adminAccess);
+  const extra: Scope[] = allowDelete === '1' ? ['library:delete'] : [];
+  if (isOAuthAdminPreset(adminAccess) && consentAdminPresets(role).includes(adminAccess)) extra.push(...oauthAdminPresetScopes(role, adminAccess));
   return extra.length ? capScopes(role, [...granted, ...extra]) : granted;
+}
+
+/** Whether the consent screen offers the "also allow deleting" checkbox: the role can delete and the grant would not. */
+export function consentOffersDelete(role: RoleName, granted: readonly Scope[]): boolean {
+  return !granted.includes('library:delete') && capScopes(role, ['library:delete']).length > 0;
 }

@@ -105,7 +105,7 @@ export const SCOPE_LABELS: Record<Scope, string> = {
 /** API-key presets shown in the dashboard. Each is capped by the owner's role at use time. */
 export const KEY_PRESETS: { id: string; label: string; scopes: Scope[] }[] = [
   { id: 'convert-only', label: 'Convert only', scopes: ['convert'] },
-  { id: 'library', label: 'Convert + library (agents)', scopes: ['convert', 'library:read', 'library:write'] },
+  { id: 'library', label: 'Convert + library (agents)', scopes: ['convert', 'library:read', 'library:write', 'library:delete'] },
   { id: 'feedback', label: 'Product feedback (public GitHub issues)', scopes: ['feedback:write'] },
   { id: 'read-only', label: 'Read-only', scopes: ['library:read', 'usage:read'] },
   { id: 'content-editor', label: 'Content editor (AI CMS)', scopes: ['content:read', 'content:write', 'content:publish', 'pages:read', 'pages:write', 'pages:publish'] },

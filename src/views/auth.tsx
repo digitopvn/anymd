@@ -262,6 +262,7 @@ export function ConsentPage({
   userEmail,
   role,
   adminPresets = [],
+  offerDelete = false,
 }: {
   clientName: string;
   clientUri?: string;
@@ -277,6 +278,8 @@ export function ConsentPage({
   role: string;
   /** Admin access presets the user may add to this connection; ignored for roles below admin. */
   adminPresets?: readonly OAuthAdminPresetId[];
+  /** Offer the unchecked "also allow deleting" checkbox (the role can delete, the grant would not). */
+  offerDelete?: boolean;
 }) {
   const adminOptions = isRole(role) && roleAtLeast(role, 'admin')
     ? adminPresets
@@ -295,6 +298,11 @@ export function ConsentPage({
         {clientId ? (
           <p class="mt-1 truncate text-xs text-muted" data-client-id>
             Client ID: {clientId}
+          </p>
+        ) : null}
+        {clientId ? (
+          <p class="mt-1 text-xs text-muted" data-client-host>
+            App identity: <strong class="text-ink">{hostOf(clientId)}</strong>
           </p>
         ) : null}
         {redirectHost ? (
@@ -328,6 +336,19 @@ export function ConsentPage({
       </div>
       <form method="post" action="/oauth/authorize" class="mt-6">
         <input type="hidden" name="state" value={state} />
+        {offerDelete ? (
+          <div class="card mb-6 p-5" data-allow-delete>
+            <label class="flex cursor-pointer items-start gap-2.5 text-sm">
+              <input type="checkbox" name="allow_delete" value="1" class="mt-0.5 accent-[#05c977]" />
+              <span>
+                <strong>Also allow permanently deleting library documents</strong> (optional)
+                <span class="mt-0.5 block text-xs text-muted">
+                  Off by default. Without it the agent can save and tag but never delete. Adds <code class="opacity-70">library:delete</code>.
+                </span>
+              </span>
+            </label>
+          </div>
+        ) : null}
         {adminOptions.length ? (
           <div class="card mb-6 p-5">
             <fieldset data-admin-access aria-describedby="admin-access-help">
@@ -373,4 +394,12 @@ export function ConsentPage({
       <p class="mt-4 text-xs text-muted">You can revoke access anytime from Dashboard → API keys.</p>
     </AuthShell>
   );
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }

@@ -25,6 +25,7 @@ import { convertRoutes } from './routes/convert';
 import { dashboardRoutes } from './routes/dashboard';
 import { publicRoutes } from './routes/public';
 import { renderMessage } from './routes/shared';
+import { sha256 } from './lib/util';
 import { processPendingFeedback } from './services/feedback';
 import { processEvents, pruneEvents } from './events/delivery';
 import { sweepExpiredSessions } from './convert/social-search-session';
@@ -204,23 +205,33 @@ function logAuthFailure(category: string, reason: string, status: number, code =
 }
 
 /**
- * Failed bearer attempts on /mcp are rate limited per client IP (the anonymous bucket), so a client
- * replaying a dead token, or guessing, is told to back off with 429 instead of an endless stream of 401s.
+ * A client that keeps replaying the same rejected credential on /mcp is told to back off with 429
+ * instead of an endless stream of 401s. The bucket is per client IP and credential (hashed), never per
+ * IP alone: hosted connectors (ChatGPT, Claude) share egress IPs, and one user's expired token must
+ * not stop every other user's client from getting the 401 that makes it refresh. The 429 keeps the
+ * provider's `WWW-Authenticate`, so a client that reads it still knows to re-authorize.
  */
 async function limitAuthFailures(request: Request, env: Env, response: Response): Promise<Response> {
-  if (response.status !== 401 || !(request.headers.get('authorization') || request.headers.get('x-api-key'))) return response;
+  const credential = request.headers.get('authorization') || request.headers.get('x-api-key');
+  if (response.status !== 401 || !credential) return response;
   const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
   try {
-    const { success } = await env.RL_ANON.limit({ key: `mcp-auth-fail:${ip}` });
+    const { success } = await env.RL_ANON.limit({ key: `mcp-auth-fail:${ip}:${(await sha256(credential)).slice(0, 32)}` });
     if (success) return response;
   } catch (err) {
     console.error('auth failure limiter unavailable', err instanceof Error ? err.message : String(err));
     return response;
   }
   logAuthFailure('protected-resource', 'auth_failure_rate_limited', 429, 'rate_limited');
-  return new Response(JSON.stringify({ error: 'rate_limited', error_description: 'Too many failed authentication attempts. Reconnect anymd, then retry in a minute.' }), {
+  return new Response(JSON.stringify({ error: 'rate_limited', error_description: 'This credential was rejected too many times. Refresh or reconnect anymd, then retry in a minute.' }), {
     status: 429,
-    headers: { 'Content-Type': 'application/json', 'Retry-After': '60', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Retry-After' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Retry-After': '60',
+      ...(response.headers.get('www-authenticate') ? { 'WWW-Authenticate': response.headers.get('www-authenticate')! } : {}),
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Expose-Headers': 'Retry-After, WWW-Authenticate',
+    },
   });
 }
 

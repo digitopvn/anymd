@@ -6,7 +6,7 @@ Code review checklist for anymd. Check the sections your change touches; securit
 
 ### Outbound fetches (SSRF)
 
-- [ ] Every fetch of a user-supplied URL goes through `normalizeTargetUrl` (`src/convert/index.ts`) first: http(s) only, no private/link-local/CGNAT ranges, no `localhost`/`.local`/`.internal`, no anymd's own hostnames, no embedded credentials.
+- [ ] Every fetch of a user-supplied URL goes through `normalizeTargetUrl` (`src/convert/index.ts`) first: http(s) only, no private/link-local/CGNAT ranges, no `localhost`/`.local`/`.internal`, no anymd's own hostnames, no embedded credentials. One accepted exception: the OAuth provider fetches a client's metadata document (CIMD, `clientIdMetadataDocumentEnabled` in `src/worker.ts`) itself, https only, with its own timeout and size cap, and only under the `global_fetch_strictly_public` compatibility flag; never remove that flag while CIMD is on.
 - [ ] No new code path fetches user input directly (adapters, file URLs, image proxies, webhooks, OG fetchers).
 - [ ] Redirects are followed by `fetch`, so the guard only vets the first hop. New privileged fetches (anything sending credentials or reaching non-public services) must not follow redirects to user-controlled targets.
 - [ ] Response size limits stay enforced (HTML 5 MB, files 20 MB) and third-party calls have timeouts.

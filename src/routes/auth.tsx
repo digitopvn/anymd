@@ -1,7 +1,8 @@
 /** Email/password and GitHub/Google sign-in, password reset, and the OAuth 2.1 consent screen for MCP clients. */
+import { CimdFetchError } from '@cloudflare/workers-oauth-provider';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { consentAdminPresets, consentGrantScopes } from '../auth/consent';
+import { consentAdminPresets, consentGrantScopes, consentOffersDelete } from '../auth/consent';
 import { createSession, createUser, destroySession, getUserByEmail, hashPassword, SESSION_COOKIE, SESSION_TTL_MS, verifyPassword } from '../auth/identity';
 import { OAUTH_GRANT_VERSION, oauthConsentScopes } from '../auth/roles';
 import { beginSso, completeSso, enabledSsoProviders, isSsoProvider, SSO_ERRORS, SSO_STATE_COOKIE, SSO_STATE_TTL, SsoError, SUSPENDED_MESSAGE, type SsoErrorCode, type SsoState } from '../auth/sso';
@@ -199,9 +200,11 @@ authRoutes.get('/oauth/authorize', async (c) => {
   try {
     authRequest = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
   } catch (e) {
+    // A metadata-URL client (CIMD) whose document cannot be fetched: the fetch error is not the user's to read.
+    if (e instanceof CimdFetchError) return renderMessage(c, 400, 'Could not load this app', "anymd could not read this app's client details. Try connecting again from your agent in a minute.");
     return renderMessage(c, 400, 'Invalid authorization request', e instanceof Error ? e.message : 'The client sent an invalid request.');
   }
-  // A metadata-URL client (CIMD) is fetched here, and that fetch can fail.
+  // Already resolved by parseAuthRequest; a CIMD document can still expire from cache and fail here.
   const client = await c.env.OAUTH_PROVIDER.lookupClient(authRequest.clientId).catch(() => null);
   if (!client) return renderMessage(c, 400, 'Unknown client', 'This MCP client is not registered. Reconnect it from your agent.');
   // Least privilege: a client that asks for nothing gets the customer baseline, never the whole role.
@@ -211,7 +214,7 @@ authRoutes.get('/oauth/authorize', async (c) => {
   return renderPage(
     c,
     { title: 'Authorize MCP client', path: '/oauth/authorize', ...noindex },
-    <ConsentPage clientName={client.clientName || 'An MCP client'} clientUri={client.clientUri} clientId={/^https:\/\//.test(client.clientId) ? client.clientId : undefined} redirectHost={hostOf(authRequest.redirectUri)} scopes={granted} unavailable={unavailable} requestedNothing={!authRequest.scope.length} state={handle} userEmail={user.email} role={user.role} adminPresets={consentAdminPresets(user.role)} />,
+    <ConsentPage clientName={client.clientName || 'An MCP client'} clientUri={client.clientUri} clientId={/^https:\/\//.test(client.clientId) ? client.clientId : undefined} redirectHost={hostOf(authRequest.redirectUri)} scopes={granted} unavailable={unavailable} requestedNothing={!authRequest.scope.length} state={handle} userEmail={user.email} role={user.role} adminPresets={consentAdminPresets(user.role)} offerDelete={consentOffersDelete(user.role, granted)} />,
   );
 });
 
@@ -234,8 +237,8 @@ authRoutes.post('/oauth/authorize', async (c) => {
       return c.redirect(denied.redirectTo);
     }
     const approved = await c.env.OAUTH_PROVIDER.approveConsent(c.req.raw, f.state ?? '');
-    // Admin access is only ever added by the user's explicit choice on the consent form, capped by role.
-    const scopes = consentGrantScopes(user.role, approved.request.scope, f.admin_access);
+    // Admin access and deletion are only ever added by the user's explicit choice on the consent form, capped by role.
+    const scopes = consentGrantScopes(user.role, approved.request.scope, f.admin_access, f.allow_delete);
     const client = await c.env.OAUTH_PROVIDER.lookupClient(approved.request.clientId).catch(() => null);
     const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
       request: { ...approved.request, scope: scopes },

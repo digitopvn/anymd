@@ -32,6 +32,8 @@ npm run db:migrate:production && npm run deploy:production
 
 Order matters: apply migrations first, then deploy code that depends on them. Migrations must be additive so the previous Worker version keeps working during rollout and after a rollback.
 
+`migrations/0014_library_delete_scope.sql` gives `library:delete` to keys holding `library:write`. Keys the previous Worker creates between that migration and the deploy, or while a rollback to it is live, miss it and can no longer delete once the new Worker serves them. The statement is idempotent: after such a window, run it again with `npx wrangler d1 execute <database> --env <env> --remote --file migrations/0014_library_delete_scope.sql` (a remote write: same permission and backup rules as a migration).
+
 Before any remote migration, create a recoverable D1 backup or Time Travel bookmark and record the currently deployed Worker version. For example, inspect the target explicitly with `npx wrangler d1 time-travel info anymd-production --env production` (use the staging database and environment for staging). The enrichment schema migration is additive (`migrations/0005_conversion_enrichment.sql`); never edit an applied migration or run a remote migration without that recovery point. Full D1 exports are not a fallback for this database's FTS5 virtual tables.
 
 Video downloads need a Cloudflare Queue per environment (`anymd-video-downloads-staging`, `anymd-video-downloads`; producer and consumer are declared in `wrangler.jsonc`). Deploying a Worker that names a missing queue fails, so create it once before the first deploy that carries the binding:

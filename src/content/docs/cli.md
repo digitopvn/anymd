@@ -1,7 +1,7 @@
 ---
 title: "CLI"
 description: "The anymd command: convert URLs and files, search your library, manage pages and print MCP config from your terminal."
-updated: "2026-10-13"
+updated: "2026-10-28"
 ---
 
 `anymd` is a zero-dependency command-line client. It needs Node.js 18 or newer and nothing else.
@@ -46,7 +46,7 @@ Without a key the CLI works anonymously, with the same 50-per-day limit as the [
 | `anymd social <all\|x\|facebook\|instagram\|threads\|linkedin> <query> [--period 24h\|7d\|30d \| --since t --until t] [--cursor c] [--json]` | Search public social posts on one platform or all of them, optionally within a time range (10 credits per page where the platform returns posts, 100 on LinkedIn, `all` the sum; see [Social search](/docs/social-search)) |
 | `anymd ls [--limit 20] [--domain x] [--tag a,b]` | List library documents (`--tag`: every tag must match) |
 | `anymd get <id>` | Print a saved document |
-| `anymd rm <id>` | Delete a saved document |
+| `anymd rm <id>` | Delete a saved document (the key needs `library:delete`, included in the **Convert + library** preset) |
 | `anymd tag <id> [--add a,b] [--remove c]` · `--set a,b` | Edit a document's tags and print the result (`--set ""` clears) |
 | `anymd tags [--limit 100]` | List your tags with document counts |
 | `anymd usage` | Credits used and remaining |
