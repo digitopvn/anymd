@@ -113,6 +113,7 @@ The adapter source files own the fixed provider hosts and paths; callers never s
 - Workers observability is enabled in `wrangler.jsonc`; historical logs are in the Cloudflare dashboard.
 - Per-request traces: every conversion returns `X-Anymd-Trace`. The span timeline is stored in the `traces` table and visible to the user in the dashboard or via `GET /api/v1/traces/:id`.
 - Usage: `usage_events` holds every metered request with status, credits and error code.
+- MCP auth failures: `npx wrangler tail --env production --search oauth.auth_failed` (format and the per-IP `429`: [mcp-oauth.md](./mcp-oauth.md#auth-failures)).
 
 ## Rollback
 

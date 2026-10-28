@@ -1,7 +1,7 @@
 ---
 title: "MCP server"
 description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp so your agents can read the public web, remember it and search it, and get webhook events when it changes."
-updated: "2026-10-15"
+updated: "2026-10-28"
 ---
 
 anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) server. It is the main way agents use anymd as their web context layer: connect it once and your agent can read public web content as structured Markdown, recall everything it has read from your private library, and (with the right scopes) manage pages.
@@ -17,7 +17,7 @@ anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) se
 
 **API key.** Simplest option. Create a key in **Dashboard → API keys**. The **Convert + library (agents)** preset is a good default for an assistant. Details: [API keys & roles](/docs/api-keys-roles).
 
-**OAuth 2.1.** For clients that support it, just add the URL and sign in when prompted. anymd supports Dynamic Client Registration and PKCE:
+**OAuth 2.1.** For clients that support it, just add the URL and sign in when prompted. anymd supports PKCE (`S256` only), Dynamic Client Registration and Client ID Metadata Documents (a client whose `client_id` is an `https://` URL, such as ChatGPT, is looked up there instead of registering). Tokens are bound to the `https://anymd.cc/mcp` resource: a token minted for another resource is rejected.
 
 | | |
 |---|---|
@@ -25,8 +25,12 @@ anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) se
 | Authorize | `/oauth/authorize` |
 | Token | `/oauth/token` |
 | Registration | `/oauth/register` |
+| Protected resource | `/.well-known/oauth-protected-resource/mcp` |
+| Revocation | `/oauth/token` (RFC 7009 revocation) |
 
-Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert`, `library:read` and `library:write` (read the web, save to and search your own library); anything more, admin scopes above all, must be requested by name and approved on the consent screen, or (owners and admins only) added by choosing an admin access option there: see [Set up an admin agent](#set-up-an-admin-agent). When a read is not saved, the result says so: `saved: false` with `not_saved_reason` (`missing_scope` means the connection lacks `library:write`). See [API keys & roles](/docs/api-keys-roles#oauth).
+The consent screen shows the app's name, its client ID when it is a URL, and the host you return to after you decide. Only allow if that is the app you are connecting.
+
+Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert`, `library:read` and `library:write` (read the web, save to and search your own library); anything more, admin scopes above all, must be requested by name and approved on the consent screen, or (owners and admins only) added by choosing an admin access option there: see [Set up an admin agent](#set-up-an-admin-agent). Deleting library documents needs `library:delete`, which is never in the default set: `delete_document` stays hidden until you approve it, and a client that calls it gets `403 insufficient_scope` naming `library:delete`, so it can ask you to reconnect (step up). An argument the model sends can never stand in for that approval. When a read is not saved, the result says so: `saved: false` with `not_saved_reason` (`missing_scope` means the connection lacks `library:write`). See [API keys & roles](/docs/api-keys-roles#oauth).
 
 ## Client setup
 
@@ -101,7 +105,7 @@ Tools are listed only when the caller holds the scope they need.
 | `list_documents` | `{ limit?, domain?, tags?, before? }` | `library:read` |
 | `list_tags` | `{ limit? }` | `library:read` |
 | `tag_document` | `{ id, add?, remove?, set? }` | `library:write` |
-| `delete_document` | `{ id }` | `library:write` |
+| `delete_document` | `{ id }` | `library:delete` |
 | `usage_summary` | `{}` | `usage:read` |
 
 `search_social` searches public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them and returns normalized results with a per-platform status and a `next_cursor`. `period` (`24h`, `7d`, `30d`) or `since`/`until` (ISO-8601) limits it to a time range; posts are de-duplicated across every page of the search, and the cursor keeps the range, works once and lasts 24 hours. See [Social search](/docs/social-search). `read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
@@ -416,9 +420,11 @@ MCP has its own limits, separate from the REST API, counted per user and per cre
 |---|---|
 | A tool is missing | Your key or OAuth grant lacks its scope. Check with `GET /api/v1/me` or `anymd whoami`. |
 | `401 invalid_api_key` | The key was revoked, expired or mistyped. Create a new one. |
+| `401 invalid_token` (OAuth) | The token expired, the grant was revoked, or the account is suspended. Clients refresh or reconnect on their own; if not, remove and re-add the connector. |
+| `429 rate_limited` after failed sign-ins | Too many requests with a bad token or key from one address in a minute. Wait for `Retry-After`, then fix the credential. |
 | `402 quota_exceeded` | Free plan credits are used up for the month. |
 | `revision_conflict` from `apply_page_ops` | Someone changed the page. Call `get_page`, then retry with the new `revision`. |
 | Admin tools are missing | Call `get_admin_access_status`: it says whether your role allows admin access and how to reconnect. See [Set up an admin agent](#set-up-an-admin-agent). |
-| `403` with `insufficient_scope` | The OAuth grant lacks the tool's scope. Re-authorize with the scopes in the `WWW-Authenticate` header. |
+| `403` with `insufficient_scope` | The OAuth grant lacks the tool's scope (for `delete_document`, `library:delete`). Re-authorize with the scopes in the `WWW-Authenticate` header. |
 | `429` / `-32005` | MCP rate limit. Wait for `Retry-After` seconds. |
 | `-32020` or `-32022` | A 2026-07-28 client sent headers that don't match the body, or an unsupported version. |

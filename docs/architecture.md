@@ -46,7 +46,7 @@ Bindings and secrets are typed in `src/env.ts`; per-environment values are in `w
 
 ### Principal
 
-`resolvePrincipal` (`src/auth/middleware.ts`) runs once per request: API key (`Authorization: Bearer` or `X-API-Key`) → session cookie → anonymous. A presented key that doesn't resolve is a hard `401`, never a silent downgrade to anonymous. Key scopes are intersected with the owner's **current** role on every request (`capScopes`), so demotion takes effect immediately without key rotation. Suspended accounts resolve to no principal for sessions, keys and OAuth. OAuth grants are re-capped the same way (`oauthPrincipalScopes`); grants from before least-privilege consent keep no admin scopes.
+`resolvePrincipal` (`src/auth/middleware.ts`) runs once per request: API key (`Authorization: Bearer` or `X-API-Key`) → session cookie → anonymous. A presented key that doesn't resolve is a hard `401`, never a silent downgrade to anonymous. Key scopes are intersected with the owner's **current** role on every request (`capScopes`), so demotion takes effect immediately without key rotation. Suspended accounts resolve to no principal for sessions, keys and OAuth. OAuth grants are re-capped the same way (`oauthPrincipalScopes`); grants from before least-privilege consent keep no admin scopes. MCP OAuth details, tool scopes, auth-failure logging and the client compatibility matrix: [mcp-oauth.md](./mcp-oauth.md).
 
 ### Conversion
 
