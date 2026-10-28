@@ -1,9 +1,9 @@
 PASS  signup creates a session  (status 302)
 PASS  DCR registers a public client  (status 201)
-PASS  authorize redirects to the exact ChatGPT redirect with code, state and iss  (https://chatgpt.com/connector_platform_oauth_redirect?code=usr_01m61em3svmtejx1v)
+PASS  authorize redirects to the exact ChatGPT redirect with code, state and iss  (https://chatgpt.com/connector_platform_oauth_redirect?code=usr_01m61ewekwgcds6ss)
 PASS  consent page offers a read-only connection
 PASS  token exchange with PKCE S256 + resource  (scope=convert library:read library:write)
-PASS  tools/list over OAuth lists delete_document with destructiveHint and securitySchemes
+PASS  the default grant does not list delete_document (it needs library:delete)
 PASS  every listed tool declares securitySchemes
 PASS  missing scope (usage:read) → 403 insufficient_scope step-up  (Bearer error="insufficient_scope", scope="convert library:read library:write usage:read", )
 PASS  returning user reconnects (second grant) and the new token works

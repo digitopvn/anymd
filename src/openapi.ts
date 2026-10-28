@@ -210,7 +210,7 @@ const OPS: Record<string, Record<string, Op>> = {
   '/library/{id}': {
     get: { summary: 'Get a document', tag: 'Library', scope: 'library:read', params: [idParam('Document'), { name: 'format', in: 'query', schema: str('`md` returns text/markdown', { enum: ['md'] }) }], ok: ref('Document'), errors: [404] },
     patch: { summary: 'Replace document tags', tag: 'Library', scope: 'library:write', params: [idParam('Document')], body: obj({ tags: arr(str(), 'Up to 20 tags') }, ['tags']), ok: ref('Ok'), errors: [404, 422] },
-    delete: { summary: 'Delete a document', tag: 'Library', scope: 'library:write', params: [idParam('Document')], ok: ref('Ok'), errors: [404] },
+    delete: { summary: 'Delete a document', tag: 'Library', scope: 'library:delete', params: [idParam('Document')], ok: ref('Ok'), errors: [404] },
   },
   '/social/search': {
     post: {

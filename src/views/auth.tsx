@@ -254,6 +254,7 @@ export function ConsentPage({
   clientName,
   clientUri,
   metadataUrl,
+  redirectHost,
   scopes,
   unavailable = [],
   requestedNothing = false,
@@ -266,6 +267,8 @@ export function ConsentPage({
   clientUri?: string;
   /** The client id when it is a metadata document URL (CIMD): its host, unlike the name, is not self-asserted. */
   metadataUrl?: string;
+  /** Where the browser returns after a decision. A client's name is self-declared; this is not. */
+  redirectHost?: string;
   scopes: Scope[];
   unavailable?: string[];
   requestedNothing?: boolean;
@@ -295,6 +298,11 @@ export function ConsentPage({
         {metadataUrl ? (
           <p class="mt-1 break-all text-xs text-muted" data-client-metadata>
             Identified by <code>{metadataUrl}</code>
+          </p>
+        ) : null}
+        {redirectHost ? (
+          <p class="mt-1 text-xs text-muted" data-redirect-host>
+            After you decide, you return to <strong class="text-ink">{redirectHost}</strong>. Only allow if that is the app you are connecting.
           </p>
         ) : null}
         <p class="mt-4 text-sm font-semibold">It will be able to:</p>

@@ -31,3 +31,7 @@ ChatGPT (and other MCP hosts) connect and reconnect to `https://anymd.cc/mcp` th
 ## Evidence
 - `test/oauth-flow.test.ts`, `test/oauth-chatgpt.test.ts`; full suite green.
 - `reports/local-e2e-output.txt` (workerd via `wrangler dev`, 19/20; CIMD egress blocked in sandbox, covered by vitest).
+
+## Adopted from the parallel branch (`claude/affectionate-goodall-r6dh04`)
+- Elevated `library:delete` scope for `delete_document` and `DELETE /api/v1/library/:id`; migration 0014 gives it to API keys that held `library:write`. OAuth grants step up.
+- Consent screen shows the redirect host; a failing CIMD lookup renders an error page instead of a 500.

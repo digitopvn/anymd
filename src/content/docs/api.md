@@ -67,7 +67,7 @@ Read `code`, not `message`. Messages are for humans and may change.
 | GET | `/library/:id` | `library:read` |
 | PATCH | `/library/:id` | `library:write` |
 | POST | `/library/:id/tags` | `library:write` |
-| DELETE | `/library/:id` | `library:write` |
+| DELETE | `/library/:id` | `library:delete` |
 | GET, POST | `/search` | `library:read` |
 | POST | `/social/search` | `convert` (signed-in callers) |
 | GET | `/usage` | `usage:read` |
@@ -327,7 +327,7 @@ curl -X POST https://anymd.cc/api/v1/library/doc_…/tags \
 
 ### DELETE /library/:id
 
-Deletes the document and its search embeddings.
+Deletes the document and its search embeddings. Scope: `library:delete`.
 
 ## Search
 

@@ -93,6 +93,7 @@ export type Scope =
   | 'convert'
   | 'library:read'
   | 'library:write'
+  | 'library:delete'
   | 'usage:read'
   | 'feedback:write'
   | 'keys:manage'

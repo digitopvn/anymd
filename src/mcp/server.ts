@@ -163,8 +163,9 @@ const TOOLS: ToolDef[] = [
   {
     name: 'delete_document',
     title: 'Delete document',
-    description: 'Permanently delete a library document and its embeddings.',
-    scope: 'library:write',
+    description:
+      'Permanently delete a library document and its embeddings. Needs the library:delete scope, which the user approves on the anymd consent screen (OAuth clients without it are asked to re-authorize). Only call this when the user asked to delete this document.',
+    scope: 'library:delete',
     input: z.object({ id: z.string() }),
     annotations: DESTRUCTIVE,
     run: async (a, t) => {

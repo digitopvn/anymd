@@ -27,11 +27,11 @@ anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) se
 | Token (and revocation) | `/oauth/token` |
 | Registration (DCR) | `/oauth/register` |
 
-The consent screen names the client. A client identified by a metadata document URL (ChatGPT uses `https://chatgpt.com/oauth/client.json`) also shows that URL, because its host proves who the client is; a registered client's name is only what it says about itself. If the request itself is wrong (a `resource` other than anymd's `/mcp`, or PKCE without S256), anymd sends you back to the client with `error`, `state` and `iss` once it has verified the client's redirect URI, and shows an error page otherwise. Tick **Read-only connection** to let the client read the web and search your library but never save, change, publish or delete anything: anymd drops every write scope from the grant and refuses those tools on every call, whatever the model asks.
+The consent screen names the client and the host you return to after you decide: only allow if that is the app you are connecting. A client identified by a metadata document URL (ChatGPT uses `https://chatgpt.com/oauth/client.json`) also shows that URL, because its host proves who the client is; a registered client's name is only what it says about itself. If the request itself is wrong (a `resource` other than anymd's `/mcp`, or PKCE without S256), anymd sends you back to the client with `error`, `state` and `iss` once it has verified the client's redirect URI, and shows an error page otherwise. Tick **Read-only connection** to let the client read the web and search your library but never save, change, publish or delete anything: anymd drops every write scope from the grant and refuses those tools on every call, whatever the model asks.
 
 Each tool in `tools/list` carries `securitySchemes` (`oauth2` with the scope it needs), and destructive tools such as `delete_document` are annotated `destructiveHint: true` so hosts ask you before running them. The server never relies on either: it checks the scope on every call.
 
-Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert`, `library:read` and `library:write` (read the web, save to and search your own library); anything more, admin scopes above all, must be requested by name and approved on the consent screen, or (owners and admins only) added by choosing an admin access option there: see [Set up an admin agent](#set-up-an-admin-agent). When a read is not saved, the result says so: `saved: false` with `not_saved_reason` (`missing_scope` means the connection lacks `library:write`). See [API keys & roles](/docs/api-keys-roles#oauth).
+Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert`, `library:read` and `library:write` (read the web, save to and search your own library); anything more, admin scopes above all, must be requested by name and approved on the consent screen, or (owners and admins only) added by choosing an admin access option there: see [Set up an admin agent](#set-up-an-admin-agent). Deleting library documents needs `library:delete`, which is never in the default set: `delete_document` stays hidden until you approve it, and a client that calls it gets `403 insufficient_scope` naming `library:delete`, so it can ask you to reconnect (step up). An argument the model sends can never stand in for that approval. When a read is not saved, the result says so: `saved: false` with `not_saved_reason` (`missing_scope` means the connection lacks `library:write`). See [API keys & roles](/docs/api-keys-roles#oauth).
 
 ## Client setup
 
@@ -106,7 +106,7 @@ Tools are listed only when the caller holds the scope they need.
 | `list_documents` | `{ limit?, domain?, tags?, before? }` | `library:read` |
 | `list_tags` | `{ limit? }` | `library:read` |
 | `tag_document` | `{ id, add?, remove?, set? }` | `library:write` |
-| `delete_document` | `{ id }` | `library:write` |
+| `delete_document` | `{ id }` | `library:delete` |
 | `usage_summary` | `{}` | `usage:read` |
 
 `search_social` searches public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them and returns normalized results with a per-platform status and a `next_cursor`. `period` (`24h`, `7d`, `30d`) or `since`/`until` (ISO-8601) limits it to a time range; posts are de-duplicated across every page of the search, and the cursor keeps the range, works once and lasts 24 hours. See [Social search](/docs/social-search). `read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
@@ -428,6 +428,6 @@ MCP has its own limits, separate from the REST API, counted per user and per cre
 | `402 quota_exceeded` | Free plan credits are used up for the month. |
 | `revision_conflict` from `apply_page_ops` | Someone changed the page. Call `get_page`, then retry with the new `revision`. |
 | Admin tools are missing | Call `get_admin_access_status`: it says whether your role allows admin access and how to reconnect. See [Set up an admin agent](#set-up-an-admin-agent). |
-| `403` with `insufficient_scope` | The OAuth grant lacks the tool's scope. Re-authorize with the scopes in the `WWW-Authenticate` header. |
+| `403` with `insufficient_scope` | The OAuth grant lacks the tool's scope (for `delete_document`, `library:delete`). Re-authorize with the scopes in the `WWW-Authenticate` header. |
 | `429` / `-32005` | MCP rate limit. Wait for `Retry-After` seconds. |
 | `-32020` or `-32022` | A 2026-07-28 client sent headers that don't match the body, or an unsupported version. |

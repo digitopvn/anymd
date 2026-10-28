@@ -118,7 +118,9 @@ describe('connecting a client', () => {
     expect(conn.state).toBe('xyz');
 
     const names = await toolNames(t, conn.tokens.access_token);
-    expect(names).toEqual(expect.arrayContaining(['get_document', 'delete_document', 'tag_document', 'read_url']));
+    expect(names).toEqual(expect.arrayContaining(['get_document', 'tag_document', 'read_url']));
+    // Deleting is never in the default grant: it needs library:delete, approved by name.
+    expect(names.includes('delete_document')).toBe(false);
 
     const listed = await callTool(t, conn.tokens.access_token, 'list_documents', {});
     expect(listed.status).toBe(200);
@@ -364,12 +366,35 @@ describe('scopes', () => {
     const id = insertDocument(user, 'Kept');
     const r = await callTool(t, conn.tokens.access_token, 'delete_document', { id });
     expect(r.status).toBe(403);
+    expect(documentRowCount(id)).toBe(1);
+  });
+
+  it('the default grant cannot delete: delete_document asks for library:delete, and an argument cannot stand in for it', async () => {
+    const user = await seedUser(t, 'user');
+    const conn = await connectOAuthClient(t, user);
+    const id = insertDocument(user, 'Kept');
+
+    const r = await callTool(t, conn.tokens.access_token, 'delete_document', { id, confirm: true, force: true });
+    expect(r.status).toBe(403);
     const challenge = r.headers.get('www-authenticate') ?? '';
     expectIncludes(challenge, 'error="insufficient_scope"');
-    expectIncludes(challenge, 'library:write');
+    expectIncludes(challenge, 'library:delete');
     expectIncludes(challenge, `resource_metadata="${METADATA_URL}"`);
-    expect(r.json.error.data).toMatchObject({ code: 'insufficient_scope', required: ['library:write'], tool: 'delete_document' });
+    expect(r.json.error.data).toMatchObject({ code: 'insufficient_scope', required: ['library:delete'], tool: 'delete_document' });
     expect(documentRowCount(id)).toBe(1);
+  });
+
+  it('a grant approved with library:delete lists delete_document and deletes the caller\'s own document', async () => {
+    const user = await seedUser(t, 'user');
+    const conn = await connectOAuthClient(t, user, { scope: `${DEFAULT_SCOPE} library:delete` });
+    expect(conn.tokens.scope?.split(' ').includes('library:delete')).toBe(true);
+    expect((await toolNames(t, conn.tokens.access_token)).includes('delete_document')).toBe(true);
+
+    const id = insertDocument(user, 'Gone');
+    const r = await callTool(t, conn.tokens.access_token, 'delete_document', { id });
+    expect(r.status).toBe(200);
+    expect(r.json.result.isError).not.toBe(true);
+    expect(documentRowCount(id)).toBe(0);
   });
 });
 
@@ -378,7 +403,7 @@ describe('tenant isolation', () => {
     const alice = await seedUser(t, 'user');
     const bob = await seedUser(t, 'user');
     const aliceDoc = insertDocument(alice, 'Alice private');
-    const bobConn = await connectOAuthClient(t, bob);
+    const bobConn = await connectOAuthClient(t, bob, { scope: `${DEFAULT_SCOPE} library:delete` });
 
     const read = await callTool(t, bobConn.tokens.access_token, 'get_document', { id: aliceDoc });
     expect(read.json.result.isError).toBe(true);

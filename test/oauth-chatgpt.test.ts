@@ -70,7 +70,7 @@ async function listTools(token: string): Promise<ListedTool[]> {
 describe('tools/list for ChatGPT', () => {
   it('every tool declares an oauth2 security scheme naming the scope it needs', async () => {
     const user = await seedUser(t, 'user');
-    const conn = await connectOAuthClient(t, user);
+    const conn = await connectOAuthClient(t, user, { scope: 'convert library:read library:write library:delete' });
     const tools = await listTools(conn.tokens.access_token);
 
     expect(tools.length).toBeGreaterThan(0);
@@ -79,7 +79,7 @@ describe('tools/list for ChatGPT', () => {
       expect(tool.securitySchemes![0].type, tool.name).toBe('oauth2');
     }
     const del = tools.find((x) => x.name === 'delete_document');
-    expect(del?.securitySchemes?.[0].scopes).toEqual(['library:write']);
+    expect(del?.securitySchemes?.[0].scopes).toEqual(['library:delete']);
     expect(del?.annotations?.destructiveHint).toBe(true);
     expect(tools.find((x) => x.name === 'search_library')?.securitySchemes?.[0].scopes).toEqual(['library:read']);
   });

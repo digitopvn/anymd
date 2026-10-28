@@ -86,7 +86,7 @@ const access = first.t.body.access_token;
 const list = await mcp(access, 'tools/list');
 const tools = list.body?.result?.tools ?? [];
 const del = tools.find((t) => t.name === 'delete_document');
-check('tools/list over OAuth lists delete_document with destructiveHint and securitySchemes', Boolean(del && del.annotations.destructiveHint === true && del.securitySchemes?.[0]?.scopes?.[0] === 'library:write'));
+check('the default grant does not list delete_document (it needs library:delete)', !del);
 check('every listed tool declares securitySchemes', tools.length > 0 && tools.every((t) => Array.isArray(t.securitySchemes)));
 
 const usage = await mcp(access, 'tools/call', { name: 'usage_summary', arguments: {} });
