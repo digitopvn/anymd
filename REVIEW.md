@@ -8,8 +8,8 @@ Code review checklist for anymd. Check the sections your change touches; securit
 
 - [ ] Every fetch of a user-supplied URL goes through `normalizeTargetUrl` (`src/convert/index.ts`) first: http(s) only, no private/link-local/CGNAT ranges, no `localhost`/`.local`/`.internal`, no anymd's own hostnames, no embedded credentials.
 - [ ] No new code path fetches user input directly (adapters, file URLs, image proxies, webhooks, OG fetchers).
-- [ ] Redirects are followed by `fetch`, so the guard only vets the first hop. New privileged fetches (anything sending credentials or reaching non-public services) must not follow redirects to user-controlled targets.
-- [ ] Response size limits stay enforced (HTML 5 MB, files 20 MB) and third-party calls have timeouts.
+- [ ] User-supplied URLs are fetched with `fetchPublic` (`src/convert/safe-fetch.ts`), which follows at most 5 redirects by hand and re-checks every hop; never `redirect: 'follow'` on user input. New privileged fetches (anything sending credentials or reaching non-public services) must not follow redirects to user-controlled targets.
+- [ ] Bodies are read with `readBounded` (HTML/text 5 MB, files 20 MB), not `text()`/`blob()`, and every outbound call has a timeout.
 
 ### Authorization
 
@@ -30,6 +30,7 @@ Code review checklist for anymd. Check the sections your change touches; securit
 
 ### Untrusted content
 
+- [ ] Tool output that carries fetched or saved page text marks it untrusted (`content_trust`, MCP instructions); page text is never presented as instructions. See `docs/security.md`.
 - [ ] User and converted Markdown is rendered with `renderMarkdown(md)` (untrusted), which escapes raw HTML, drops `javascript:` links and only allows http(s)/relative images. `{ trusted: true }` is only for our own bundled content.
 - [ ] No `dangerouslySetInnerHTML`-style raw output of user data; interpolate with escaping (`escapeHtml`).
 - [ ] Search snippets contain `<mark>` tags; render them safely (escape, then re-allow `<mark>` only).

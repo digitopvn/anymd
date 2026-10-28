@@ -78,6 +78,24 @@ export async function canSpend(env: Env, userId: string, planId: string, cost: n
   return { ok: state.overage || state.remaining >= cost, state };
 }
 
+/** Parameter names whose values are credentials: tokens, keys, signatures and signed-URL policies. */
+const SECRET_PARAM = /token|secret|passw|pwd|credential|signature|^sig$|api[-_]?key|^key$|^auth|session|^code$|^policy$|key-pair-id/i;
+
+/**
+ * Usage rows and traces keep where a conversion went, not the credentials in its URL: values of
+ * credential-like parameters in any query string or fragment (with or without a scheme) are replaced,
+ * and `amd_…` keys are masked anywhere.
+ */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(/([?&#;])([^=&#\s"'<>]+)=([^&#\s"'<>]*)/g, (all, sep: string, name: string) => {
+      let decoded = name;
+      try { decoded = decodeURIComponent(name); } catch { /* keep the raw name */ }
+      return SECRET_PARAM.test(decoded) ? `${sep}${name}=REDACTED` : all;
+    })
+    .replace(/\bamd_[A-Za-z0-9_-]{8,}/g, 'amd_[redacted]');
+}
+
 export async function recordUsage(env: Env, input: UsageInput, tracer?: Tracer): Promise<void> {
   const ts = now();
   const stmts = [
@@ -89,14 +107,14 @@ export async function recordUsage(env: Env, input: UsageInput, tracer?: Tracer):
       input.principal.apiKeyId ?? null,
       input.channel,
       input.kind,
-      input.target.slice(0, 500),
+      redactSecrets(input.target).slice(0, 500),
       input.status,
       input.httpStatus,
       input.credits,
       input.durationMs,
       input.bytesOut ?? 0,
       input.traceId ?? null,
-      input.error?.slice(0, 500) ?? null,
+      input.error ? redactSecrets(input.error).slice(0, 500) : null,
       ts,
     ),
   ];
@@ -110,11 +128,11 @@ export async function recordUsage(env: Env, input: UsageInput, tracer?: Tracer):
         tracer.id,
         input.principal.userId,
         input.kind,
-        input.target.slice(0, 500),
+        redactSecrets(input.target).slice(0, 500),
         input.status,
         input.durationMs,
-        JSON.stringify(tracer.spans),
-        JSON.stringify({ channel: input.channel, credits: input.credits, http_status: input.httpStatus, error: input.error ?? null, ...input.meta }),
+        redactSecrets(JSON.stringify(tracer.spans)),
+        redactSecrets(JSON.stringify({ channel: input.channel, credits: input.credits, http_status: input.httpStatus, error: input.error ?? null, ...input.meta })),
         ts,
       ),
     );

@@ -1,7 +1,7 @@
 ---
 title: Privacy Policy
 description: What anymd.cc collects, why, who else sees it, how long we keep it, and the rights you have over it.
-updated: 2026-10-10
+updated: 2026-10-28
 ---
 
 > **Plain-English note.** This policy is written in plain English on purpose. It describes what actually happens to your data, not what could theoretically happen. If anything is unclear, email hello@digitop.ai.
@@ -74,7 +74,7 @@ Cloudflare runs a global network, so your data may be processed in data centers 
 
 - **Anonymous conversion cache:** up to 1 hour.
 - **Account data, library, embeddings, API key hashes:** until you delete them or delete your account.
-- **Usage events and traces:** while your account exists, so you can see your history in the dashboard. They are deleted with your account.
+- **Usage events and traces:** while your account exists, so you can see your history in the dashboard. They are deleted with your account Values of credential-like query parameters in logged URLs (such as `token`, `key` or `signature`) and anymd API keys are replaced with a placeholder before a usage event is stored.
 - **Billing records:** kept by Polar.sh and by us for as long as tax and accounting law requires.
 - **Backups:** when you delete your account, your documents, keys and usage logs are removed from live systems and purged from backups within 30 days.
 

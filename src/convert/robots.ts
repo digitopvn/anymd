@@ -3,6 +3,8 @@
  * without a group for it, the `*` group applies.
  */
 import type { Env } from '../env';
+import { readBounded } from './provider-fetch';
+import { fetchPublic } from './safe-fetch';
 import { USER_AGENT } from './types';
 
 export const ROBOTS_TOKEN = 'anymd';
@@ -83,8 +85,8 @@ async function loadRobots(env: Env, origin: string): Promise<RobotsState> {
   if (cached) return cached;
   let state: RobotsState;
   try {
-    const res = await fetch(`${origin}/robots.txt`, { headers: { 'User-Agent': USER_AGENT }, redirect: 'follow', signal: AbortSignal.timeout(5000) });
-    if (res.ok) state = { status: 'ok', text: (await res.text()).slice(0, MAX_ROBOTS_BYTES) };
+    const { response: res } = await fetchPublic(new URL('/robots.txt', origin), { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(5000) });
+    if (res.ok) state = { status: 'ok', text: new TextDecoder().decode(await readBounded(res, MAX_ROBOTS_BYTES, 'truncate')) };
     // RFC 9309: a missing robots.txt (4xx) allows everything; a server or network error means "assume disallowed".
     else state = res.status >= 400 && res.status < 500 ? { status: 'allow_all' } : { status: 'unreachable' };
   } catch {
