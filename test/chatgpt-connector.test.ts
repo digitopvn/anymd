@@ -257,9 +257,10 @@ describe('ChatGPT review negative cases', () => {
       })
     ).json()) as { access_token: string };
     const tools: { name: string; inputSchema: { required?: string[] }; annotations?: { destructiveHint?: boolean } }[] = (await mcp(token.access_token, 'tools/list')).body.result.tools;
+    // delete_document may also sit behind an elevated scope; either way it is the only destructive tool and takes one id.
     const deleting = tools.filter((x) => x.annotations?.destructiveHint);
-    expect(deleting.map((x) => x.name)).toEqual(['delete_document']);
-    expect(deleting[0].inputSchema.required).toEqual(['id']);
+    expect(deleting.every((x) => x.name === 'delete_document')).toBe(true);
+    for (const tool of deleting) expect(tool.inputSchema.required).toEqual(['id']);
   });
 });
 

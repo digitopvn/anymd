@@ -76,7 +76,7 @@ The pack in `plugin.json` is what reviewers run. Record observed results here fo
 | P5 answer from library | "30 minutes" from the release checklist | Pending seeded account. |
 | N1 metadata address | Refused by the URL guard (`blocked_host`) before any fetch | Local: `normalizeTargetUrl` refuses it with `blocked_host` (`test/chatgpt-connector.test.ts`). Live: pending. |
 | N2 another user's library | No tool takes another user; results come from the caller's library only | Library queries are scoped by `user_id`; live: pending. |
-| N3 bulk delete | No bulk delete tool; the assistant asks which document to delete | Local: on a default connection the only destructive tool is `delete_document`, and it requires one `id` (`test/chatgpt-connector.test.ts`). Live: pending. |
+| N3 bulk delete | No bulk delete tool; the assistant asks which document to delete | Local: on a default connection no destructive tool other than `delete_document` is listed, and it requires one `id` (it may also need an elevated scope, see #55) (`test/chatgpt-connector.test.ts`). Live: pending. |
 
 Production checks on 2026-10-28: `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server` serve metadata with S256, a registration endpoint and `iss` support; `/mcp` without a token answers 401 with `resource_metadata`; website, privacy and terms URLs answer 200. `/docs/support` and `/.well-known/openai-apps-challenge` answer 404 until the Worker carrying them is deployed and the secret is set.
 
