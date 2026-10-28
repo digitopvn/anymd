@@ -47,17 +47,26 @@ function document(userId: string) {
 }
 
 describe('get_admin_access_status', () => {
-  it('is visible to every signed-in caller, even a key with a single unrelated scope', async () => {
+  it('is visible over MCP to owners and admins, even with a single unrelated scope, and hidden from other roles', async () => {
     const tool = MCP_TOOL_CATALOG.find((x) => x.name === 'get_admin_access_status');
     expect(tool?.scope).toBeNull();
     expect(tool?.annotations.readOnlyHint).toBe(true);
     for (const scopes of [['feedback:write'], ['convert'], OAUTH_DEFAULT_SCOPES] as Scope[][]) {
-      expect((await toolNames(t.env, as(customer, 'api_key', scopes, { apiKeyId: 'k' }))).includes('get_admin_access_status')).toBe(true);
+      expect((await toolNames(t.env, as(owner, 'api_key', scopes, { apiKeyId: 'k' }))).includes('get_admin_access_status')).toBe(true);
+      expect((await toolNames(t.env, as(customer, 'api_key', scopes, { apiKeyId: 'k' }))).includes('get_admin_access_status')).toBe(false);
     }
+    for (const role of ['editor', 'author', 'viewer'] as RoleName[]) {
+      expect((await toolNames(t.env, { ...as(customer, 'session', scopesForRole(role)), role })).includes('get_admin_access_status'), role).toBe(false);
+    }
+    const hidden = await callTool(t.env, as(customer, 'oauth', capScopes('user', OAUTH_DEFAULT_SCOPES), { clientId: 'c' }), 'get_admin_access_status');
+    expect(hidden.result.isError).toBe(true);
+    expect(hidden.result.content[0].text).toMatch(/Unknown tool/);
+    expect(JSON.stringify(hidden.result)).not.toMatch(/admin_scopes|reconnect/);
   });
 
-  it('tells a user-role caller only that the role has no admin access', async () => {
-    const r = structured(await callTool(t.env, as(customer, 'oauth', capScopes('user', OAUTH_DEFAULT_SCOPES), { clientId: 'c' }), 'get_admin_access_status'));
+  it('tells a user-role caller over REST only that the role has no admin access', async () => {
+    const { adminAccessStatus } = await import('../src/services/admin/access');
+    const r = adminAccessStatus(t.env, as(customer, 'oauth', capScopes('user', OAUTH_DEFAULT_SCOPES), { clientId: 'c' }), MCP_TOOL_CATALOG);
     expect(r.state).toBe('not_eligible');
     expect(r.admin).toBeNull();
     expect(JSON.stringify(r).includes('system_overview')).toBe(false);
@@ -325,8 +334,8 @@ describe('operations diagnostics', () => {
 });
 
 describe('protocol', () => {
-  it('lists the access tool in tools/list for a user-role OAuth connection', async () => {
-    const { body } = await rpc(t.env, as(customer, 'oauth', capScopes('user', OAUTH_DEFAULT_SCOPES), { clientId: 'c' }), 'tools/list');
+  it('lists the access tool in tools/list for an owner OAuth connection with the default grant', async () => {
+    const { body } = await rpc(t.env, as(owner, 'oauth', oauthPrincipalScopes('owner', OAUTH_DEFAULT_SCOPES, OAUTH_GRANT_VERSION), { clientId: 'c' }), 'tools/list');
     const tool = body.result.tools.find((x: { name: string }) => x.name === 'get_admin_access_status');
     expect(tool.annotations.readOnlyHint).toBe(true);
   });
