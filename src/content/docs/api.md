@@ -1,7 +1,7 @@
 ---
 title: "REST API"
 description: "The anymd REST API v1: authentication, errors, conversion, library, search, usage, keys and admin endpoints with curl, JavaScript and Python examples."
-updated: "2026-10-25"
+updated: "2026-10-28"
 ---
 
 Base URL: `https://anymd.cc/api/v1`. Everything is JSON unless noted.
@@ -38,7 +38,7 @@ Every error has the same shape and a matching HTTP status:
 
 | Status | Typical codes |
 |---|---|
-| 400 | `invalid_url`, `blocked_host`, `invalid_request`, `cursor_expired` |
+| 400 | `invalid_url`, `blocked_host` (also a redirect to a blocked address), `invalid_request`, `cursor_expired` |
 | 401 | `unauthorized`, `invalid_api_key` |
 | 402 | `quota_exceeded` |
 | 408 | `processing_limit` |
@@ -50,7 +50,8 @@ Every error has the same shape and a matching HTTP status:
 | 422 | `empty_content`, `document_failed`, `invalid_props`, `idempotency_mismatch`, `invalid_request`, `too_many_tags`, `invalid_preferences`, `invalid_setting`, `plan_managed_by_billing` |
 | 429 | `anonymous_limit`, rate limits |
 | 503 | `provider_unavailable`, `provider_quota`, `oauth_store_unavailable` |
-| 502 | `fetch_failed`, `upstream_status` |
+| 502 | `fetch_failed`, `upstream_status`, `too_many_redirects`, `invalid_redirect` |
+| 504 | `fetch_timeout` |
 
 Read `code`, not `message`. Messages are for humans and may change.
 

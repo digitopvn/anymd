@@ -149,6 +149,29 @@ describe('queue consumer', () => {
     expect(charges(user.id)).toEqual([{ credits: ENRICHMENT_CREDITS.videoDownload }]);
   });
 
+  it('follows stream redirects only within YouTube media hosts', async () => {
+    const MIRROR = 'https://rr2---sn-def.googlevideo.com/videoplayback?itag=18';
+    for (const [location, expected] of [[MIRROR, { status: 'ready', bytes: 4 }], ['http://169.254.169.254/latest/meta-data/', { status: 'failed', error: 'invalid_stream_url' }]] as const) {
+      const base = stubFetch();
+      const seen: string[] = [];
+      vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+        const url = String(input);
+        seen.push(url);
+        if (url === STREAM) return new Response(null, { status: 302, headers: { location } });
+        if (url === MIRROR) return new Response(new Uint8Array([1, 2, 3, 4]), { headers: { 'content-length': '4' } });
+        return base(input, init);
+      }));
+      media.objects.clear();
+      const user = await seedUser(t, 'user');
+      const state = (await startVideoDownload(t.env, principalOf(user.id), 'free', 'mcp', `https://youtu.be/${VIDEO}`)) as { id: string };
+      await processVideoJob(t.env, state.id, VIDEO_MAX_ATTEMPTS - 1);
+      await processVideoJob(t.env, state.id, VIDEO_MAX_ATTEMPTS);
+      expect(job(state.id)).toMatchObject(expected);
+      expect(seen.some((u) => u.startsWith('http://169.254.'))).toBe(false);
+      t.db.prepare('DELETE FROM video_jobs').run();
+    }
+  });
+
   it('uses VidCap first when its key is set', async () => {
     const fetch = stubFetch(() => new Response('should not be called', { status: 500 }));
     t.env.VIDCAP_API_KEY = 'vidcap-key';

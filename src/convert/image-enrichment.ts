@@ -3,6 +3,7 @@ import { ENRICHMENT_CREDITS } from '../billing/plans';
 import { normalizeTargetUrl } from './index';
 import { findOptout } from './optouts';
 import { readBounded } from './provider-fetch';
+import { fetchDeadline, fetchPublic } from './safe-fetch';
 import { ConvertError, type ConvertContext, type ConvertResult } from './types';
 import type { Enrichment } from './enrichment-types';
 
@@ -19,27 +20,24 @@ export function articleImages(markdown: string, source: string): { url: string; 
 }
 
 async function imageData(raw: string, ctx: ConvertContext): Promise<string> {
-  let url = normalizeTargetUrl(raw);
-  for (let redirects = 0; redirects <= 3; redirects++) {
+  // Every hop, the first included, spends a provider call and passes the image host's opt-out.
+  const beforeHop = async (url: URL) => {
     if (ctx.budget && !ctx.budget.canFetch()) throw new ConvertError('Processing limit reached', 408, 'processing_limit');
     if (ctx.budget) ctx.budget.calls++;
     if (await findOptout(ctx.env, url.hostname)) throw new ConvertError('Image source opted out', 403, 'site_opted_out');
-    const response = await fetch(url.href, { redirect: 'manual', signal: AbortSignal.timeout(Math.max(1, Math.min(8000, (ctx.budget?.deadline ?? Date.now() + 8000) - Date.now()))) });
-    if (response.status >= 300 && response.status < 400) {
-      await response.body?.cancel();
-      const location = response.headers.get('location');
-      if (!location) break;
-      url = normalizeTargetUrl(new URL(location, url).href);
-      continue;
-    }
-    const mime = response.headers.get('content-type')?.split(';')[0];
-    if (!response.ok || !mime || !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mime)) throw new ConvertError('Unsupported or unavailable image', 422, 'image_unavailable');
-    const bytes = await readBounded(response, 4 * 1024 * 1024);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    return `data:${mime};base64,${btoa(binary)}`;
+  };
+  const start = normalizeTargetUrl(raw);
+  await beforeHop(start);
+  const { response } = await fetchPublic(start, { beforeHop, signal: fetchDeadline(8000, ctx.budget?.deadline) });
+  const mime = response.headers.get('content-type')?.split(';')[0];
+  if (!response.ok || !mime || !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mime)) {
+    await response.body?.cancel();
+    throw new ConvertError('Unsupported or unavailable image', 422, 'image_unavailable');
   }
-  throw new ConvertError('Image redirect limit reached', 422, 'image_unavailable');
+  const bytes = await readBounded(response, 4 * 1024 * 1024);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return `data:${mime};base64,${btoa(binary)}`;
 }
 
 export async function enrichImages(result: ConvertResult, ctx: ConvertContext): Promise<void> {
