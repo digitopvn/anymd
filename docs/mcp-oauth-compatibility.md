@@ -52,8 +52,8 @@ binds them with PKCE, which the token exchange test confirms.
 - `test/oauth-chatgpt.test.ts`: `securitySchemes`, `_meta["mcp/www_authenticate"]`, read-only
   consent and server-side refusal of delete, CIMD with ChatGPT's metadata document, auth-failure
   budget and log redaction, grant revocation across every page on account deletion.
-- A local `wrangler dev` run of the whole flow in workerd, recorded when this matrix was first
-  written (a dated run, not kept in sync with later changes):
+- A local `wrangler dev` run of the whole flow in workerd, last re-run on 2026-10-28 after the
+  authorize error page change (a dated run: re-run it after OAuth changes):
   `plans/261028-1412-mcp-oauth-chatgpt-hardening/reports/local-e2e-output.txt`, script alongside.
   The CIMD check could not fetch `chatgpt.com` from the sandbox (HTTP 403 on egress), so CIMD is
   covered by the vitest fixture instead.

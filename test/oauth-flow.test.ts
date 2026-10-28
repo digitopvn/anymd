@@ -75,7 +75,6 @@ function documentRowCount(id: string): number {
   return (t.db.prepare('SELECT COUNT(*) AS n FROM documents WHERE id = ?').get(id) as { n: number }).n;
 }
 
-/** The authorization code from a successful consent reply. */
 /** The client return link on the authorize error page; the page never redirects on its own. */
 function errorReturnLink(status: number, location: string | null, html: string): URL {
   expect(status).toBe(400);
@@ -85,6 +84,7 @@ function errorReturnLink(status: number, location: string | null, html: string):
   return new URL(href.replaceAll('&amp;', '&'));
 }
 
+/** The authorization code from a successful consent reply. */
 function codeFrom(location: string | null): string {
   const code = new URL(location ?? 'https://invalid.example/').searchParams.get('code');
   if (!code) throw new Error(`no code in redirect: ${location}`);
