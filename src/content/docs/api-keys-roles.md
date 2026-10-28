@@ -27,7 +27,7 @@ Body: `{ name, preset?, scopes?, expires_in_days? }`. Use a preset, or pass an e
 | Preset | Label | Scopes |
 |---|---|---|
 | `convert-only` | Convert only | `convert` |
-| `library` | Convert + library (agents) | `convert`, `library:read`, `library:write` |
+| `library` | Convert + library (agents) | `convert`, `library:read`, `library:write`, `library:delete` |
 | `read-only` | Read-only | `library:read`, `usage:read` |
 | `content-editor` | Content editor (AI CMS) | `content:read`, `content:write`, `content:publish`, `pages:read`, `pages:write`, `pages:publish` |
 | `admin-read-only` | Admin read-only (monitoring agent) | `settings:read`, `optouts:read`, `users:read`, `credits:read`, `billing:read`, `audit:read`, `system:read`, `content:read`, `pages:read` |

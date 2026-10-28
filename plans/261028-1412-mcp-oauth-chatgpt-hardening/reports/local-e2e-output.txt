@@ -1,6 +1,6 @@
 PASS  signup creates a session  (status 302)
 PASS  DCR registers a public client  (status 201)
-PASS  authorize redirects to the exact ChatGPT redirect with code, state and iss  (https://chatgpt.com/connector_platform_oauth_redirect?code=usr_01m61ewekwgcds6ss)
+PASS  authorize redirects to the exact ChatGPT redirect with code, state and iss  (https://chatgpt.com/connector_platform_oauth_redirect?code=usr_01m61ff2vshm7kwrf)
 PASS  consent page offers a read-only connection
 PASS  token exchange with PKCE S256 + resource  (scope=convert library:read library:write)
 PASS  the default grant does not list delete_document (it needs library:delete)
@@ -14,7 +14,7 @@ PASS  read-only grant stores only read scopes  (scope=convert library:read)
 PASS  read-only connection does not list write/delete tools
 PASS  read-only connection calling delete_document is refused by the server  (status 403)
 PASS  wrong PKCE verifier → invalid_grant  ({"error":"invalid_grant","error_description":"Invalid PKCE code_verifier"})
-PASS  authorize for another resource is refused with an invalid_target redirect (no code)  (status 302 https://chatgpt.com/connector_platform_oauth_redirect?error=invalid_target&error_description=The+resource+parameter+must)
+PASS  authorize for another resource is refused on an error page whose return link carries invalid_target (no redirect, no code)  (status 400)
 PASS  revoked token → 401 with resource_metadata challenge, token never echoed  (revoke 200, then 401)
 PASS  unknown API key → 401 invalid_api_key, key not echoed
 FAIL  CIMD: ChatGPT metadata-document client reaches consent and gets a code  (status 400 <!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/><title>Inva)

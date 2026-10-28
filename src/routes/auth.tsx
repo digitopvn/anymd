@@ -200,15 +200,24 @@ authRoutes.get('/oauth/authorize', async (c) => {
   try {
     authRequest = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
   } catch (e) {
-    // Once the client and its redirect URI are validated, the client learns why (RFC 6749 4.1.2.1,
-    // with RFC 9207 iss) instead of leaving the user on our error page. Otherwise never redirect.
+    // Once the client and its redirect URI are validated, the client can learn why (RFC 6749
+    // 4.1.2.1, with RFC 9207 iss). Anyone can register a client (DCR, CIMD), so an automatic
+    // redirect would make this an open redirector: the user follows a labelled link instead.
     if (e instanceof AuthorizationError && e.redirectUri) {
       const to = new URL(e.redirectUri);
       to.searchParams.set('error', e.code);
       to.searchParams.set('error_description', e.description);
       if (e.state) to.searchParams.set('state', e.state);
       if (e.issuer) to.searchParams.set('iss', e.issuer);
-      return c.redirect(to.toString(), 302);
+      return renderMessage(
+        c,
+        400,
+        'Invalid authorization request',
+        e.description || 'The client sent an invalid request.',
+        <a class="btn btn-dark" href={to.toString()} rel="noreferrer" data-oauth-error-return>
+          Return to {to.host}
+        </a>,
+      );
     }
     return renderMessage(c, 400, 'Invalid authorization request', e instanceof Error ? e.message : 'The client sent an invalid request.');
   }

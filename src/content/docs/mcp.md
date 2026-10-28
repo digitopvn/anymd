@@ -15,7 +15,7 @@ anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) se
 
 ## Authentication
 
-**API key.** Simplest option. Create a key in **Dashboard → API keys**. The **Convert + library (agents)** preset is a good default for an assistant. Details: [API keys & roles](/docs/api-keys-roles).
+**API key.** Simplest option. Create a key in **Dashboard → API keys**. The **Convert + library (agents)** preset is a good default for an assistant; it includes `library:delete`, so pick explicit scopes without it if the agent should never delete. Details: [API keys & roles](/docs/api-keys-roles).
 
 **OAuth 2.1.** For clients that support it, just add the URL and sign in when prompted. anymd supports the authorization code flow with PKCE (`S256` only), Client ID Metadata Documents (CIMD) and Dynamic Client Registration, and binds every token to the `https://anymd.cc/mcp` resource (RFC 8707): a token issued for another resource is refused.
 
@@ -27,7 +27,7 @@ anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) se
 | Token (and revocation) | `/oauth/token` |
 | Registration (DCR) | `/oauth/register` |
 
-The consent screen names the client and the host you return to after you decide: only allow if that is the app you are connecting. A client identified by a metadata document URL (ChatGPT uses `https://chatgpt.com/oauth/client.json`) also shows that URL, because its host proves who the client is; a registered client's name is only what it says about itself. If the request itself is wrong (a `resource` other than anymd's `/mcp`, or PKCE without S256), anymd sends you back to the client with `error`, `state` and `iss` once it has verified the client's redirect URI, and shows an error page otherwise. Tick **Read-only connection** to let the client read the web and search your library but never save, change, publish or delete anything: anymd drops every write scope from the grant and refuses those tools on every call, whatever the model asks.
+The consent screen names the client and the host you return to after you decide: only allow if that is the app you are connecting. A client identified by a metadata document URL (ChatGPT uses `https://chatgpt.com/oauth/client.json`) also shows that URL, because its host proves who the client is; a registered client's name is only what it says about itself. If the request itself is wrong (a `resource` other than anymd's `/mcp`, or PKCE without S256), anymd shows an error page; once it has verified the client's redirect URI, that page carries a **Return to** link that hands the client `error`, `state` and `iss`. anymd never redirects you there on its own, because anyone can register a client. Tick **Read-only connection** to let the client read the web and search your library but never save, change, publish or delete anything: anymd drops every write scope from the grant and refuses those tools on every call, whatever the model asks.
 
 Each tool in `tools/list` carries `securitySchemes` (`oauth2` with the scope it needs), and destructive tools such as `delete_document` are annotated `destructiveHint: true` so hosts ask you before running them. The server never relies on either: it checks the scope on every call.
 

@@ -21,6 +21,12 @@ export interface AuthFailure {
   /** Known only when the token itself was valid (suspended or deleted account). */
   userId?: string;
   clientId?: string;
+  /**
+   * Narrows the per-IP budget to one connection (for OAuth, the grant a token names). Hosts such as
+   * ChatGPT call from a few shared egress IPs, so an IP-wide budget would let many users' routine
+   * expired tokens lock everyone behind that IP out of refreshing.
+   */
+  bucket?: string;
 }
 
 function clientIp(request: Request): string {
@@ -46,12 +52,22 @@ export async function recordAuthFailure(env: Env, request: Request, failure: Aut
     }),
   );
   try {
-    const { success } = await env.RL_AUTH.limit({ key: `authfail:${clientIp(request)}` });
+    const { success } = await env.RL_AUTH.limit({ key: `authfail:${clientIp(request)}${failure.bucket ? `:${failure.bucket}` : ''}` });
     return !success;
   } catch (err) {
     console.error('auth failure limiter unavailable', err instanceof Error ? err.message : String(err));
     return false;
   }
+}
+
+/**
+ * The grant an OAuth access token names (`userId:grantId:secret`), used as its failure bucket. A token
+ * of any other shape cannot be looked up at all, so it shares the plain per-IP budget.
+ */
+export function oauthTokenBucket(request: Request): string | undefined {
+  const auth = request.headers.get('authorization') ?? '';
+  const parts = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim().split(':') : [];
+  return parts.length === 3 && parts[0] && parts[1] ? `${parts[0]}:${parts[1]}` : undefined;
 }
 
 /** Whether the request presents a credential (bearer token or `X-API-Key`). */

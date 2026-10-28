@@ -76,6 +76,15 @@ function documentRowCount(id: string): number {
 }
 
 /** The authorization code from a successful consent reply. */
+/** The client return link on the authorize error page; the page never redirects on its own. */
+function errorReturnLink(status: number, location: string | null, html: string): URL {
+  expect(status).toBe(400);
+  expect(location).toBeNull();
+  const href = /<a [^>]*href="([^"]+)"[^>]*data-oauth-error-return/.exec(html)?.[1];
+  if (!href) throw new Error(`no return link: ${html.slice(0, 300)}`);
+  return new URL(href.replaceAll('&amp;', '&'));
+}
+
 function codeFrom(location: string | null): string {
   const code = new URL(location ?? 'https://invalid.example/').searchParams.get('code');
   if (!code) throw new Error(`no code in redirect: ${location}`);
@@ -243,7 +252,7 @@ describe('revocation', () => {
 });
 
 describe('audience (RFC 8707 resource)', () => {
-  it('refuses an authorization request for a foreign resource by redirecting invalid_target to the client', async () => {
+  it('refuses an authorization request for a foreign resource and offers the client an invalid_target return link', async () => {
     const user = await seedUser(t, 'user');
     const clientId = await registerClient(t);
     const { token: session } = await seedSession(t, user);
@@ -259,8 +268,7 @@ describe('audience (RFC 8707 resource)', () => {
       resource: 'https://evil.example/mcp',
     });
     const res = await workerFetch(t, `/oauth/authorize?${query}`, { headers: { cookie: `amd_session=${session}` } });
-    expect(res.status).toBe(302);
-    const to = new URL(res.headers.get('location') ?? '');
+    const to = errorReturnLink(res.status, res.headers.get('location'), await res.text());
     expect(`${to.origin}${to.pathname}`).toBe(CHATGPT_REDIRECT);
     expect(to.searchParams.get('error')).toBe('invalid_target');
     expect(to.searchParams.get('state')).toBe('xyz');
@@ -309,7 +317,7 @@ describe('PKCE', () => {
     expect(r.text.includes(code)).toBe(false);
   });
 
-  it('refuses code_challenge_method=plain at the authorize endpoint with an invalid_request redirect', async () => {
+  it('refuses code_challenge_method=plain at the authorize endpoint with an invalid_request return link', async () => {
     const user = await seedUser(t, 'user');
     const clientId = await registerClient(t);
     const { token: session } = await seedSession(t, user);
@@ -317,9 +325,8 @@ describe('PKCE', () => {
     const pending = await beginAuthorization(t, session, { clientId, codeChallenge: challenge, codeChallengeMethod: 'plain' });
 
     expect(pending.handle).toBeNull();
-    expect(pending.status).toBe(302);
     expect(pending.bindings).toEqual([]);
-    const to = new URL(pending.location ?? '');
+    const to = errorReturnLink(pending.status, pending.location, pending.text);
     expect(`${to.origin}${to.pathname}`).toBe(CHATGPT_REDIRECT);
     expect(to.searchParams.get('error')).toBe('invalid_request');
     expect(to.searchParams.get('code')).toBeNull();

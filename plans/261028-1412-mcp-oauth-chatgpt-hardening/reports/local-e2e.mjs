@@ -52,7 +52,7 @@ async function authorize(clientId, { scope = 'convert library:read library:write
   const page = await req(`/oauth/authorize?${q}`);
   const html = await page.text();
   const handle = /name="state" value="([^"]+)"/.exec(html)?.[1];
-  if (!handle) return { status: page.status, html: html.slice(0, 300), location: page.headers.get('location') ?? '', verifier };
+  if (!handle) return { status: page.status, html, location: page.headers.get('location') ?? '', verifier };
   const post = await req('/oauth/authorize', { method: 'POST', headers: FORM, body: form({ state: handle, decision: 'allow', ...(readOnly ? { read_only: '1' } : {}) }) });
   const loc = post.headers.get('location') ?? '';
   const u = loc ? new URL(loc) : null;
@@ -114,7 +114,7 @@ const bad = await token({ grant_type: 'authorization_code', code: badVerifier.co
 check('wrong PKCE verifier → invalid_grant', bad.status === 400 && bad.body?.error === 'invalid_grant', JSON.stringify(bad.body));
 
 const evil = await authorize(clientId, { resource: 'https://evil.example/mcp' });
-check('authorize for another resource is refused with an invalid_target redirect (no code)', !evil.code && /error=invalid_target/.test(evil.location ?? ''), `status ${evil.status} ${evil.location?.slice(0, 120) ?? ''}`);
+check('authorize for another resource is refused on an error page whose return link carries invalid_target (no redirect, no code)', evil.status === 400 && !evil.location && /data-oauth-error-return/.test(evil.html) && /error=invalid_target/.test(evil.html), `status ${evil.status}`);
 
 const current = (await connect(clientId)).t.body.access_token;
 const revoke = await req('/oauth/token', { method: 'POST', headers: FORM, body: form({ token: current, token_type_hint: 'access_token', client_id: clientId }) });

@@ -204,19 +204,38 @@ describe('CIMD (client ID metadata document)', () => {
 });
 
 describe('auth failure budget', () => {
-  it('counts failed bearer tokens per IP, answers 429 once spent, and never logs the credential', async () => {
+  it('counts failed API keys per IP, answers 429 with the challenge once spent, and never logs the credential', async () => {
     t.close();
     t = oauthTestEnv({ RL_AUTH: counter(2) });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const SECRET = 'amd_test_LEAKCHECK0123456789';
     const FORGED = 'usr_x:grant_y:LEAKCHECKOAUTH';
-    const statuses: number[] = [];
-    for (const token of [SECRET, FORGED, SECRET]) statuses.push((await rpc(t, token, 'tools/list')).status);
+    const replies = [];
+    for (const token of [SECRET, FORGED, SECRET, SECRET]) replies.push(await rpc(t, token, 'tools/list'));
 
-    expect(statuses).toEqual([401, 401, 429]);
+    expect(replies.map((r) => r.status)).toEqual([401, 401, 401, 429]);
+    const limited = replies[3];
+    expect(limited.headers.get('retry-after')).toBe('60');
+    expect((limited.headers.get('www-authenticate') ?? '').includes('resource_metadata="')).toBe(true);
     const logged = warn.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
     expect(logged.includes('"event":"auth_failure"')).toBe(true);
     expect(logged.includes('LEAKCHECK')).toBe(false);
+  });
+
+  it('gives each OAuth connection its own budget, so one stale connection behind a shared IP does not lock out others', async () => {
+    t.close();
+    t = oauthTestEnv({ RL_AUTH: counter(2) });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const user = await seedUser(t, 'user');
+    const healthy = await connectOAuthClient(t, user);
+    const stale = 'usr_stale:grant_stale:expiredsecret';
+    const statuses: number[] = [];
+    for (let i = 0; i < 3; i++) statuses.push((await rpc(t, stale, 'tools/list')).status);
+    expect(statuses).toEqual([401, 401, 429]);
+
+    // Another connection from the same IP: a bad token gets its own budget, a valid one is untouched.
+    expect((await rpc(t, 'usr_other:grant_other:wrongsecret', 'tools/list')).status).toBe(401);
+    expect((await rpc(t, healthy.tokens.access_token, 'tools/list')).status).toBe(200);
   });
 
   it('does not count a first contact without any credential', async () => {

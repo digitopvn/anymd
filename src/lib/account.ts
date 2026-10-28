@@ -30,6 +30,8 @@ export function documentsToMarkdown(docs: DocumentRow[]): string {
     .join('\n\n* * *\n\n');
 }
 
+const GRANT_REVOKE_BATCH = 10;
+
 /**
  * Delete everything tied to a user: vectors, documents, keys, sessions, logs, billing mirrors and
  * OAuth grants. Audit log rows stay (they record admin actions, not the user's content).
@@ -41,12 +43,20 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
 
   try {
     // Every page, so no grant or token of the deleted account stays in the OAuth store.
+    // A few revocations at a time keeps the KV operations of one request bounded.
     let cursor: string | undefined;
+    let failed = 0;
     do {
       const page = await env.OAUTH_PROVIDER.listUserGrants(userId, cursor ? { cursor } : undefined);
-      await Promise.all(page.items.map((g) => env.OAUTH_PROVIDER.revokeGrant(g.id, userId).catch(() => undefined)));
+      for (let i = 0; i < page.items.length; i += GRANT_REVOKE_BATCH) {
+        const batch = page.items.slice(i, i + GRANT_REVOKE_BATCH);
+        const settled = await Promise.allSettled(batch.map((g) => env.OAUTH_PROVIDER.revokeGrant(g.id, userId)));
+        failed += settled.filter((r) => r.status === 'rejected').length;
+      }
       cursor = page.cursor;
     } while (cursor);
+    // The user row is deleted anyway, so a surviving grant cannot refresh; the count shows it happened.
+    if (failed) console.warn(JSON.stringify({ event: 'account_grant_revoke_failed', failed }));
   } catch {
     // No OAuth grants store in this environment: nothing to revoke.
   }

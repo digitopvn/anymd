@@ -20,7 +20,7 @@ evidence behind each claim. Behaviour lives in `src/worker.ts` (provider options
 | Read-only connection | Consent checkbox; the grant keeps only `convert` and `*:read`, so save, tag and delete tools are not listed and are refused server side |
 | Destructive tools | `delete_document` needs `library:delete`, an elevated scope that is never in the default grant: the user approves it by name on the consent screen (step-up from a 403). The tool carries `destructiveHint: true`; no model-supplied argument can stand in for the scope |
 | Account state | Suspended or deleted accounts get 401 at `/mcp` and cannot refresh (`invalid_grant`); a refused refresh drops the grant |
-| Auth failures | One `auth_failure` log line (never the credential), 120 failures/min/IP, then 429 with `Retry-After: 60` |
+| Auth failures | An `auth_failure` log line (never the credential); 120 failures/min per IP for API keys, per IP and connection for OAuth tokens; then 429 with `Retry-After: 60` and the same Bearer challenge |
 
 ## Client matrix
 
@@ -46,16 +46,17 @@ binds them with PKCE, which the token exchange test confirms.
 
 - `test/oauth-flow.test.ts`: discovery, connect, reconnect, refresh, expiry, RFC 7009 and dashboard
   revocation, foreign audience at authorize, token and `/mcp`, PKCE (wrong verifier, `plain`
-  refused with an error redirect), redirect URI matching, missing scope, cross-tenant read and
+  refused with an error page whose return link carries the error to the client), redirect URI matching, missing scope, cross-tenant read and
   delete, the `library:delete` step-up (an argument cannot replace it), suspended and deleted
   accounts, forged and malformed tokens.
 - `test/oauth-chatgpt.test.ts`: `securitySchemes`, `_meta["mcp/www_authenticate"]`, read-only
   consent and server-side refusal of delete, CIMD with ChatGPT's metadata document, auth-failure
   budget and log redaction, grant revocation across every page on account deletion.
-- Local `wrangler dev` run of the whole flow in workerd:
-  `plans/261028-1412-mcp-oauth-chatgpt-hardening/reports/local-e2e-output.txt` (script alongside).
-  19 of 20 checks pass; the CIMD check could not fetch `chatgpt.com` from the sandbox (HTTP 403 on
-  egress), so CIMD is covered by the vitest fixture instead.
+- A local `wrangler dev` run of the whole flow in workerd, recorded when this matrix was first
+  written (a dated run, not kept in sync with later changes):
+  `plans/261028-1412-mcp-oauth-chatgpt-hardening/reports/local-e2e-output.txt`, script alongside.
+  The CIMD check could not fetch `chatgpt.com` from the sandbox (HTTP 403 on egress), so CIMD is
+  covered by the vitest fixture instead.
 
 ## Known limits
 

@@ -9,7 +9,7 @@
  */
 import OAuthProvider, { GrantType, OAuthError } from '@cloudflare/workers-oauth-provider';
 import { Hono } from 'hono';
-import { AUTH_FAILURE_RETRY_AFTER, type AuthFailure, presentsCredential, recordAuthFailure } from './auth/auth-failures';
+import { AUTH_FAILURE_RETRY_AFTER, type AuthFailure, oauthTokenBucket, presentsCredential, recordAuthFailure } from './auth/auth-failures';
 import { API_KEY_PREFIX, getUser } from './auth/identity';
 import { resolvePrincipal } from './auth/middleware';
 import { ALL_SCOPES, isRole, OAUTH_DEFAULT_SCOPES, oauthPrincipalScopes } from './auth/roles';
@@ -154,11 +154,16 @@ function mcpUnauthorized(env: Env, description = 'Connect with OAuth, or send Au
   });
 }
 
-function mcpRateLimited(): Response {
-  return new Response(JSON.stringify({ error: 'rate_limited', error_description: 'Too many failed authentication attempts from this address. Retry later.' }), {
-    status: 429,
-    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Retry-After', 'Retry-After': String(AUTH_FAILURE_RETRY_AFTER) },
-  });
+/** 429 for a spent failure budget. It keeps the OAuth challenge, so the client still knows to refresh or reconnect. */
+function mcpRateLimited(challenge?: string | null): Response {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Expose-Headers': 'Retry-After, WWW-Authenticate',
+    'Retry-After': String(AUTH_FAILURE_RETRY_AFTER),
+  };
+  if (challenge) headers['WWW-Authenticate'] = challenge;
+  return new Response(JSON.stringify({ error: 'rate_limited', error_description: 'Too many failed authentication attempts. Retry later.' }), { status: 429, headers });
 }
 
 /** Props stored with an OAuth grant at consent. `v` marks grants issued with least-privilege consent. */
@@ -184,9 +189,10 @@ const mcpApiHandler = {
     // The token is valid but its account is gone or suspended: fail closed like any revoked token.
     if (!user || user.status === 'suspended') {
       const reason = user ? 'account_suspended' : 'account_missing';
-      const limited = await recordAuthFailure(env, request, { credential: 'oauth', reason, userId, clientId: ctx.auth?.clientId ?? ctx.props?.clientId });
-      if (limited) return mcpRateLimited();
-      return mcpUnauthorized(env, user ? 'This anymd account is suspended.' : 'This anymd account no longer exists. Sign up again and reconnect.');
+      const clientId = ctx.auth?.clientId ?? ctx.props?.clientId;
+      const denied = mcpUnauthorized(env, user ? 'This anymd account is suspended.' : 'This anymd account no longer exists. Sign up again and reconnect.');
+      const limited = await recordAuthFailure(env, request, { credential: 'oauth', reason, userId, clientId, bucket: oauthTokenBucket(request) });
+      return limited ? mcpRateLimited(denied.headers.get('WWW-Authenticate')) : denied;
     }
     const role = isRole(user.role) ? user.role : 'user';
     // Re-cap on every call so a demotion takes effect on existing tokens immediately; grants from
@@ -234,7 +240,9 @@ function oauthProvider(env: Env): OAuthProvider<Env> {
       // refresh must not keep handing out credentials for an account that is no longer active.
       tokenExchangeCallback: async ({ grantType, userId }) => {
         if (grantType !== GrantType.AUTHORIZATION_CODE && grantType !== GrantType.REFRESH_TOKEN) return;
-        const user = providerEnv ? await getUser(providerEnv, userId) : null;
+        // Without an env we cannot tell; a plain error is a 500 and, unlike invalid_grant, keeps the grant.
+        if (!providerEnv) throw new Error('token exchange without a request env');
+        const user = await getUser(providerEnv, userId);
         if (user && user.status !== 'suspended') return;
         throw new OAuthError('invalid_grant', {
           description: 'This account is not active.',
@@ -264,7 +272,10 @@ export default {
       // handler's 401 (suspended or deleted account, realm "anymd") has already been recorded there.
       const ownChallenge = res.headers.get('WWW-Authenticate')?.includes('realm="anymd"');
       if (res.status === 401 && presentsCredential(request) && !ownChallenge) {
-        if (await recordAuthFailure(env, request, { credential: 'oauth', reason: 'invalid_token' } satisfies AuthFailure)) return mcpRateLimited();
+        const failure: AuthFailure = auth.toLowerCase().startsWith('bearer ')
+          ? { credential: 'oauth', reason: 'invalid_token', bucket: oauthTokenBucket(request) }
+          : { credential: 'api_key', reason: 'invalid_api_key' };
+        if (await recordAuthFailure(env, request, failure)) return mcpRateLimited(res.headers.get('WWW-Authenticate'));
       }
       return res;
     }
