@@ -89,16 +89,20 @@ function kv(): KVNamespace & { store: Map<string, string> } {
   const store = new Map<string, string>();
   return {
     store,
-    async get(key: string, type?: string) {
+    async get(key: string, type?: string | { type?: string }) {
       const v = store.get(key);
       if (v === undefined) return null;
-      return type === 'json' ? JSON.parse(v) : v;
+      return (typeof type === 'object' ? type.type : type) === 'json' ? JSON.parse(v) : v;
     },
     async put(key: string, value: string) {
       store.set(key, value);
     },
     async delete(key: string) {
       store.delete(key);
+    },
+    // One page holds every match; enough for the OAuth provider's grant and token listings.
+    async list({ prefix = '' }: { prefix?: string } = {}) {
+      return { keys: [...store.keys()].filter((k) => k.startsWith(prefix)).sort().map((name) => ({ name })), list_complete: true, cursor: '' };
     },
   } as unknown as KVNamespace & { store: Map<string, string> };
 }

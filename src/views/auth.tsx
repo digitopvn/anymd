@@ -253,6 +253,8 @@ const ADMIN_PRESET_LABELS: Record<OAuthAdminPresetId, string> = {
 export function ConsentPage({
   clientName,
   clientUri,
+  clientId,
+  redirectHost,
   scopes,
   unavailable = [],
   requestedNothing = false,
@@ -263,6 +265,10 @@ export function ConsentPage({
 }: {
   clientName: string;
   clientUri?: string;
+  /** Shown when the client identifies itself by a metadata URL (CIMD): its host is who the client is. */
+  clientId?: string;
+  /** Where the browser returns after a decision. A client's name is self-declared; this is not. */
+  redirectHost?: string;
   scopes: Scope[];
   unavailable?: string[];
   requestedNothing?: boolean;
@@ -286,6 +292,16 @@ export function ConsentPage({
           Signed in as <strong class="text-ink">{userEmail}</strong> ({ROLE_TEMPLATES[role as keyof typeof ROLE_TEMPLATES]?.label ?? role})
         </p>
         {clientUri ? <p class="mt-1 truncate text-xs text-muted">{clientUri}</p> : null}
+        {clientId ? (
+          <p class="mt-1 truncate text-xs text-muted" data-client-id>
+            Client ID: {clientId}
+          </p>
+        ) : null}
+        {redirectHost ? (
+          <p class="mt-1 text-xs text-muted" data-redirect-host>
+            After you decide, you return to <strong class="text-ink">{redirectHost}</strong>. Only allow if that is the app you are connecting.
+          </p>
+        ) : null}
         <p class="mt-4 text-sm font-semibold">It will be able to:</p>
         <ul class="mt-2 space-y-2 text-sm">
           {basic.map((s) => (
@@ -296,7 +312,7 @@ export function ConsentPage({
         </ul>
         {elevated.length ? (
           <div class="mt-4 rounded-xl border border-warn-line bg-warn-soft p-3" data-elevated-scopes>
-            <p class="text-sm font-semibold text-warn">Elevated access: other users' data or site-wide settings</p>
+            <p class="text-sm font-semibold text-warn">Sensitive access: permanent changes, credentials, other users' data or site-wide settings</p>
             <ul class="mt-2 space-y-2 text-sm text-warn">
               {elevated.map((s) => (
                 <li class="flex gap-2">
@@ -304,7 +320,7 @@ export function ConsentPage({
                 </li>
               ))}
             </ul>
-            <p class="mt-2 text-xs text-warn">Only allow this for an agent you trust to administer anymd. Every change it makes is recorded in the audit log.</p>
+            <p class="mt-2 text-xs text-warn">Only allow this for an agent you trust with it. Every change it makes is recorded in the audit log.</p>
           </div>
         ) : null}
         {requestedNothing ? <p class="mt-3 text-xs text-muted">The client did not ask for specific access, so it gets the basic set. It can ask for more later, and you will be asked again.</p> : null}

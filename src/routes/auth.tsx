@@ -201,7 +201,8 @@ authRoutes.get('/oauth/authorize', async (c) => {
   } catch (e) {
     return renderMessage(c, 400, 'Invalid authorization request', e instanceof Error ? e.message : 'The client sent an invalid request.');
   }
-  const client = await c.env.OAUTH_PROVIDER.lookupClient(authRequest.clientId);
+  // A metadata-URL client (CIMD) is fetched here, and that fetch can fail.
+  const client = await c.env.OAUTH_PROVIDER.lookupClient(authRequest.clientId).catch(() => null);
   if (!client) return renderMessage(c, 400, 'Unknown client', 'This MCP client is not registered. Reconnect it from your agent.');
   // Least privilege: a client that asks for nothing gets the customer baseline, never the whole role.
   const { granted, unavailable } = oauthConsentScopes(user.role, authRequest.scope);
@@ -210,9 +211,17 @@ authRoutes.get('/oauth/authorize', async (c) => {
   return renderPage(
     c,
     { title: 'Authorize MCP client', path: '/oauth/authorize', ...noindex },
-    <ConsentPage clientName={client.clientName || 'An MCP client'} clientUri={client.clientUri} scopes={granted} unavailable={unavailable} requestedNothing={!authRequest.scope.length} state={handle} userEmail={user.email} role={user.role} adminPresets={consentAdminPresets(user.role)} />,
+    <ConsentPage clientName={client.clientName || 'An MCP client'} clientUri={client.clientUri} clientId={/^https:\/\//.test(client.clientId) ? client.clientId : undefined} redirectHost={hostOf(authRequest.redirectUri)} scopes={granted} unavailable={unavailable} requestedNothing={!authRequest.scope.length} state={handle} userEmail={user.email} role={user.role} adminPresets={consentAdminPresets(user.role)} />,
   );
 });
+
+function hostOf(url: string): string | undefined {
+  try {
+    return new URL(url).host || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 authRoutes.post('/oauth/authorize', async (c) => {
   const user = c.get('user');
@@ -227,7 +236,7 @@ authRoutes.post('/oauth/authorize', async (c) => {
     const approved = await c.env.OAUTH_PROVIDER.approveConsent(c.req.raw, f.state ?? '');
     // Admin access is only ever added by the user's explicit choice on the consent form, capped by role.
     const scopes = consentGrantScopes(user.role, approved.request.scope, f.admin_access);
-    const client = await c.env.OAUTH_PROVIDER.lookupClient(approved.request.clientId);
+    const client = await c.env.OAUTH_PROVIDER.lookupClient(approved.request.clientId).catch(() => null);
     const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
       request: { ...approved.request, scope: scopes },
       userId: user.id,

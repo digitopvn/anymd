@@ -173,7 +173,11 @@ const mcpApiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext & { props?: OAuthGrantProps; auth?: { clientId?: string; scope?: string[] } }): Promise<Response> {
     const userId = ctx.props?.userId;
     const user = userId ? await getUser(env, userId) : null;
-    if (!user || user.status === 'suspended') return mcpUnauthorized(env);
+    if (!user || user.status === 'suspended') {
+      // A deleted or suspended account: the token itself is valid, so the provider did not log it.
+      logAuthFailure('protected-resource', user ? 'user_suspended' : 'user_missing', 401);
+      return mcpUnauthorized(env);
+    }
     const role = isRole(user.role) ? user.role : 'user';
     // Re-cap on every call so a demotion takes effect on existing tokens immediately; grants from
     // before least-privilege consent never carry admin scopes; a downscoped token keeps only its own scopes.
@@ -190,6 +194,36 @@ const mcpApiHandler = {
   },
 };
 
+/**
+ * One structured line per rejected OAuth request (expired, revoked or unknown token, wrong audience,
+ * bad PKCE, invalid grant...), for Workers Logs. Only the provider's stable reason codes: never the
+ * token, the request, or the error's free-form detail.
+ */
+function logAuthFailure(category: string, reason: string, status: number, code = 'invalid_token'): void {
+  console.warn(JSON.stringify({ event: 'oauth.auth_failed', category, reason, code, status }));
+}
+
+/**
+ * Failed bearer attempts on /mcp are rate limited per client IP (the anonymous bucket), so a client
+ * replaying a dead token, or guessing, is told to back off with 429 instead of an endless stream of 401s.
+ */
+async function limitAuthFailures(request: Request, env: Env, response: Response): Promise<Response> {
+  if (response.status !== 401 || !(request.headers.get('authorization') || request.headers.get('x-api-key'))) return response;
+  const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
+  try {
+    const { success } = await env.RL_ANON.limit({ key: `mcp-auth-fail:${ip}` });
+    if (success) return response;
+  } catch (err) {
+    console.error('auth failure limiter unavailable', err instanceof Error ? err.message : String(err));
+    return response;
+  }
+  logAuthFailure('protected-resource', 'auth_failure_rate_limited', 429, 'rate_limited');
+  return new Response(JSON.stringify({ error: 'rate_limited', error_description: 'Too many failed authentication attempts. Reconnect anymd, then retry in a minute.' }), {
+    status: 429,
+    headers: { 'Content-Type': 'application/json', 'Retry-After': '60', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Retry-After' },
+  });
+}
+
 let provider: OAuthProvider<Env> | null = null;
 let providerFor = '';
 
@@ -203,6 +237,10 @@ function oauthProvider(env: Env): OAuthProvider<Env> {
       tokenEndpoint: '/oauth/token',
       clientRegistrationEndpoint: '/oauth/register',
       scopesSupported: [...ALL_SCOPES],
+      // Clients that identify themselves by an HTTPS metadata URL (MCP 2025-11-25 CIMD) need no
+      // registration; fetches stay on the public internet (global_fetch_strictly_public).
+      clientIdMetadataDocumentEnabled: true,
+      onError: ({ code, status, internal }) => logAuthFailure(internal.category, internal.reason, status, code),
       accessTokenTTL: 3600,
       refreshTokenTTL: 60 * 60 * 24 * 30,
       // The authorization server must list every scope so consent can approve elevated ones, but the
@@ -218,12 +256,11 @@ function oauthProvider(env: Env): OAuthProvider<Env> {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === '/mcp') {
-      const auth = request.headers.get('authorization') ?? '';
-      const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : request.headers.get('x-api-key') ?? '';
-      if (bearer.startsWith(API_KEY_PREFIX) || request.method === 'OPTIONS') return app.fetch(request, env, ctx);
-    }
-    return oauthProvider(env).fetch(request, env, ctx);
+    if (url.pathname !== '/mcp') return oauthProvider(env).fetch(request, env, ctx);
+    const auth = request.headers.get('authorization') ?? '';
+    const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : request.headers.get('x-api-key') ?? '';
+    const response = bearer.startsWith(API_KEY_PREFIX) || request.method === 'OPTIONS' ? await app.fetch(request, env, ctx) : await oauthProvider(env).fetch(request, env, ctx);
+    return limitAuthFailures(request, env, response);
   },
   /** Background YouTube video downloads (see `src/convert/youtube-video.ts`). */
   async queue(batch: MessageBatch<VideoJobMessage>, env: Env, ctx: ExecutionContext): Promise<void> {
