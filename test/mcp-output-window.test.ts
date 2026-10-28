@@ -1,6 +1,8 @@
+import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Principal, RoleName } from '../src/env';
-import { DEFAULT_WINDOW_CHARS, windowMarkdown } from '../src/mcp/markdown-window';
+import type { AppBindings, Principal, RoleName } from '../src/env';
+import { DEFAULT_WINDOW_CHARS, DEFAULT_WINDOW_UNITS, windowMarkdown } from '../src/mcp/markdown-window';
+import { api } from '../src/routes/api';
 import { callTool } from './helpers/mcp-client';
 import { createTestEnv, seedUser, type TestEnv } from './helpers/sqlite-env';
 
@@ -36,6 +38,19 @@ describe('windowMarkdown', () => {
     expect(parts.join('')).toBe(md);
     expect(parts.length).toBeGreaterThan(2);
     expect(last).toMatchObject({ truncated: false, next_offset: null });
+  });
+
+  it('gives non-Latin text a shorter default window, while an explicit maxChars still counts characters', () => {
+    const md = 'ア'.repeat(30_000);
+    const w = windowMarkdown(md);
+    expect(w.markdown.length).toBe(DEFAULT_WINDOW_UNITS / 4);
+    expect(w).toMatchObject({ truncated: true, next_offset: DEFAULT_WINDOW_UNITS / 4 });
+    expect(windowMarkdown(md, { maxChars: 20_000 }).markdown.length).toBe(20_000);
+    // Mixed text: ASCII costs one unit, so the window lands between the two extremes.
+    const mixed = `${'a'.repeat(20_000)}${'ア'.repeat(20_000)}`;
+    expect(windowMarkdown(mixed).markdown.length).toBe(20_000 + (DEFAULT_WINDOW_UNITS - 20_000) / 4);
+    // A later window is sized from its own offset.
+    expect(windowMarkdown(mixed, { offset: 30_000 }).markdown.length).toBe(DEFAULT_WINDOW_UNITS / 4);
   });
 
   it('cuts at exactly maxChars when no line break is in the last 10%', () => {
@@ -122,7 +137,10 @@ describe('MCP read_url output window', () => {
     expect(fetches.filter((u) => u === PAGE_URL).length).toBe(1);
     const rows = t.db.prepare('SELECT markdown FROM documents WHERE user_id = ?').all(principal.userId) as { markdown: string }[];
     expect(rows.length).toBe(1);
-    expect(rows[0]!.markdown.length).toBeGreaterThanOrEqual(parts.join('').length - 1000);
+    // The windows rebuild the read exactly; the saved copy is the same Markdown without the frontmatter.
+    expect(parts.join('').length).toBe(s1.total_chars);
+    expect(parts.join('').trimEnd().endsWith(rows[0]!.markdown.trimEnd())).toBe(true);
+    expect(rows[0]!.markdown.length).toBeGreaterThan(s1.total_chars - 1000);
     expect(t.db.prepare("SELECT COUNT(*) AS n FROM usage_events WHERE status = 'cached'").get()).toEqual({ n: parts.length - 1 });
   });
 
@@ -169,5 +187,24 @@ describe('MCP get_document output window', () => {
 
     const past = (await callTool(t.env, principal, 'get_document', { id, offset: full.length })).result.structuredContent;
     expect(past).toMatchObject({ markdown: '', truncated: false, next_offset: null });
+  });
+});
+
+describe('REST convert', () => {
+  it('still returns the full Markdown, with no window fields', async () => {
+    stubPage(PARAGRAPHS);
+    const app = new Hono<AppBindings>();
+    app.use('*', async (c, next) => {
+      c.set('principal', principal);
+      c.set('user', null);
+      await next();
+    });
+    app.route('/api/v1', api);
+    const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext;
+    const res = await app.request('/api/v1/convert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: PAGE_URL, save: false }) }, t.env, ctx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown> & { markdown: string };
+    expect(body.markdown.length).toBeGreaterThan(DEFAULT_WINDOW_CHARS);
+    for (const field of ['total_chars', 'offset', 'truncated', 'next_offset']) expect(field in body, field).toBe(false);
   });
 });

@@ -43,10 +43,10 @@ import {
 import { checkMcpRate, type RateLimited } from './rate-limit';
 import { DESTRUCTIVE, holdsToolScope, IDEMPOTENT_WRITE, isMutation, READ_ONLY, ToolError, WRITE, type ToolContext, type ToolDef } from './tool-types';
 
-const SERVER_INFO = { name: 'anymd', title: 'anymd — the web context layer for AI agents', version: '1.1.0' };
+const SERVER_INFO = { name: 'anymd', title: 'anymd — the web context layer for AI agents', version: '1.2.0' };
 const INSTRUCTIONS_CORE =
-  'anymd is the web context layer for AI agents: it reads public web content (web pages, GitHub, YouTube, Reddit, Hacker News, X, PDFs, Office files, images) into structured Markdown and keeps a private, searchable library of everything read. ' +
-  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document to open a saved document (long Markdown comes in windows: pass next_offset as offset to continue), search_social to find public posts on X, Facebook, Instagram, Threads or LinkedIn (read a result with read_url).';
+  'anymd is the web context layer for AI agents: it reads public web content (web pages, GitHub, YouTube, Reddit, Hacker News, X, PDFs, Office files, images) into structured Markdown and keeps a private, searchable library of the sources saved (read_url saves by default; pass save: false for a read the user did not ask to keep). ' +
+  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document to open a saved document (long Markdown comes in windows: call the same tool again with offset set to next_offset), search_social to find public posts on X, Facebook, Instagram, Threads or LinkedIn (read a result with read_url).';
 const INSTRUCTIONS_PAGES = 'Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision.';
 const INSTRUCTIONS_ADMIN =
   'Admin tools appear only for owner/admin credentials granted their scopes; get_admin_access_status explains what this connection can reach and how to reconnect with admin access. Admins: start with system_overview or get_user_stats, page with next_cursor, pass expected* values and an idempotencyKey with every change; every change lands in list_audit_events.';
@@ -54,7 +54,7 @@ const INSTRUCTIONS_ADMIN =
 /** Server instructions name only tool groups the caller can see, so customers aren't told about staff tooling. */
 function instructionsFor(p: Principal): string {
   const parts = [INSTRUCTIONS_CORE];
-  if (p.scopes.includes('pages:read')) parts.push(INSTRUCTIONS_PAGES);
+  if (p.scopes.includes('pages:write')) parts.push(INSTRUCTIONS_PAGES);
   if (roleHasAdminAccess(p.role)) parts.push(INSTRUCTIONS_ADMIN);
   return parts.join(' ');
 }
@@ -72,7 +72,7 @@ const READ_URL_INPUT = z.object({
   removeImages: z.boolean().optional().describe('Strip image/media references (no credit effect)'),
   ...markdownWindowInput,
 });
-const WINDOW_TEXT = 'Long Markdown comes in windows of maxChars characters from offset; total_chars, truncated and next_offset tell where the next window starts.';
+const WINDOW_TEXT = 'Long Markdown comes in windows (about 10k tokens by default, or maxChars characters from offset); total_chars, truncated and next_offset tell where the next window starts. To read on, call the same tool again with the same arguments and offset set to next_offset.';
 const READ_URL_TEXT = 'Saves to the library by default (save=false to skip) when this connection holds library:write; the result reports saved and, when not saved, not_saved_reason (missing_scope means re-authorize with library:write). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free. For YouTube, downloadVideo=true (or the account setting) also starts a background download of the lowest-quality video to the anymd CDN and returns video_download.id: check it with get_video_download. analyzeVideo=true (implies downloadVideo) then has the same job analyzed by AI (analysis.markdown); both cost extra credits outside maxCredits, charged only when ready.';
 const readUrl = async (a: z.infer<typeof READ_URL_INPUT>, t: ToolContext) => {
   // The window only shapes this result: it never reaches the conversion, its cache key or the saved copy.
