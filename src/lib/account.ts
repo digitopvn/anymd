@@ -40,8 +40,13 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
   for (let i = 0; i < vectorIds.length; i += 1000) await env.VECTORS.deleteByIds(vectorIds.slice(i, i + 1000)).catch(() => undefined);
 
   try {
-    const { items } = await env.OAUTH_PROVIDER.listUserGrants(userId);
-    await Promise.all(items.map((g) => env.OAUTH_PROVIDER.revokeGrant(g.id, userId).catch(() => undefined)));
+    // Every page, so no grant or token of the deleted account stays in the OAuth store.
+    let cursor: string | undefined;
+    do {
+      const page = await env.OAUTH_PROVIDER.listUserGrants(userId, cursor ? { cursor } : undefined);
+      await Promise.all(page.items.map((g) => env.OAUTH_PROVIDER.revokeGrant(g.id, userId).catch(() => undefined)));
+      cursor = page.cursor;
+    } while (cursor);
   } catch {
     // No OAuth grants store in this environment: nothing to revoke.
   }

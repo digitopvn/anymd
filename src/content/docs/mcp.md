@@ -1,7 +1,7 @@
 ---
 title: "MCP server"
 description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp so your agents can read the public web, remember it and search it, and get webhook events when it changes."
-updated: "2026-10-15"
+updated: "2026-10-28"
 ---
 
 anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) server. It is the main way agents use anymd as their web context layer: connect it once and your agent can read public web content as structured Markdown, recall everything it has read from your private library, and (with the right scopes) manage pages.
@@ -17,14 +17,19 @@ anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) se
 
 **API key.** Simplest option. Create a key in **Dashboard → API keys**. The **Convert + library (agents)** preset is a good default for an assistant. Details: [API keys & roles](/docs/api-keys-roles).
 
-**OAuth 2.1.** For clients that support it, just add the URL and sign in when prompted. anymd supports Dynamic Client Registration and PKCE:
+**OAuth 2.1.** For clients that support it, just add the URL and sign in when prompted. anymd supports the authorization code flow with PKCE (`S256` only), Client ID Metadata Documents (CIMD) and Dynamic Client Registration, and binds every token to the `https://anymd.cc/mcp` resource (RFC 8707): a token issued for another resource is refused.
 
 | | |
 |---|---|
-| Metadata | `/.well-known/oauth-authorization-server` |
+| Protected resource metadata | `/.well-known/oauth-protected-resource/mcp` |
+| Authorization server metadata | `/.well-known/oauth-authorization-server` |
 | Authorize | `/oauth/authorize` |
-| Token | `/oauth/token` |
-| Registration | `/oauth/register` |
+| Token (and revocation) | `/oauth/token` |
+| Registration (DCR) | `/oauth/register` |
+
+The consent screen names the client. A client identified by a metadata document URL (ChatGPT uses `https://chatgpt.com/oauth/client.json`) also shows that URL, because its host proves who the client is; a registered client's name is only what it says about itself. If the request itself is wrong (a `resource` other than anymd's `/mcp`, or PKCE without S256), anymd sends you back to the client with `error`, `state` and `iss` once it has verified the client's redirect URI, and shows an error page otherwise. Tick **Read-only connection** to let the client read the web and search your library but never save, change, publish or delete anything: anymd drops every write scope from the grant and refuses those tools on every call, whatever the model asks.
+
+Each tool in `tools/list` carries `securitySchemes` (`oauth2` with the scope it needs), and destructive tools such as `delete_document` are annotated `destructiveHint: true` so hosts ask you before running them. The server never relies on either: it checks the scope on every call.
 
 Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert`, `library:read` and `library:write` (read the web, save to and search your own library); anything more, admin scopes above all, must be requested by name and approved on the consent screen, or (owners and admins only) added by choosing an admin access option there: see [Set up an admin agent](#set-up-an-admin-agent). When a read is not saved, the result says so: `saved: false` with `not_saved_reason` (`missing_scope` means the connection lacks `library:write`). See [API keys & roles](/docs/api-keys-roles#oauth).
 
@@ -232,7 +237,7 @@ Admin access is never granted by default. Give the agent only what its job needs
 
 **OAuth clients (Claude, ChatGPT).** Connect anymd as usual. If you are an owner or admin, the consent screen offers **Admin access for this connection**: **None** (the default), **Admin read-only (monitoring and reports)** or **Support agent**. Each option lists the scopes it adds. Your role caps the result, and is applied again on every call, so a demotion removes admin access from the connection immediately. Owner-only scopes (`users:roles:write`, `credits:write`, `billing:write`) are never added from the consent screen; use an API key for those. Roles below admin never see the option. To change an existing connection, disconnect anymd in the client and connect again.
 
-**OAuth step-up.** A client that can re-authorize does not need the consent option. When it calls a tool whose scope the grant lacks but your role allows, anymd answers `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` listing the current scopes plus the missing one, and the client re-authorizes with them.
+**OAuth step-up.** A client that can re-authorize does not need the consent option. When it calls a tool whose scope the grant lacks but your role allows, anymd answers `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` listing the current scopes plus the missing one, and the client re-authorizes with them. Where such a denial comes back as a tool result instead (inside a batch), the result carries the same challenge in `_meta["mcp/www_authenticate"]`, which ChatGPT uses to start linking again.
 
 **API key.** Create a key from a preset (**Dashboard → API keys**, or `create_api_key`), capped by your role like every key:
 
@@ -416,6 +421,8 @@ MCP has its own limits, separate from the REST API, counted per user and per cre
 |---|---|
 | A tool is missing | Your key or OAuth grant lacks its scope. Check with `GET /api/v1/me` or `anymd whoami`. |
 | `401 invalid_api_key` | The key was revoked, expired or mistyped. Create a new one. |
+| `401 invalid_token` over OAuth | The token expired, the connection was revoked (Dashboard → API keys, or account deletion), you connected the same client again (a new consent replaces the earlier connection), or it was issued for another resource. Clients refresh or reconnect from the `WWW-Authenticate` challenge. A suspended account gets the same answer and cannot refresh; once it is reactivated, connect again. |
+| `429` with `rate_limited` before any tool runs | Too many failed sign-ins (bad keys or tokens) from your address in a minute. Fix the credential, then wait for `Retry-After`. |
 | `402 quota_exceeded` | Free plan credits are used up for the month. |
 | `revision_conflict` from `apply_page_ops` | Someone changed the page. Call `get_page`, then retry with the new `revision`. |
 | Admin tools are missing | Call `get_admin_access_status`: it says whether your role allows admin access and how to reconnect. See [Set up an admin agent](#set-up-an-admin-agent). |

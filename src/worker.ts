@@ -7,8 +7,9 @@
  *                                 bearer tokens on /mcp (then calls mcpApiHandler with props), and
  *                                 hands all other requests to the Hono app.
  */
-import OAuthProvider from '@cloudflare/workers-oauth-provider';
+import OAuthProvider, { GrantType, OAuthError } from '@cloudflare/workers-oauth-provider';
 import { Hono } from 'hono';
+import { AUTH_FAILURE_RETRY_AFTER, type AuthFailure, presentsCredential, recordAuthFailure } from './auth/auth-failures';
 import { API_KEY_PREFIX, getUser } from './auth/identity';
 import { resolvePrincipal } from './auth/middleware';
 import { ALL_SCOPES, isRole, OAUTH_DEFAULT_SCOPES, oauthPrincipalScopes } from './auth/roles';
@@ -139,8 +140,8 @@ app.onError((err, c) => {
 });
 app.notFound((c) => renderMessage(c, 404, 'Page not found', 'That page does not exist.'));
 
-function mcpUnauthorized(env: Env): Response {
-  return new Response(JSON.stringify({ error: 'invalid_token', error_description: 'Connect with OAuth, or send Authorization: Bearer amd_… (an anymd API key).' }), {
+function mcpUnauthorized(env: Env, description = 'Connect with OAuth, or send Authorization: Bearer amd_… (an anymd API key).'): Response {
+  return new Response(JSON.stringify({ error: 'invalid_token', error_description: description }), {
     status: 401,
     headers: {
       'Content-Type': 'application/json',
@@ -150,6 +151,13 @@ function mcpUnauthorized(env: Env): Response {
       // elevated scopes are requested later through step-up (403 insufficient_scope).
       'WWW-Authenticate': `Bearer realm="anymd", resource_metadata="${resourceMetadataUrl(env)}", scope="${OAUTH_DEFAULT_SCOPES.join(' ')}"`,
     },
+  });
+}
+
+function mcpRateLimited(): Response {
+  return new Response(JSON.stringify({ error: 'rate_limited', error_description: 'Too many failed authentication attempts from this address. Retry later.' }), {
+    status: 429,
+    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Retry-After', 'Retry-After': String(AUTH_FAILURE_RETRY_AFTER) },
   });
 }
 
@@ -173,7 +181,13 @@ const mcpApiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext & { props?: OAuthGrantProps; auth?: { clientId?: string; scope?: string[] } }): Promise<Response> {
     const userId = ctx.props?.userId;
     const user = userId ? await getUser(env, userId) : null;
-    if (!user || user.status === 'suspended') return mcpUnauthorized(env);
+    // The token is valid but its account is gone or suspended: fail closed like any revoked token.
+    if (!user || user.status === 'suspended') {
+      const reason = user ? 'account_suspended' : 'account_missing';
+      const limited = await recordAuthFailure(env, request, { credential: 'oauth', reason, userId, clientId: ctx.auth?.clientId ?? ctx.props?.clientId });
+      if (limited) return mcpRateLimited();
+      return mcpUnauthorized(env, user ? 'This anymd account is suspended.' : 'This anymd account no longer exists. Sign up again and reconnect.');
+    }
     const role = isRole(user.role) ? user.role : 'user';
     // Re-cap on every call so a demotion takes effect on existing tokens immediately; grants from
     // before least-privilege consent never carry admin scopes; a downscoped token keeps only its own scopes.
@@ -192,8 +206,11 @@ const mcpApiHandler = {
 
 let provider: OAuthProvider<Env> | null = null;
 let providerFor = '';
+/** The env of the request in flight; the provider's callbacks receive no env of their own. */
+let providerEnv: Env | null = null;
 
 function oauthProvider(env: Env): OAuthProvider<Env> {
+  providerEnv = env;
   if (!provider || providerFor !== env.PUBLIC_URL) {
     provider = new OAuthProvider<Env>({
       apiRoute: '/mcp',
@@ -209,6 +226,26 @@ function oauthProvider(env: Env): OAuthProvider<Env> {
       // resource advertises only the baseline: spec-following clients fall back to the resource's
       // scopes_supported when choosing what to request, and must not ask for the admin plane by default.
       resourceMetadata: { resource: `${env.PUBLIC_URL}/mcp`, scopes_supported: [...OAUTH_DEFAULT_SCOPES] },
+      // ChatGPT and other hosts identify themselves with an HTTPS client metadata document (CIMD)
+      // instead of registering. The provider fetches it under `global_fetch_strictly_public`
+      // (wrangler.jsonc), so a client id cannot point the fetch at a private address.
+      clientIdMetadataDocumentEnabled: true,
+      // A suspended or deleted account cannot mint tokens: /mcp would refuse them anyway, but a
+      // refresh must not keep handing out credentials for an account that is no longer active.
+      tokenExchangeCallback: async ({ grantType, userId }) => {
+        if (grantType !== GrantType.AUTHORIZATION_CODE && grantType !== GrantType.REFRESH_TOKEN) return;
+        const user = providerEnv ? await getUser(providerEnv, userId) : null;
+        if (user && user.status !== 'suspended') return;
+        throw new OAuthError('invalid_grant', {
+          description: 'This account is not active.',
+          internal: { category: 'token-exchange-callback', reason: user ? 'account_suspended' : 'account_missing' },
+        });
+      },
+      // One line per protocol error, with the provider's internal reason and never a credential.
+      onError: ({ code, status, internal }) => {
+        if (status >= 500) console.error(JSON.stringify({ event: 'oauth_error', code, status, reason: internal?.reason }));
+        else console.warn(JSON.stringify({ event: 'oauth_error', code, status, reason: internal?.reason }));
+      },
     });
     providerFor = env.PUBLIC_URL;
   }
@@ -222,6 +259,14 @@ export default {
       const auth = request.headers.get('authorization') ?? '';
       const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : request.headers.get('x-api-key') ?? '';
       if (bearer.startsWith(API_KEY_PREFIX) || request.method === 'OPTIONS') return app.fetch(request, env, ctx);
+      const res = await oauthProvider(env).fetch(request, env, ctx);
+      // The provider rejected a presented token (invalid, expired, revoked, other audience). Our own
+      // handler's 401 (suspended or deleted account, realm "anymd") has already been recorded there.
+      const ownChallenge = res.headers.get('WWW-Authenticate')?.includes('realm="anymd"');
+      if (res.status === 401 && presentsCredential(request) && !ownChallenge) {
+        if (await recordAuthFailure(env, request, { credential: 'oauth', reason: 'invalid_token' } satisfies AuthFailure)) return mcpRateLimited();
+      }
+      return res;
     }
     return oauthProvider(env).fetch(request, env, ctx);
   },

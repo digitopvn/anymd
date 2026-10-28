@@ -45,6 +45,7 @@ Start with `docs/architecture.md` for the module map and request flow, `docs/ope
 
 - **One pipeline.** Every conversion goes through `runConversion` in `src/convert/service.ts`. Never fetch a user-supplied URL outside `normalizeTargetUrl`.
 - **Scopes on every route.** Guard API routes with `requireScope`; scope every library query by `user_id`; hide MCP tools the caller can't use.
+- **Server-side authorization for destructive tools.** A delete or write is allowed by the grant's scope, never by an argument the model supplies (`confirm: true` is a UX hint, not a permission). New MCP tools declare their scope so `tools/list` publishes it in `securitySchemes`. OAuth compatibility and its evidence: `docs/mcp-oauth-compatibility.md`.
 - **Side effects in `waitUntil`.** Usage recording, embeddings and billing ingest must not add latency or fail the request.
 - **Errors** are `{ error: { code, message, ... } }` with a matching status. Clients branch on `code`.
 - **Public contracts** (URL API, REST, MCP tools, WebMCP tools, CLI, credits) are documented in `src/content/docs/`. Change code and the matching doc page together.

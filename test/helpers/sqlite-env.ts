@@ -85,20 +85,64 @@ function d1(db: SqliteDatabase): D1Database {
   } as unknown as D1Database;
 }
 
+interface KvPutOptions {
+  /** Seconds from now, as Cloudflare KV. */
+  expirationTtl?: number;
+  /** Absolute Unix time in seconds, as Cloudflare KV. */
+  expiration?: number;
+}
+
+interface KvListOptions {
+  prefix?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+/**
+ * Map-backed KV with the parts of the Workers KV API the OAuth provider uses: prefix listing with
+ * cursor pagination, and `expirationTtl` / `expiration` honored against `Date.now()`, so entries
+ * expire on the same clock as the rest of a test (fake timers included).
+ */
 function kv(): KVNamespace & { store: Map<string, string> } {
   const store = new Map<string, string>();
+  const expiresAt = new Map<string, number>();
+  /** Whether the key holds a live value; an expired entry is dropped, as KV does on read. */
+  const live = (key: string): boolean => {
+    const at = expiresAt.get(key);
+    if (at !== undefined && at <= Date.now()) {
+      store.delete(key);
+      expiresAt.delete(key);
+    }
+    return store.has(key);
+  };
   return {
     store,
-    async get(key: string, type?: string) {
-      const v = store.get(key);
-      if (v === undefined) return null;
+    async get(key: string, options?: string | { type?: string }) {
+      if (!live(key)) return null;
+      const v = store.get(key) as string;
+      const type = typeof options === 'string' ? options : options?.type;
       return type === 'json' ? JSON.parse(v) : v;
     },
-    async put(key: string, value: string) {
+    async put(key: string, value: string, options: KvPutOptions = {}) {
       store.set(key, value);
+      if (options.expirationTtl !== undefined) expiresAt.set(key, Date.now() + options.expirationTtl * 1000);
+      else if (options.expiration !== undefined) expiresAt.set(key, options.expiration * 1000);
+      else expiresAt.delete(key);
     },
     async delete(key: string) {
       store.delete(key);
+      expiresAt.delete(key);
+    },
+    async list(options: KvListOptions = {}) {
+      const keys = [...store.keys()].filter((k) => (!options.prefix || k.startsWith(options.prefix)) && live(k)).sort();
+      const start = options.cursor ? Number(options.cursor) : 0;
+      const limit = options.limit ?? 1000;
+      const end = start + limit >= keys.length;
+      return {
+        keys: keys.slice(start, start + limit).map((name) => ({ name })),
+        list_complete: end,
+        cursor: end ? undefined : String(start + limit),
+      };
     },
   } as unknown as KVNamespace & { store: Map<string, string> };
 }
@@ -131,6 +175,8 @@ export interface TestEnv {
   env: Env;
   db: SqliteDatabase;
   cache: KVNamespace & { store: Map<string, string> };
+  /** The OAUTH_KV namespace; its `store` holds the provider's grant, token and transaction records. */
+  oauthKv: KVNamespace & { store: Map<string, string> };
   grants: TestGrant[];
   close(): void;
 }
@@ -141,6 +187,7 @@ export function createTestEnv(overrides: Partial<Env> = {}): TestEnv {
   const files = (readdirSync(MIGRATIONS) as string[]).filter((f) => f.endsWith('.sql')).sort();
   for (const f of files) db.exec(readFileSync(new URL(f, MIGRATIONS), 'utf8'));
   const cache = kv();
+  const oauthKv = kv();
   const grants: TestGrant[] = [];
   const env = {
     ENVIRONMENT: 'development',
@@ -150,7 +197,7 @@ export function createTestEnv(overrides: Partial<Env> = {}): TestEnv {
     CREEM_SERVER: 'test',
     DB: d1(db),
     CACHE: cache,
-    OAUTH_KV: kv(),
+    OAUTH_KV: oauthKv,
     RL_AUTH: counter(),
     RL_ANON: counter(),
     RL_DOMAIN: counter(),
@@ -165,7 +212,7 @@ export function createTestEnv(overrides: Partial<Env> = {}): TestEnv {
     },
     ...overrides,
   } as unknown as Env;
-  return { env, db, cache, grants, close: () => db.close() };
+  return { env, db, cache, oauthKv, grants, close: () => db.close() };
 }
 
 let seq = 0;

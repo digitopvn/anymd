@@ -69,6 +69,15 @@ export const ADMIN_SCOPES: ReadonlySet<Scope> = new Set([...ADMIN_READ, ...ADMIN
  */
 export const OAUTH_DEFAULT_SCOPES: Scope[] = ['convert', 'library:read', 'library:write'];
 
+/**
+ * A read-only OAuth connection keeps only scopes that read: the web (`convert`, which spends credits
+ * but stores nothing without `library:write`) and `*:read`. Everything that saves, changes, publishes
+ * or deletes is dropped, so the server refuses those tools whatever the model asks for.
+ */
+export function readOnlyScopes(scopes: readonly Scope[]): Scope[] {
+  return scopes.filter((s) => s === 'convert' || s.endsWith(':read'));
+}
+
 /** Human labels for consent screens, key forms and docs. */
 export const SCOPE_LABELS: Record<Scope, string> = {
   convert: 'Convert URLs to Markdown (uses your credits)',

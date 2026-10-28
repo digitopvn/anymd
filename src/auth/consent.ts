@@ -1,6 +1,6 @@
 /** OAuth consent: which scopes a connection receives, including the opt-in admin access presets. */
 import type { RoleName, Scope } from '../env';
-import { capScopes, isOAuthAdminPreset, OAUTH_ADMIN_PRESET_IDS, oauthAdminPresetScopes, oauthConsentScopes, roleAtLeast, type OAuthAdminPresetId } from './roles';
+import { capScopes, isOAuthAdminPreset, OAUTH_ADMIN_PRESET_IDS, oauthAdminPresetScopes, oauthConsentScopes, readOnlyScopes, roleAtLeast, type OAuthAdminPresetId } from './roles';
 
 /** Admin access presets this role may add on the consent screen (none below admin). */
 export function consentAdminPresets(role: RoleName): OAuthAdminPresetId[] {
@@ -12,10 +12,11 @@ export function consentAdminPresets(role: RoleName): OAuthAdminPresetId[] {
  * least-privilege default when it asked for none), plus the admin preset the user explicitly chose.
  * `adminAccess` is raw form input: anything that is not a known preset, or a preset chosen by a role
  * below admin, adds nothing. The result is re-capped by the role, so it can never exceed it.
+ * `readOnly` (the user's choice on the form) then drops every scope that writes.
  */
-export function consentGrantScopes(role: RoleName, requested: readonly string[], adminAccess: unknown): Scope[] {
+export function consentGrantScopes(role: RoleName, requested: readonly string[], adminAccess: unknown, readOnly = false): Scope[] {
   const { granted } = oauthConsentScopes(role, requested);
-  if (!isOAuthAdminPreset(adminAccess) || !consentAdminPresets(role).includes(adminAccess)) return granted;
-  const extra = oauthAdminPresetScopes(role, adminAccess);
-  return extra.length ? capScopes(role, [...granted, ...extra]) : granted;
+  const extra = isOAuthAdminPreset(adminAccess) && consentAdminPresets(role).includes(adminAccess) ? oauthAdminPresetScopes(role, adminAccess) : [];
+  const scopes = extra.length ? capScopes(role, [...granted, ...extra]) : granted;
+  return readOnly ? readOnlyScopes(scopes) : scopes;
 }

@@ -113,6 +113,7 @@ The adapter source files own the fixed provider hosts and paths; callers never s
 - Workers observability is enabled in `wrangler.jsonc`; historical logs are in the Cloudflare dashboard.
 - Per-request traces: every conversion returns `X-Anymd-Trace`. The span timeline is stored in the `traces` table and visible to the user in the dashboard or via `GET /api/v1/traces/:id`.
 - Usage: `usage_events` holds every metered request with status, credits and error code.
+- Auth failures: every rejected credential logs one JSON line `{"event":"auth_failure","credential":"api_key"|"oauth","reason":…,"path":…,"ray":…}` (`src/auth/auth-failures.ts`); `reason` is `invalid_api_key`, `invalid_token` (invalid, expired, revoked or other-audience OAuth token), `account_suspended` or `account_missing`, and the last two add `user_id` and `client_id`. OAuth protocol errors (bad codes, PKCE, client, redirect, `account_suspended`/`account_missing` on a token exchange) log `{"event":"oauth_error","code":…,"status":…,"reason":…}` with the provider's internal reason. Neither ever carries a token, key or cookie. Search with `npx wrangler tail --env production --search auth_failure`. More than 120 failures a minute from one IP (the `RL_AUTH` window, key `authfail:<ip>`) get `429 rate_limited` instead of `401`. OAuth client compatibility and the evidence behind it: [mcp-oauth-compatibility.md](./mcp-oauth-compatibility.md).
 
 ## Rollback
 

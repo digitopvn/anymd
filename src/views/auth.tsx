@@ -1,6 +1,6 @@
 /** Sign-in, sign-up, password reset and the OAuth consent screen. */
 import type { Child } from 'hono/jsx';
-import { ELEVATED_SCOPES, isRole, oauthAdminPresetScopes, roleAtLeast, ROLE_TEMPLATES, SCOPE_LABELS, type OAuthAdminPresetId } from '../auth/roles';
+import { ELEVATED_SCOPES, isRole, oauthAdminPresetScopes, readOnlyScopes, roleAtLeast, ROLE_TEMPLATES, SCOPE_LABELS, type OAuthAdminPresetId } from '../auth/roles';
 import { SSO_LABEL, type SsoProvider } from '../auth/sso';
 import type { Scope } from '../env';
 import { Icon, Logo } from './components/icons';
@@ -253,6 +253,7 @@ const ADMIN_PRESET_LABELS: Record<OAuthAdminPresetId, string> = {
 export function ConsentPage({
   clientName,
   clientUri,
+  metadataUrl,
   scopes,
   unavailable = [],
   requestedNothing = false,
@@ -263,6 +264,8 @@ export function ConsentPage({
 }: {
   clientName: string;
   clientUri?: string;
+  /** The client id when it is a metadata document URL (CIMD): its host, unlike the name, is not self-asserted. */
+  metadataUrl?: string;
   scopes: Scope[];
   unavailable?: string[];
   requestedNothing?: boolean;
@@ -277,6 +280,9 @@ export function ConsentPage({
         .map((id) => ({ id, label: ADMIN_PRESET_LABELS[id], adds: oauthAdminPresetScopes(role, id).filter((s) => !scopes.includes(s)) }))
         .filter((o) => o.adds.length)
     : [];
+  // Offered whenever the connection could write: its own scopes, or an admin preset that adds writes.
+  const writes = [...scopes, ...adminOptions.flatMap((o) => o.adds)];
+  const offerReadOnly = readOnlyScopes(writes).length < writes.length;
   const elevated = scopes.filter((s) => ELEVATED_SCOPES.has(s));
   const basic = scopes.filter((s) => !ELEVATED_SCOPES.has(s));
   return (
@@ -286,6 +292,11 @@ export function ConsentPage({
           Signed in as <strong class="text-ink">{userEmail}</strong> ({ROLE_TEMPLATES[role as keyof typeof ROLE_TEMPLATES]?.label ?? role})
         </p>
         {clientUri ? <p class="mt-1 truncate text-xs text-muted">{clientUri}</p> : null}
+        {metadataUrl ? (
+          <p class="mt-1 break-all text-xs text-muted" data-client-metadata>
+            Identified by <code>{metadataUrl}</code>
+          </p>
+        ) : null}
         <p class="mt-4 text-sm font-semibold">It will be able to:</p>
         <ul class="mt-2 space-y-2 text-sm">
           {basic.map((s) => (
@@ -312,6 +323,19 @@ export function ConsentPage({
       </div>
       <form method="post" action="/oauth/authorize" class="mt-6">
         <input type="hidden" name="state" value={state} />
+        {offerReadOnly ? (
+          <div class="card mb-6 p-5">
+            <label class="flex cursor-pointer items-start gap-2.5 text-sm" data-read-only>
+              <input type="checkbox" name="read_only" value="1" class="mt-0.5 accent-[#05c977]" aria-describedby="read-only-help" />
+              <span>
+                <strong>Read-only connection</strong>
+                <span id="read-only-help" class="mt-0.5 block text-xs text-muted">
+                  It can read the web and search your library, but never save, change, publish or delete anything. anymd enforces this on every call.
+                </span>
+              </span>
+            </label>
+          </div>
+        ) : null}
         {adminOptions.length ? (
           <div class="card mb-6 p-5">
             <fieldset data-admin-access aria-describedby="admin-access-help">
