@@ -96,12 +96,12 @@ Tools are listed only when the caller holds the scope they need.
 
 | Tool | Input | Needs |
 |---|---|---|
-| `read_url` | `{ url, save?, fresh?, removeImages?, expandThread?, maxThreadPosts?, includeComments?, analyzeImages?, maxComments?, maxImages?, maxCredits? }` | `convert` (saving also needs `library:write`) |
+| `read_url` | `{ url, save?, fresh?, removeImages?, expandThread?, maxThreadPosts?, includeComments?, analyzeImages?, maxComments?, maxImages?, maxCredits?, offset?, maxChars? }` | `convert` (saving also needs `library:write`) |
 | `convert_url` | Same input as `read_url` | Same as `read_url`, kept under its original name for existing clients |
 | `get_video_download` | `{ id }` | `convert` |
 | `search_library` | `{ query, mode?, limit? }` | `library:read` |
 | `search_social` | `{ platform, query, cursor?, period?, since?, until? }` (`platform` may be `all`) | `convert` (account required) |
-| `get_document` | `{ id }` | `library:read` |
+| `get_document` | `{ id, offset?, maxChars? }` | `library:read` |
 | `list_documents` | `{ limit?, domain?, tags?, before? }` | `library:read` |
 | `list_tags` | `{ limit? }` | `library:read` |
 | `tag_document` | `{ id, add?, remove?, set? }` | `library:write` |
@@ -109,6 +109,8 @@ Tools are listed only when the caller holds the scope they need.
 | `usage_summary` | `{}` | `usage:read` |
 
 `search_social` searches public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them and returns normalized results with a per-platform status and a `next_cursor`. `period` (`24h`, `7d`, `30d`) or `since`/`until` (ISO-8601) limits it to a time range; posts are de-duplicated across every page of the search, and the cursor keeps the range, works once and lasts 24 hours. See [Social search](/docs/social-search). `read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
+
+`read_url`, `convert_url` and `get_document` return the Markdown in windows so one tool result stays within client size limits: at most `maxChars` characters (1,000 to 200,000, default 40,000) starting at character `offset` (default 0). A window ends at a line break when one falls in its last 10%, so lines and code-block rows are not split. The result adds `total_chars`, `offset`, `truncated` (more Markdown follows) and `next_offset` (pass it as `offset` for the next window; `null` at the end). A short page comes back whole with `truncated: false`. An `offset` at or past the end returns an empty `markdown` with `truncated: false` and `next_offset: null`. Paging a `read_url` result reuses the 1-hour cache, so later windows are free and the library keeps one document per URL (pass the same options, without `fresh`). Only the MCP result is windowed: the saved document, REST, the URL API, the CLI and WebMCP return the full Markdown.
 
 `tag_document` adds and/or removes tags, or replaces them all with `set` (not combinable with `add`/`remove`; `[]` clears), and returns `{ id, tags }`. Tags are lowercased and keep only letters, digits, `-` and `_`; a document holds at most 20, and an edit past that fails with `too_many_tags` instead of dropping tags. `list_tags` returns `{ items: [{ tag, count }] }`, most used first. `list_documents` with `tags` keeps documents carrying every listed tag (whole-tag match, up to 10).
 

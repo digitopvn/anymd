@@ -26,6 +26,7 @@ import { ACCOUNT_TOOLS } from './account-tools';
 import { accessStatusTool, ADMIN_TOOLS } from './admin-tools';
 import { CMS_PARITY_TOOLS } from './cms-parity-tools';
 import { FEEDBACK_TOOLS } from './feedback-tools';
+import { markdownWindowInput, windowMarkdown } from './markdown-window';
 import {
   isModernRequest,
   LEGACY_VERSIONS,
@@ -69,12 +70,16 @@ const READ_URL_INPUT = z.object({
   save: z.boolean().optional().describe('Save to the library (default true)'),
   fresh: z.boolean().optional().describe('Bypass the 1-hour cache'),
   removeImages: z.boolean().optional().describe('Strip image/media references (no credit effect)'),
+  ...markdownWindowInput,
 });
+const WINDOW_TEXT = 'Long Markdown comes in windows of maxChars characters from offset; total_chars, truncated and next_offset tell where the next window starts.';
 const READ_URL_TEXT = 'Saves to the library by default (save=false to skip) when this connection holds library:write; the result reports saved and, when not saved, not_saved_reason (missing_scope means re-authorize with library:write). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free. For YouTube, downloadVideo=true (or the account setting) also starts a background download of the lowest-quality video to the anymd CDN and returns video_download.id: check it with get_video_download. analyzeVideo=true (implies downloadVideo) then has the same job analyzed by AI (analysis.markdown); both cost extra credits outside maxCredits, charged only when ready.';
 const readUrl = async (a: z.infer<typeof READ_URL_INPUT>, t: ToolContext) => {
-  const r = await runConversion(t.env, t.ctx, { ...a, channel: 'mcp', principal: t.principal });
-  const { content: _content, ...rest } = convertPayload(r);
-  return rest;
+  // The window only shapes this result: it never reaches the conversion, its cache key or the saved copy.
+  const { offset, maxChars, ...convert } = a;
+  const r = await runConversion(t.env, t.ctx, { ...convert, channel: 'mcp', principal: t.principal });
+  const { content: _content, markdown, ...rest } = convertPayload(r);
+  return { ...rest, ...windowMarkdown(markdown, { offset, maxChars }) };
 };
 const READ_URL_TOOLS = new Set(['read_url', 'convert_url']);
 
@@ -82,7 +87,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'read_url',
     title: 'Read URL',
-    description: `Read a public URL and return its content as structured Markdown with metadata. ${READ_URL_TEXT}`,
+    description: `Read a public URL and return its content as structured Markdown with metadata. ${READ_URL_TEXT} ${WINDOW_TEXT}`,
     scope: 'convert',
     input: READ_URL_INPUT,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -91,7 +96,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'convert_url',
     title: 'Convert URL to Markdown',
-    description: `Same as read_url, kept under its original name for existing clients. Fetch a URL and return clean Markdown with metadata. ${READ_URL_TEXT}`,
+    description: `Same as read_url, kept under its original name for existing clients. Fetch a URL and return clean Markdown with metadata. ${READ_URL_TEXT} ${WINDOW_TEXT}`,
     scope: 'convert',
     input: READ_URL_INPUT,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -137,14 +142,14 @@ const TOOLS: ToolDef[] = [
   {
     name: 'get_document',
     title: 'Get document',
-    description: 'Full Markdown and metadata of one library document by id.',
+    description: `Markdown and metadata of one library document by id. ${WINDOW_TEXT}`,
     scope: 'library:read',
-    input: z.object({ id: z.string() }),
+    input: z.object({ id: z.string(), ...markdownWindowInput }),
     annotations: READ,
     run: async (a, t) => {
       const doc = await getDocument(t.env, t.principal.userId, a.id);
       if (!doc) throw new ToolError('Document not found');
-      return { ...doc, tags: parseStoredTags(doc.tags) };
+      return { ...doc, tags: parseStoredTags(doc.tags), ...windowMarkdown(doc.markdown, a) };
     },
   },
   {
