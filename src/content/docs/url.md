@@ -1,7 +1,7 @@
 ---
 title: "URL API"
 description: "Prefix any link with anymd.cc/ to get clean Markdown back. Formats, options, headers, limits and Markdown twins."
-updated: "2026-10-25"
+updated: "2026-10-28"
 ---
 
 The simplest API there is: put `https://anymd.cc/` in front of a URL.
@@ -28,7 +28,7 @@ https://anymd.cc/https://stephango.com/saw
 https://anymd.cc/convert?url=https://stephango.com/saw   (redirects to the first form)
 ```
 
-Only public `http(s)` URLs are accepted. Private addresses, `localhost`, internal hostnames and URLs with embedded credentials are refused with `400 blocked_host` or `400 invalid_url`.
+Only public `http(s)` URLs of at most 4,096 characters are accepted. Private, loopback, link-local and other non-public addresses (in any spelling, such as `2130706433` or `localhost.`), internal hostnames and URLs with embedded credentials are refused with `400 blocked_host` or `400 invalid_url`. Redirects are followed for at most 5 hops, and every hop passes the same check: a page that redirects to a blocked address fails with `400 blocked_host`, and a redirect to another site must also pass that site's `robots.txt`, opt-out and fetch budget. The whole fetch, redirects included, has a 25-second limit.
 
 ## Response formats
 
@@ -152,6 +152,8 @@ Errors come back as JSON with a matching HTTP status:
 | 402 | `quota_exceeded` | Free plan credits used up for the month |
 | 408 | `processing_limit` | The bounded enrichment deadline or provider-call limit was reached |
 | 404 / 502 | `upstream_status`, `fetch_failed` | The source site returned an error or couldn't be reached |
+| 502 | `too_many_redirects`, `invalid_redirect` | More than 5 redirects, or a redirect to a non-http(s) or unparseable URL |
+| 504 | `fetch_timeout` | The source site did not answer within the time limit |
 | 413 | `too_large` | HTML over 5 MB or a file over 20 MB |
 | 415 | `unsupported_type` | Content type anymd can't convert |
 | 422 | `empty_content` | No readable content found |

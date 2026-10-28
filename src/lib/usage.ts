@@ -78,6 +78,30 @@ export async function canSpend(env: Env, userId: string, planId: string, cost: n
   return { ok: state.overage || state.remaining >= cost, state };
 }
 
+/** Query parameters whose values are credentials; their values never reach usage rows. */
+const SECRET_PARAM = /^(?:access_?token|api_?key|apikey|auth|authorization|client_secret|code|jwt|key|password|passwd|pwd|secret|session|sig|signature|token|x-amz-(?:credential|signature|security-token))$/i;
+
+/**
+ * Usage rows keep where a conversion went, not the credentials in its URL: values of credential-like
+ * query parameters (signed links, `?token=`) are replaced, and `amd_…` keys are masked anywhere.
+ */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(/\bhttps?:\/\/[^\s"'<>]+/gi, (raw) => {
+      try {
+        const url = new URL(raw);
+        let changed = false;
+        for (const key of [...url.searchParams.keys()]) {
+          if (SECRET_PARAM.test(key)) { url.searchParams.set(key, 'REDACTED'); changed = true; }
+        }
+        return changed ? url.href : raw;
+      } catch {
+        return raw;
+      }
+    })
+    .replace(/\bamd_[A-Za-z0-9_-]{8,}/g, 'amd_[redacted]');
+}
+
 export async function recordUsage(env: Env, input: UsageInput, tracer?: Tracer): Promise<void> {
   const ts = now();
   const stmts = [
@@ -89,14 +113,14 @@ export async function recordUsage(env: Env, input: UsageInput, tracer?: Tracer):
       input.principal.apiKeyId ?? null,
       input.channel,
       input.kind,
-      input.target.slice(0, 500),
+      redactSecrets(input.target).slice(0, 500),
       input.status,
       input.httpStatus,
       input.credits,
       input.durationMs,
       input.bytesOut ?? 0,
       input.traceId ?? null,
-      input.error?.slice(0, 500) ?? null,
+      input.error ? redactSecrets(input.error).slice(0, 500) : null,
       ts,
     ),
   ];
@@ -110,7 +134,7 @@ export async function recordUsage(env: Env, input: UsageInput, tracer?: Tracer):
         tracer.id,
         input.principal.userId,
         input.kind,
-        input.target.slice(0, 500),
+        redactSecrets(input.target).slice(0, 500),
         input.status,
         input.durationMs,
         JSON.stringify(tracer.spans),

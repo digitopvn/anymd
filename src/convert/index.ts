@@ -8,6 +8,7 @@ import { threadsAdapter } from './threads';
 import { linkedinAdapter } from './linkedin';
 import { ENRICHMENT_CREDITS } from '../billing/plans';
 import { documentCreditCost } from './document';
+import { ipv4Octets, isPublicAddress } from '../lib/public-address';
 import { ConvertError, type ConvertContext, type ConvertResult, type SourceAdapter, type SourceKind } from './types';
 
 export * from './types';
@@ -16,15 +17,16 @@ export * from './types';
 const ADAPTERS: SourceAdapter[] = [xAdapter, facebookAdapter, instagramAdapter, threadsAdapter, linkedinAdapter, youtubeAdapter, hackerNewsAdapter, webAdapter];
 
 const BLOCKED_HOSTNAMES = new Set(['localhost', 'anymd.cc', 'www.anymd.cc', 'staging.anymd.cc', 'metadata.google.internal']);
+const BLOCKED_SUFFIXES = ['.localhost', '.local', '.internal', '.home.arpa', '.lan', '.corp', '.intranet', '.anymd.cc'];
+const MAX_URL_LENGTH = 4096;
 
+/** `hostname` as the URL parser left it: IPv6 in brackets, IPv4 shorthands already expanded. */
 function isPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (BLOCKED_HOSTNAMES.has(h) || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
-  if (/^(127\.|10\.|0\.|169\.254\.|192\.168\.)/.test(h)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
-  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true;
-  if (h === '::1' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return h.includes(':');
-  return false;
+  // A trailing dot names the same host (`localhost.`, `anymd.cc.`), so compare without it.
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+  if (!h || BLOCKED_HOSTNAMES.has(h) || BLOCKED_SUFFIXES.some((s) => h.endsWith(s))) return true;
+  if (h.includes(':') || ipv4Octets(h)) return !isPublicAddress(h);
+  return !h.includes('.');
 }
 
 /**
@@ -34,6 +36,7 @@ function isPrivateHost(hostname: string): boolean {
 export function normalizeTargetUrl(raw: string): URL {
   let s = raw.trim();
   if (!s) throw new ConvertError('Missing URL', 400, 'invalid_url');
+  if (s.length > MAX_URL_LENGTH) throw new ConvertError(`URL too long (max ${MAX_URL_LENGTH} characters)`, 400, 'invalid_url');
   s = s.replace(/^\/+/, '');
   // Paths like /https:/example.com (slashes collapsed by some clients)
   s = s.replace(/^(https?):\/(?!\/)/i, '$1://');
@@ -45,7 +48,7 @@ export function normalizeTargetUrl(raw: string): URL {
     throw new ConvertError('Invalid URL. Please provide a valid web address.', 400, 'invalid_url');
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new ConvertError('Only http(s) URLs are supported', 400, 'invalid_url');
-  if (!url.hostname.includes('.') || isPrivateHost(url.hostname)) throw new ConvertError('Cannot convert this URL.', 400, 'blocked_host');
+  if (isPrivateHost(url.hostname)) throw new ConvertError('Cannot convert this URL.', 400, 'blocked_host');
   if (url.username || url.password) throw new ConvertError('URLs with credentials are not allowed', 400, 'invalid_url');
   url.hash = '';
   return url;

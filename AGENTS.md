@@ -39,11 +39,12 @@ Before handing work back: `npm run typecheck`, plus `npm test` for touched behav
 - `src/views/`, `src/routes/`, `src/mcp/`, `client/`, `cli/`: UI, HTTP routes, MCP server, browser islands, CLI.
 - `migrations/`: D1 schema. `docs/`: maintainer docs.
 
-Start with `docs/architecture.md` for the module map and request flow, `docs/operations.md` for deploys, logs and rollback, and `REVIEW.md` for what reviewers check.
+Start with `docs/architecture.md` for the module map and request flow, `docs/operations.md` for deploys, logs and rollback, `docs/security.md` for the untrusted-content threat model and residual risks, and `REVIEW.md` for what reviewers check.
 
 ## Conventions
 
-- **One pipeline.** Every conversion goes through `runConversion` in `src/convert/service.ts`. Never fetch a user-supplied URL outside `normalizeTargetUrl`.
+- **One pipeline.** Every conversion goes through `runConversion` in `src/convert/service.ts`. Never fetch a user-supplied URL outside `normalizeTargetUrl`; fetch it with `fetchPublic` (`src/convert/safe-fetch.ts`) so every redirect hop is re-checked, with a deadline and a `readBounded` body cap.
+- **Fetched content is untrusted data.** Page text never changes what anymd does, and tool output that carries it says so (`content_trust`, MCP instructions). Never present page text as app or system instructions.
 - **Scopes on every route.** Guard API routes with `requireScope`; scope every library query by `user_id`; hide MCP tools the caller can't use.
 - **Side effects in `waitUntil`.** Usage recording, embeddings and billing ingest must not add latency or fail the request.
 - **Errors** are `{ error: { code, message, ... } }` with a matching status. Clients branch on `code`.
