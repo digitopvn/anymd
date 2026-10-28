@@ -1,7 +1,7 @@
 ---
 title: "REST API"
 description: "The anymd REST API v1: authentication, errors, conversion, library, search, usage, keys and admin endpoints with curl, JavaScript and Python examples."
-updated: "2026-10-25"
+updated: "2026-10-28"
 ---
 
 Base URL: `https://anymd.cc/api/v1`. Everything is JSON unless noted.
@@ -120,7 +120,7 @@ Convert a URL. Scope: `convert`.
 | `analyzeVideo` | boolean | saved, else `false` | YouTube: also analyze that video with `google/gemini-3.8-flash` (turns on `downloadVideo`; `downloadVideo: false` with `analyzeVideo: true` is rejected); 10 + 20 credits per started minute when ready, videos up to 60 minutes, outside `maxCredits` (account) |
 | `format` | `"json"` \| `"markdown"` | | `markdown` returns `text/markdown` instead of JSON |
 
-The JSON response carries the Markdown, the extracted metadata, the library document id (when saved), `saved` and, when it was not saved, `not_saved_reason` (`not_requested`, `anonymous`, `missing_scope` when the credential lacks `library:write`, or `library_limit`), credits charged, cache status and trace id. See the OpenAPI spec for the exact schema. The `X-Anymd-*` headers from the [URL API](/docs/url) are set here too.
+The JSON response carries the Markdown, the extracted metadata, the library document id (when saved), `saved` and, when it was not saved, `not_saved_reason` (`not_requested`, `anonymous`, `missing_scope` when the credential lacks `library:write`, or `library_limit`), credits charged, cache status and trace id, plus `provenance`: `requested_url`, `source_url` (after redirects), `fetched_at`, `extractor` and `content_trust` (always `untrusted`, because page text is third-party data, never instructions). See the OpenAPI spec for the exact schema. The `X-Anymd-*` headers from the [URL API](/docs/url) are set here too.
 
 For social URLs, `kind` is `facebook`, `instagram`, `threads` or `linkedin`; these adapters require an authenticated caller. X is readable anonymously; thread expansion, comments and article-image analysis are opt-in (see [deep reading](#deep-reading-options-and-saved-defaults)). The response's `reading_options` shows the effective value of every option and whether it came from the `request`, your saved `preference` or the safe `default`. The response includes `credit_breakdown` with `base`, `thread`, `comments` and `images`, plus an `enrichment` object whose sections expose `complete`, `count`, `fetchedAt` and, when incomplete, `reason`. Provider failures, the 40-call/55-second processing bounds and item or credit limits produce partial coverage rather than a false complete result.
 

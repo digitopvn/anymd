@@ -8,8 +8,9 @@ Code review checklist for anymd. Check the sections your change touches; securit
 
 - [ ] Every fetch of a user-supplied URL goes through `normalizeTargetUrl` (`src/convert/index.ts`) first: http(s) only, no private/link-local/CGNAT ranges, no `localhost`/`.local`/`.internal`, no anymd's own hostnames, no embedded credentials.
 - [ ] No new code path fetches user input directly (adapters, file URLs, image proxies, webhooks, OG fetchers).
-- [ ] Redirects are followed by `fetch`, so the guard only vets the first hop. New privileged fetches (anything sending credentials or reaching non-public services) must not follow redirects to user-controlled targets.
-- [ ] Response size limits stay enforced (HTML 5 MB, files 20 MB) and third-party calls have timeouts.
+- [ ] Fetches of user- or page-chosen URLs use `fetchPublic` (`src/convert/safe-fetch.ts`), which follows redirects by hand and vets every hop (scheme, `normalizeTargetUrl`, hop cap). A bare `fetch` follows redirects without the guard. Fetches that send credentials or reach non-public services never follow redirects to user-controlled targets.
+- [ ] Response size limits stay enforced by streaming reads (`readBounded`: HTML 5 MB, files 20 MB, robots.txt 500 KiB), not by trusting `Content-Length`, and every third-party call has one deadline covering the body read.
+- [ ] Errors from upstream fetches name the host and a status code only: no `statusText`, response body or unbounded content type in messages.
 
 ### Authorization
 
@@ -33,6 +34,9 @@ Code review checklist for anymd. Check the sections your change touches; securit
 - [ ] No `dangerouslySetInnerHTML`-style raw output of user data; interpolate with escaping (`escapeHtml`).
 - [ ] Search snippets contain `<mark>` tags; render them safely (escape, then re-allow `<mark>` only).
 - [ ] Page-builder props are validated by the block's zod schema, with length and count limits.
+- [ ] MCP tools that return third-party content (pages, library documents, search hits, social results) set `untrustedOutput: true`, so the text is fenced with `fenceUntrusted` and `_meta` carries `cc.anymd/untrusted_content`. WebMCP tools fence the same outputs.
+- [ ] Converted Markdown passes through `neutralizeUnsafeLinks` before it is returned, cached or saved; frontmatter and titles from pages are single-line (`yamlString`).
+- [ ] Usage and trace targets go through `redactUrlSecrets`; nothing logs full request URLs with query secrets.
 
 ### Secrets
 

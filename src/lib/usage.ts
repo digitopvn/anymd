@@ -1,7 +1,7 @@
 import type { Env, Principal } from '../env';
 import { getPlan } from '../billing/plans';
 import type { Tracer } from './tracer';
-import { newId, now } from './util';
+import { newId, now, redactUrlSecrets } from './util';
 import { CHARGES_SQL, UNRESERVED_USAGE_SQL } from './conversion-budget';
 import { grantAllowance } from '../billing/grant-pool-ledger';
 
@@ -89,7 +89,7 @@ export async function recordUsage(env: Env, input: UsageInput, tracer?: Tracer):
       input.principal.apiKeyId ?? null,
       input.channel,
       input.kind,
-      input.target.slice(0, 500),
+      redactUrlSecrets(input.target).slice(0, 500),
       input.status,
       input.httpStatus,
       input.credits,
@@ -110,7 +110,7 @@ export async function recordUsage(env: Env, input: UsageInput, tracer?: Tracer):
         tracer.id,
         input.principal.userId,
         input.kind,
-        input.target.slice(0, 500),
+        redactUrlSecrets(input.target).slice(0, 500),
         input.status,
         input.durationMs,
         JSON.stringify(tracer.spans),

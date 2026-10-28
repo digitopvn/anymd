@@ -14,6 +14,9 @@ import { newId, now } from '../lib/util';
 import { stableEventId } from '../events/crypto';
 import type { EventName } from '../events/catalog';
 import { type PendingEvent, writeWithEvents } from '../events/outbox';
+import { normalizeTargetUrl } from './index';
+import { fetchPublic } from './safe-fetch';
+import { ConvertError } from './types';
 import { parseVideoId } from './youtube';
 
 export interface VideoJobMessage {
@@ -447,8 +450,10 @@ async function storeVideo(env: Env, videoId: string, picked: { format: StreamFor
   if (declared > MAX_VIDEO_BYTES) throw new VideoJobError('video_too_large');
   let response: Response;
   try {
-    response = await fetch(picked.format.url!, { redirect: 'follow', signal: AbortSignal.timeout(10 * 60_000) });
-  } catch {
+    // The stream URL comes from a third-party provider, so it and every redirect pass the SSRF guard.
+    ({ response } = await fetchPublic(normalizeTargetUrl(picked.format.url!), { timeoutMs: 10 * 60_000 }));
+  } catch (err) {
+    if (err instanceof ConvertError && err.code === 'blocked_host') throw new VideoJobError('download_failed');
     throw new VideoJobError('download_timeout', true);
   }
   if (!response.ok || !response.body) throw new VideoJobError('download_failed', response.status >= 500 || response.status === 429);

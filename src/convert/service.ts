@@ -15,6 +15,7 @@ import { normalizeStoredPreferences, resolveReadingOptions, wantsEnrichment, typ
 import { enrichImages, renderEnrichment } from './image-enrichment';
 import { reserveConversion, settleConversion } from '../lib/conversion-budget';
 import { findOptout } from './optouts';
+import { neutralizeEnrichmentLinks, neutralizeUnsafeLinks } from './unsafe-links';
 import { directVideoMarkdown, startVideoDownload, videoDownloadMarkdown, type VideoDownloadState } from './youtube-video';
 import { ConvertError, countWords, type ConvertResult } from './types';
 
@@ -40,6 +41,8 @@ export interface ConvertRequest extends EnrichmentOptions {
 export type NotSavedReason = 'not_requested' | 'anonymous' | 'missing_scope' | 'library_limit';
 
 export interface ConvertResponse {
+  /** The normalized URL the caller asked for; `result.source` is where the content actually came from. */
+  requestedUrl: string;
   creditBreakdown?: CreditBreakdown;
   /** Effective reading options after `request > saved preference > default`, with each value's source. */
   readingOptions: ResolvedReadingOptions;
@@ -172,6 +175,7 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
       const { sources: _sources, downloadVideo: _download, analyzeVideo: _analyze, ...effective } = options;
       const conversionContext = { env, tracer, ...effective, language: req.language, selector: req.selector, authenticated: !!principal.userId, budget };
       result = await convertUrl(url, conversionContext);
+      result.fetchedAt = new Date().toISOString();
       if (budget) {
         const actualBase = creditCost(result.sourceKind);
         if (!budget.canSpend(actualBase - budget.breakdown.base)) throw new ConvertError('Budget is too small for this source', 402, 'credit_limit');
@@ -182,6 +186,9 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
         }
         await enrichImages(result, conversionContext);
       }
+      // Page-chosen links that could run script or read local data never reach readers or agents.
+      result.content = neutralizeUnsafeLinks(result.content);
+      neutralizeEnrichmentLinks(result.enrichment);
       result.baseContent = result.content;
       result.content = renderEnrichment(result.content, result.source, result.enrichment);
       result.wordCount = countWords(result.content);
@@ -224,7 +231,7 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
     );
     if (principal.userId && credits > 0) ctx.waitUntil(ingestPolarUsage(env, principal.userId, credits, result.sourceKind, reserved ? tracer.id : undefined).catch(() => undefined));
 
-    return { result, markdown, documentId, notSavedReason, credits, cached, traceId: tracer.id, durationMs, creditBreakdown, readingOptions: options, videoDownload };
+    return { requestedUrl: url.href, result, markdown, documentId, notSavedReason, credits, cached, traceId: tracer.id, durationMs, creditBreakdown, readingOptions: options, videoDownload };
   } catch (err) {
     if (reserved && !settled) await settleConversion(env, tracer.id, 0).catch(() => undefined);
     const e = err instanceof ConvertError ? err : new ConvertError(err instanceof Error ? err.message : 'Conversion failed', 500, 'internal');

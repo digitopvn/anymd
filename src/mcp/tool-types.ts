@@ -24,6 +24,8 @@ export interface ToolDef {
   scope: Scope | null;
   input: z.ZodObject<z.ZodRawShape>;
   annotations?: ToolAnnotations;
+  /** The result carries third-party content (pages, posts, transcripts, saved library text), fenced as untrusted data. */
+  untrustedOutput?: boolean;
   /** Counts against the mutation rate limit even though the tool reaches the open world (e.g. publishing feedback). */
   mutation?: boolean;
   // Arguments are validated against `input` before `run` is called; each tool narrows them itself.

@@ -2,6 +2,7 @@
  * Document adapter — PDFs, images, Office files, spreadsheets via Workers AI `toMarkdown`.
  * Images are described by a vision model, PDFs keep their text layout, sheets become tables.
  */
+import { readBounded } from './provider-fetch';
 import { ConvertError, countWords, type ConvertContext, type ConvertResult, type SourceKind } from './types';
 
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
@@ -79,10 +80,12 @@ export async function convertDocumentResponse(
   ctx: ConvertContext,
 ): Promise<ConvertResult> {
   const mime = mimeFor(contentType, url);
-  if (!mime) throw new ConvertError(`Unsupported content type: ${contentType}`, 415, 'unsupported_type');
+  if (!mime) throw new ConvertError(`Unsupported content type: ${contentType.split(';')[0].trim().slice(0, 100) || 'unknown'}`, 415, 'unsupported_type');
   const declared = Number(response.headers.get('content-length') || 0);
   if (declared > MAX_DOCUMENT_BYTES) throw new ConvertError('Document too large (max 20 MB)', 413, 'too_large');
-  const blob = await ctx.tracer.span('download', () => response.blob(), { mime });
+  // Content-Length may be absent or lie: the read itself stops at the limit.
+  const bytes = await ctx.tracer.span('download', () => readBounded(response, MAX_DOCUMENT_BYTES, () => new ConvertError('Document too large (max 20 MB)', 413, 'too_large')), { mime });
+  const blob = new Blob([bytes], { type: mime });
   const name = decodeURIComponent(url.pathname.split('/').pop() || 'document') || 'document';
   const { markdown, kind } = await convertBlobToMarkdown(blob, name, mime, ctx);
   const firstHeading = markdown.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim();

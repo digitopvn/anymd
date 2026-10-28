@@ -39,7 +39,7 @@ Before handing work back: `npm run typecheck`, plus `npm test` for touched behav
 - `src/views/`, `src/routes/`, `src/mcp/`, `client/`, `cli/`: UI, HTTP routes, MCP server, browser islands, CLI.
 - `migrations/`: D1 schema. `docs/`: maintainer docs.
 
-Start with `docs/architecture.md` for the module map and request flow, `docs/operations.md` for deploys, logs and rollback, and `REVIEW.md` for what reviewers check.
+Start with `docs/architecture.md` for the module map and request flow, `docs/operations.md` for deploys, logs and rollback, `REVIEW.md` for what reviewers check, and `docs/security-untrusted-content.md` for the threat model of fetched content.
 
 ## Conventions
 

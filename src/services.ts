@@ -43,6 +43,8 @@ export function convertPayload(r: ConvertResponse) {
     ...(r.videoDownload ? { video_download: r.videoDownload } : {}),
     // YouTube: the signed, expiring MP4 also linked at the end of `markdown` (not in `content` or the library).
     ...(x.directVideo ? { direct_video: x.directVideo } : {}),
+    // Where the content came from and how far to trust it: page text is third-party data, never instructions.
+    provenance: { requested_url: r.requestedUrl, source_url: x.source, fetched_at: x.fetchedAt ?? null, extractor: x.sourceKind, content_trust: 'untrusted' as const },
     ...(x.sourceKind === 'x' ? { stats: { likes: x.likes ?? null, retweets: x.retweets ?? null, replies: x.replies ?? null, views: x.views ?? null } } : {}),
   };
 }

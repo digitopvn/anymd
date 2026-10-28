@@ -17,6 +17,9 @@ import {
   type SourceAdapter,
 } from './types';
 import { convertDocumentResponse, isDocumentContentType } from './document';
+import { findOptout } from './optouts';
+import { readBounded } from './provider-fetch';
+import { fetchFailure, fetchPublic, timedOut } from './safe-fetch';
 
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 
@@ -29,53 +32,71 @@ function initialUserAgent(url: URL): string {
 
 type Fetched = { kind: 'html'; html: string; finalUrl: string } | { kind: 'result'; result: ConvertResult };
 
+/** Per fetch, inside the conversion's own deadline when it has one. */
+const FETCH_TIMEOUT_MS = 20_000;
+
+/** The bare media type, bounded, so an error never echoes a header the remote server wrote at length. */
+export function mediaType(contentType: string): string {
+  return contentType.split(';')[0].trim().replace(/[^a-z0-9!#$&^_.+\-/]/gi, '').slice(0, 100) || 'unknown';
+}
+
+const tooLargeHtml = () => new ConvertError('Page too large (max 5 MB of HTML)', 413, 'too_large');
+
+/** A redirect may land on another site: it gets the same opt-out, rate-limit and robots.txt checks. */
+async function vetRedirect(next: URL, from: URL, ctx: ConvertContext): Promise<void> {
+  const optout = await findOptout(ctx.env, next.hostname);
+  if (optout) throw new ConvertError(`${optout.domain} has asked not to be converted by anymd. See https://anymd.cc/legal/abuse`, 403, 'site_opted_out');
+  if (next.hostname.replace(/^www\./, '') !== from.hostname.replace(/^www\./, '')) await checkSitePolicy(next, ctx);
+}
+
 async function fetchPage(url: URL, userAgent: string, ctx: ConvertContext): Promise<Fetched> {
   const headers: Record<string, string> = {
     'User-Agent': userAgent,
     Accept: 'text/html,application/xhtml+xml,application/pdf;q=0.9,text/markdown;q=0.9,text/plain;q=0.8,*/*;q=0.5',
   };
   if (ctx.language) headers['Accept-Language'] = ctx.language;
-  let response: Response;
-  try {
-    response = await fetch(url.href, { headers, redirect: 'follow' });
-  } catch (err) {
-    throw new ConvertError(`Could not reach ${url.hostname}: ${err instanceof Error ? err.message : 'network error'}`, 502, 'fetch_failed');
-  }
+  const timeoutMs = Math.max(1, Math.min(FETCH_TIMEOUT_MS, (ctx.budget?.deadline ?? Date.now() + FETCH_TIMEOUT_MS) - Date.now()));
+  const { response, url: finalUrl } = await fetchPublic(url, { headers, timeoutMs, beforeRedirect: (next) => vetRedirect(next, url, ctx) });
   if (!response.ok) {
-    throw new ConvertError(`${url.hostname} responded ${response.status} ${response.statusText}`.trim(), response.status === 404 ? 404 : 502, 'upstream_status');
+    await response.body?.cancel().catch(() => undefined);
+    // The status text is the remote server's own words; only the number is echoed back.
+    throw new ConvertError(`${finalUrl.hostname} responded ${response.status}`, response.status === 404 ? 404 : 502, 'upstream_status');
   }
   const contentType = (response.headers.get('content-type') || '').toLowerCase();
 
-  if (isDocumentContentType(contentType, url)) {
-    return { kind: 'result', result: await convertDocumentResponse(response, url, contentType, ctx) };
+  try {
+    if (isDocumentContentType(contentType, url)) {
+      return { kind: 'result', result: await convertDocumentResponse(response, url, contentType, ctx) };
+    }
+    if (contentType.startsWith('text/markdown') || contentType.startsWith('text/plain') || contentType.includes('json')) {
+      const text = new TextDecoder().decode(await readBounded(response, MAX_HTML_BYTES, tooLargeHtml));
+      const isJson = contentType.includes('json');
+      const content = isJson ? '```json\n' + text + '\n```' : text;
+      return {
+        kind: 'result',
+        result: {
+          title: url.pathname.split('/').pop() || url.hostname,
+          author: '',
+          published: '',
+          description: '',
+          domain: url.hostname.replace(/^www\./, ''),
+          content,
+          wordCount: countWords(content),
+          source: url.href,
+          sourceKind: 'text',
+        },
+      };
+    }
+    if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml') && contentType !== '') {
+      await response.body?.cancel().catch(() => undefined);
+      throw new ConvertError(`Unsupported content type: ${mediaType(contentType)}`, 415, 'unsupported_type');
+    }
+    const html = new TextDecoder().decode(await readBounded(response, MAX_HTML_BYTES, tooLargeHtml));
+    return { kind: 'html', html, finalUrl: finalUrl.href };
+  } catch (err) {
+    // The deadline also covers reading the body; anything else (a converter failure) keeps its own error.
+    throw timedOut(err) ? fetchFailure(finalUrl, err) : err;
   }
-  if (contentType.startsWith('text/markdown') || contentType.startsWith('text/plain') || contentType.includes('json')) {
-    const text = await response.text();
-    const isJson = contentType.includes('json');
-    const content = isJson ? '```json\n' + text.slice(0, MAX_HTML_BYTES) + '\n```' : text;
-    return {
-      kind: 'result',
-      result: {
-        title: url.pathname.split('/').pop() || url.hostname,
-        author: '',
-        published: '',
-        description: '',
-        domain: url.hostname.replace(/^www\./, ''),
-        content,
-        wordCount: countWords(content),
-        source: url.href,
-        sourceKind: 'text',
-      },
-    };
-  }
-  if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml') && contentType !== '') {
-    throw new ConvertError(`Unsupported content type: ${contentType}`, 415, 'unsupported_type');
-  }
-  const declared = Number(response.headers.get('content-length') || 0);
-  if (declared > MAX_HTML_BYTES) throw new ConvertError('Page too large (max 5 MB of HTML)', 413, 'too_large');
-  const html = await response.text();
-  if (html.length > MAX_HTML_BYTES) throw new ConvertError('Page too large (max 5 MB of HTML)', 413, 'too_large');
-  return { kind: 'html', html, finalUrl: response.url || url.href };
 }
 
 async function parseHtml(html: string, pageUrl: string, ctx: ConvertContext): Promise<ConvertResult> {

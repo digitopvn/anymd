@@ -20,6 +20,8 @@ export type SourceKind =
   | 'text';
 
 export interface ConvertResult {
+  /** When anymd fetched the source (ISO-8601); kept through the cache, so a cached read reports the original fetch. */
+  fetchedAt?: string;
   enrichment?: Enrichment;
   /** Unenriched article body, used to retain separately timestamped library sections. */
   baseContent?: string;

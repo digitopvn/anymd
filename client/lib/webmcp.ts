@@ -2,6 +2,7 @@
  * WebMCP: expose site tools to in-browser agents through `navigator.modelContext`.
  * Contract: src/content/docs/webmcp.md. Tools run with the page's own session.
  */
+import { fenceUntrusted } from '../../src/lib/untrusted-content';
 import { CONVERSION_OPTION_KEYS, convertUrl, request, requestText } from './api';
 
 interface ToolResult {
@@ -77,7 +78,8 @@ async function readUrl(input: Input): Promise<string> {
   const options: Record<string, unknown> = {};
   for (const key of CONVERSION_OPTION_KEYS) if (input[key] !== undefined) options[key] = input[key];
   const { data } = await convertUrl(requiredString(input, 'url', 4000), save, options);
-  return data.markdown;
+  // Page text is third-party data: fence it so the agent does not take it as instructions.
+  return fenceUntrusted(data.markdown, typeof data.url === 'string' ? data.url : 'a web page');
 }
 
 const readTool = tool(
@@ -110,7 +112,7 @@ const searchTool = tool(
   async (input) => {
     const params = new URLSearchParams({ q: requiredString(input, 'query', 500), limit: String(clampInt(input.limit, 1, 50, 10)) });
     if (typeof input.mode === 'string' && SEARCH_MODES.includes(input.mode)) params.set('mode', input.mode);
-    return json((await request(`/api/v1/search?${params}`)).data);
+    return fenceUntrusted(json((await request(`/api/v1/search?${params}`)).data), 'search_library (third-party sources)');
   },
 );
 
@@ -129,7 +131,7 @@ const listTool = tool(
     const params = new URLSearchParams({ limit: String(clampInt(input.limit, 1, 100, 20)) });
     if (typeof input.domain === 'string' && input.domain.trim()) params.set('domain', input.domain.trim().slice(0, 253));
     for (const tag of optionalTags(input, 'tags', 10) ?? []) params.append('tag', tag);
-    return json((await request(`/api/v1/library?${params}`)).data);
+    return fenceUntrusted(json((await request(`/api/v1/library?${params}`)).data), 'list_documents (third-party sources)');
   },
 );
 

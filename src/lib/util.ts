@@ -92,3 +92,32 @@ export function humanDate(ts: number | null | undefined): string {
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
+
+/** Query parameter names that commonly carry credentials (signed URLs, OAuth codes, API keys). */
+const SECRET_PARAM = /token|key|sig|secret|pass|pwd|auth|credential|session|jwt|^code$|^sid$|^state$/i;
+
+/**
+ * The URL for logs and traces: secret-looking query values and any userinfo are replaced, so usage
+ * rows (which admins can read) never hold a reader's signed link or token. Non-URLs pass unchanged.
+ */
+export function redactUrlSecrets(target: string): string {
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return target;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return target;
+  let changed = false;
+  if (url.username || url.password) {
+    url.username = '';
+    url.password = '';
+    changed = true;
+  }
+  for (const name of [...new Set(url.searchParams.keys())]) {
+    if (!SECRET_PARAM.test(name)) continue;
+    url.searchParams.set(name, 'REDACTED');
+    changed = true;
+  }
+  return changed ? url.href : target;
+}

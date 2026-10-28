@@ -1,7 +1,8 @@
 import { ConvertError, type ConvertContext } from './types';
 
-export async function readBounded(response: Response, maxBytes = 5 * 1024 * 1024): Promise<Uint8Array> {
-  if (Number(response.headers.get('content-length')) > maxBytes) throw new ConvertError('Upstream response too large', 502, 'upstream_too_large');
+/** Reads a body up to `maxBytes`, whatever Content-Length claims; past that it stops and throws `tooLarge()`. */
+export async function readBounded(response: Response, maxBytes = 5 * 1024 * 1024, tooLarge = () => new ConvertError('Upstream response too large', 502, 'upstream_too_large')): Promise<Uint8Array<ArrayBuffer>> {
+  if (Number(response.headers.get('content-length')) > maxBytes) { await response.body?.cancel().catch(() => undefined); throw tooLarge(); }
   const reader = response.body?.getReader();
   if (!reader) return new Uint8Array();
   const chunks: Uint8Array[] = [];
@@ -11,7 +12,7 @@ export async function readBounded(response: Response, maxBytes = 5 * 1024 * 1024
       const { value, done } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > maxBytes) { await reader.cancel(); throw new ConvertError('Upstream response too large', 502, 'upstream_too_large'); }
+      if (size > maxBytes) { await reader.cancel(); throw tooLarge(); }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }

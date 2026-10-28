@@ -3,6 +3,7 @@
  * without a group for it, the `*` group applies.
  */
 import type { Env } from '../env';
+import { fetchPublic } from './safe-fetch';
 import { USER_AGENT } from './types';
 
 export const ROBOTS_TOKEN = 'anymd';
@@ -75,6 +76,23 @@ export function isPathAllowed(rules: Rule[], pathAndQuery: string): boolean {
   return best ? best.allow : true;
 }
 
+/** RFC 9309 lets a parser stop after 500 KiB, so the rest of a larger file is never downloaded. */
+async function readRobots(res: Response): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return '';
+  const decoder = new TextDecoder();
+  let text = '';
+  let size = 0;
+  while (size < MAX_ROBOTS_BYTES) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.length;
+    text += decoder.decode(value, { stream: true });
+  }
+  await reader.cancel().catch(() => undefined);
+  return text.slice(0, MAX_ROBOTS_BYTES);
+}
+
 type RobotsState = { status: 'ok'; text: string } | { status: 'allow_all' } | { status: 'unreachable' };
 
 async function loadRobots(env: Env, origin: string): Promise<RobotsState> {
@@ -83,8 +101,9 @@ async function loadRobots(env: Env, origin: string): Promise<RobotsState> {
   if (cached) return cached;
   let state: RobotsState;
   try {
-    const res = await fetch(`${origin}/robots.txt`, { headers: { 'User-Agent': USER_AGENT }, redirect: 'follow', signal: AbortSignal.timeout(5000) });
-    if (res.ok) state = { status: 'ok', text: (await res.text()).slice(0, MAX_ROBOTS_BYTES) };
+    // RFC 9309 asks crawlers to follow at least five redirects; each hop passes the SSRF guard.
+    const { response: res } = await fetchPublic(new URL('/robots.txt', origin), { headers: { 'User-Agent': USER_AGENT }, timeoutMs: 5000 });
+    if (res.ok) state = { status: 'ok', text: await readRobots(res) };
     // RFC 9309: a missing robots.txt (4xx) allows everything; a server or network error means "assume disallowed".
     else state = res.status >= 400 && res.status < 500 ? { status: 'allow_all' } : { status: 'unreachable' };
   } catch {

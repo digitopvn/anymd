@@ -7,6 +7,7 @@ import { instagramAdapter } from './instagram';
 import { threadsAdapter } from './threads';
 import { linkedinAdapter } from './linkedin';
 import { ENRICHMENT_CREDITS } from '../billing/plans';
+import { ipv4Octets, isPublicAddress } from '../lib/ip';
 import { documentCreditCost } from './document';
 import { ConvertError, type ConvertContext, type ConvertResult, type SourceAdapter, type SourceKind } from './types';
 
@@ -16,15 +17,15 @@ export * from './types';
 const ADAPTERS: SourceAdapter[] = [xAdapter, facebookAdapter, instagramAdapter, threadsAdapter, linkedinAdapter, youtubeAdapter, hackerNewsAdapter, webAdapter];
 
 const BLOCKED_HOSTNAMES = new Set(['localhost', 'anymd.cc', 'www.anymd.cc', 'staging.anymd.cc', 'metadata.google.internal']);
+const BLOCKED_SUFFIXES = ['.localhost', '.local', '.internal', '.home.arpa', '.lan', '.corp', '.intranet'];
+const MAX_URL_LENGTH = 8192;
 
 function isPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (BLOCKED_HOSTNAMES.has(h) || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
-  if (/^(127\.|10\.|0\.|169\.254\.|192\.168\.)/.test(h)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
-  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true;
-  if (h === '::1' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return h.includes(':');
-  return false;
+  // A trailing dot names the same host (`localhost.`, `anymd.cc.`), so compare without it.
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+  // IP literals (the URL parser already turned hex, octal and integer forms into dotted quads).
+  if (ipv4Octets(h) || h.includes(':')) return !isPublicAddress(h);
+  return BLOCKED_HOSTNAMES.has(h) || BLOCKED_SUFFIXES.some((suffix) => h.endsWith(suffix));
 }
 
 /**
@@ -34,6 +35,7 @@ function isPrivateHost(hostname: string): boolean {
 export function normalizeTargetUrl(raw: string): URL {
   let s = raw.trim();
   if (!s) throw new ConvertError('Missing URL', 400, 'invalid_url');
+  if (s.length > MAX_URL_LENGTH) throw new ConvertError(`URL too long (max ${MAX_URL_LENGTH} characters)`, 400, 'invalid_url');
   s = s.replace(/^\/+/, '');
   // Paths like /https:/example.com (slashes collapsed by some clients)
   s = s.replace(/^(https?):\/(?!\/)/i, '$1://');
@@ -69,7 +71,8 @@ export function creditCost(kind: SourceKind): number {
 }
 
 function yamlString(s: string): string {
-  return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ').trim() + '"';
+  // Naive frontmatter readers split on any line break (\r, U+2028/9 too): a page-supplied title must not start a new key.
+  return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n\u2028\u2029\u0085]+/g, ' ').replace(/[\u0000-\u001f\u007f]/g, '').trim() + '"';
 }
 
 /** Markdown with YAML frontmatter — the default response body (same shape as defuddle). */
@@ -92,6 +95,6 @@ export function formatMarkdown(result: ConvertResult, options: { frontmatter?: b
   if (result.replies != null) fm.push(`replies: ${result.replies}`);
   if (result.views != null) fm.push(`views: ${result.views}`);
   fm.push('---');
-  const title = result.title.replace(/[\\`*_[\]{}<>#!|]/g, '\\$&').replace(/[\r\n]+/g, ' ');
+  const title = result.title.replace(/[\\`*_[\]{}<>#!|]/g, '\\$&').replace(/[\r\n\u2028\u2029\u0085]+/g, ' ');
   return fm.join('\n') + '\n\n' + (title && !/^#\s/.test(result.content) ? `# ${title}\n\n` : '') + result.content + '\n';
 }

@@ -1,7 +1,7 @@
 ---
 title: "URL API"
 description: "Prefix any link with anymd.cc/ to get clean Markdown back. Formats, options, headers, limits and Markdown twins."
-updated: "2026-10-25"
+updated: "2026-10-28"
 ---
 
 The simplest API there is: put `https://anymd.cc/` in front of a URL.
@@ -28,7 +28,7 @@ https://anymd.cc/https://stephango.com/saw
 https://anymd.cc/convert?url=https://stephango.com/saw   (redirects to the first form)
 ```
 
-Only public `http(s)` URLs are accepted. Private addresses, `localhost`, internal hostnames and URLs with embedded credentials are refused with `400 blocked_host` or `400 invalid_url`.
+Only public `http(s)` URLs are accepted. Private addresses (including IPv4-mapped IPv6 and hex, octal or integer IP forms), `localhost`, internal hostnames and URLs with embedded credentials are refused with `400 blocked_host` or `400 invalid_url`. Redirects are followed by anymd one hop at a time, up to 5: every hop gets the same checks plus the site opt-out list and the target site's robots.txt, so a public page that redirects to a private address fails with `400 blocked_host`. Each fetch has a deadline and a size cap, and links or images with a `javascript:`, `data:`, `file:` or similar scheme are replaced with `#unsafe-link-removed` in the Markdown.
 
 ## Response formats
 
