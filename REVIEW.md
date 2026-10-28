@@ -19,6 +19,7 @@ Code review checklist for anymd. Check the sections your change touches; securit
 - [ ] Key scopes are capped by the owner's current role (`capScopes`); nothing widens scopes from request input.
 - [ ] Role changes require `users:write` (owner only).
 - [ ] An unresolvable API key returns `401`, never falls back to anonymous.
+- [ ] OAuth changes keep audience binding, PKCE S256, revocation and account-state checks covered by `test/oauth-flow.test.ts` / `test/oauth-chatgpt.test.ts`; a rejected credential is never logged or echoed.
 
 ### Sessions and writes
 

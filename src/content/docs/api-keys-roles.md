@@ -1,7 +1,7 @@
 ---
 title: "API keys & roles"
 description: "Create scoped anymd API keys, pick presets, and understand how roles cap what every key and OAuth grant can do."
-updated: "2026-10-15"
+updated: "2026-10-28"
 ---
 
 Every call to anymd runs as a **principal** with a set of **scopes**. Scopes come from your **role**, and each API key or OAuth grant can only narrow them, never widen them.
@@ -27,7 +27,7 @@ Body: `{ name, preset?, scopes?, expires_in_days? }`. Use a preset, or pass an e
 | Preset | Label | Scopes |
 |---|---|---|
 | `convert-only` | Convert only | `convert` |
-| `library` | Convert + library (agents) | `convert`, `library:read`, `library:write` |
+| `library` | Convert + library (agents) | `convert`, `library:read`, `library:write`, `library:delete` |
 | `read-only` | Read-only | `library:read`, `usage:read` |
 | `content-editor` | Content editor (AI CMS) | `content:read`, `content:write`, `content:publish`, `pages:read`, `pages:write`, `pages:publish` |
 | `admin-read-only` | Admin read-only (monitoring agent) | `settings:read`, `optouts:read`, `users:read`, `credits:read`, `billing:read`, `audit:read`, `system:read`, `content:read`, `pages:read` |
@@ -43,7 +43,8 @@ Rule of thumb: give each integration its own key with the smallest preset that w
 |---|---|
 | `convert` | Convert URLs and files |
 | `library:read` | List, read and search your library |
-| `library:write` | Save conversions, tag and delete documents |
+| `library:write` | Save conversions and tag documents |
+| `library:delete` | Permanently delete library documents. Elevated: never part of the default OAuth grant. Keys that held `library:write` before this scope existed were given it, so they keep deleting |
 | `usage:read` | Usage, credits and traces |
 | `feedback:write` | Send product feedback, which becomes a public GitHub issue, and read your own reports. Elevated: never part of the default OAuth grant ([Send feedback](/docs/feedback)) |
 | `keys:manage` | Create, list and revoke your API keys; lets a key or OAuth client change or reset your saved deep reading defaults (signed-in sessions of every role, including `viewer`, can always change their own) |
@@ -73,7 +74,7 @@ Roles are templates. Your account has exactly one.
 
 | Role | For | Scopes |
 |---|---|---|
-| `user` | Customers (default) | `convert`, `library:read`, `library:write`, `usage:read`, `keys:manage` |
+| `user` | Customers (default) | `convert`, `library:read`, `library:write`, `library:delete`, `usage:read`, `keys:manage` |
 | `viewer` | Read drafts and analytics | `convert`, `library:read`, `usage:read`, `content:read`, `pages:read` |
 | `author` | Draft posts and pages; an editor publishes | `user` scopes + `content:read`, `content:write`, `pages:read`, `pages:write` |
 | `editor` | Write and publish | `author` scopes + `content:publish`, `pages:publish` |
@@ -102,14 +103,15 @@ curl https://anymd.cc/api/v1/me -H "Authorization: Bearer $ANYMD_API_KEY"
 
 ## OAuth
 
-MCP clients can skip keys and sign in with OAuth 2.1 (Dynamic Client Registration + PKCE). Setup: [MCP server](/docs/mcp).
+MCP clients can skip keys and sign in with OAuth 2.1 (PKCE, with a Client ID Metadata Document or Dynamic Client Registration). Setup: [MCP server](/docs/mcp).
 
 - **Least privilege by default.** A client that asks for no scopes gets `convert`, `library:read` and `library:write`: it can read the web and save to and search *your own* library, never everything your role allows. The MCP endpoint advertises only these three scopes in its 401 challenge and protected-resource metadata, so spec-following clients start there.
-- **Elevated scopes are explicit.** A client must request admin, content, pages or `keys:manage` scopes by name, and the consent screen lists them separately as elevated so you see exactly what you approve. Scopes your role lacks are dropped and shown as unavailable.
+- **Elevated scopes are explicit.** A client must request admin, content, pages, `keys:manage`, `feedback:write` or `library:delete` scopes by name, and the consent screen lists them separately as elevated so you see exactly what you approve. Scopes your role lacks are dropped and shown as unavailable.
 - **Admin access is opt-in on the consent screen.** Owners and admins also see an **Admin access for this connection** choice: **None** (default), **Admin read-only (monitoring and reports)** or **Support agent**. These add the scopes of the `admin-read-only` and `support` key presets on top of what the client requested (or the default set), capped by your role. Owner-only scopes (`users:roles:write`, `credits:write`, `billing:write`) are never added this way, even for an owner: create an API key when an agent really needs them. An option that would add nothing is not shown, roles below admin never see the choice, and `site-ops` is available only as a key preset. A client's scope request never selects an option for you.
+- **Read-only connections.** Whenever a connection would get a scope that writes, the consent screen offers **Read-only connection**. Ticked, the grant keeps only `convert` and `*:read` scopes: the client can read the web and search your library but cannot save, tag, delete, publish or change settings, and a later request for those tools is refused by the server.
 - **No keys from connected apps.** An OAuth connection can list and revoke your keys (with `keys:manage`) but never create one (`403 oauth_key_creation_forbidden`): a key would outlive the connection. Create keys in the dashboard.
 - **Capped on every request.** The grant is intersected with your current role each time, so a demotion takes effect immediately. A token the client downscoped at refresh keeps only its own scopes.
-- **Older grants.** Grants approved before this consent model keep their non-admin scopes but lose admin scopes. One stored with no scopes (it meant "everything my role allows") now gets your role's non-elevated scopes (`convert`, `library:read`, `library:write`, `usage:read` where your role has them). Reconnect the client to grant more explicitly.
+- **Older grants.** Grants approved before this consent model keep their non-admin scopes but lose admin scopes. One stored with no scopes (it meant "everything my role allows") now gets your role's non-elevated scopes (`convert`, `library:read`, `library:write`, `usage:read` where your role has them). No older grant can delete documents: approve `library:delete` by reconnecting. Reconnect the client to grant more explicitly.
 
 ## An admin agent with least privilege
 

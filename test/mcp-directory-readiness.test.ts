@@ -12,7 +12,7 @@ import { rpc, send } from './helpers/mcp-client';
 import { createTestEnv, type TestEnv } from './helpers/sqlite-env';
 
 /** The public connector's tool set: read the web, then save to and recall from the caller's own library. */
-const DIRECTORY_TOOLS = ['read_url', 'convert_url', 'search_library', 'get_video_download', 'search_social', 'get_document', 'list_documents', 'delete_document', 'tag_document', 'list_tags'];
+const DIRECTORY_TOOLS = ['read_url', 'convert_url', 'search_library', 'get_video_download', 'search_social', 'get_document', 'list_documents', 'tag_document', 'list_tags'];
 
 let t: TestEnv;
 beforeEach(() => {
@@ -41,6 +41,13 @@ describe('default Claude connection (user role, default OAuth grant)', () => {
     expect((await listing(customer())).map((x) => x.name).sort()).toEqual([...DIRECTORY_TOOLS].sort());
   });
 
+  it('adds delete_document, marked destructive, only once the user approves library:delete', async () => {
+    const approved = customer(oauthPrincipalScopes('user', [...OAUTH_DEFAULT_SCOPES, 'library:delete'], OAUTH_GRANT_VERSION));
+    const tools = await listing(approved);
+    expect(tools.map((x) => x.name).sort()).toEqual([...DIRECTORY_TOOLS, 'delete_document'].sort());
+    expect(tools.find((x) => x.name === 'delete_document')?.annotations.destructiveHint).toBe(true);
+  });
+
   it('gives every visible tool a short name, a title and explicit read-only and destructive hints', async () => {
     for (const tool of await listing(customer())) {
       expect(tool.name.length, tool.name).toBeLessThanOrEqual(64);
@@ -52,7 +59,6 @@ describe('default Claude connection (user role, default OAuth grant)', () => {
       expect(tool.description.length, tool.name).toBeGreaterThan(20);
     }
     const byName = new Map((await listing(customer())).map((x) => [x.name, x.annotations]));
-    expect(byName.get('delete_document')?.destructiveHint).toBe(true);
     for (const n of ['search_library', 'get_document', 'list_documents', 'list_tags', 'get_video_download']) expect(byName.get(n)?.readOnlyHint, n).toBe(true);
   });
 

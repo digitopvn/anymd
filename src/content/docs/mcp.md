@@ -15,18 +15,23 @@ anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) se
 
 ## Authentication
 
-**API key.** Simplest option. Create a key in **Dashboard → API keys**. The **Convert + library (agents)** preset is a good default for an assistant. Details: [API keys & roles](/docs/api-keys-roles).
+**API key.** Simplest option. Create a key in **Dashboard → API keys**. The **Convert + library (agents)** preset is a good default for an assistant; it includes `library:delete`, so pick explicit scopes without it if the agent should never delete. Details: [API keys & roles](/docs/api-keys-roles).
 
-**OAuth 2.1.** For clients that support it, just add the URL and sign in when prompted. anymd supports Dynamic Client Registration and PKCE:
+**OAuth 2.1.** For clients that support it, just add the URL and sign in when prompted. anymd supports the authorization code flow with PKCE (`S256` only), Client ID Metadata Documents (CIMD) and Dynamic Client Registration, and binds every token to the `https://anymd.cc/mcp` resource (RFC 8707): a token issued for another resource is refused.
 
 | | |
 |---|---|
-| Metadata | `/.well-known/oauth-authorization-server` |
+| Protected resource metadata | `/.well-known/oauth-protected-resource/mcp` |
+| Authorization server metadata | `/.well-known/oauth-authorization-server` |
 | Authorize | `/oauth/authorize` |
-| Token | `/oauth/token` |
-| Registration | `/oauth/register` |
+| Token (and revocation) | `/oauth/token` |
+| Registration (DCR) | `/oauth/register` |
 
-Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert`, `library:read` and `library:write` (read the web, save to and search your own library); anything more, admin scopes above all, must be requested by name and approved on the consent screen, or (owners and admins only) added by choosing an admin access option there: see [Set up an admin agent](#set-up-an-admin-agent). When a read is not saved, the result says so: `saved: false` with `not_saved_reason` (`missing_scope` means the connection lacks `library:write`). See [API keys & roles](/docs/api-keys-roles#oauth).
+The consent screen names the client and the host you return to after you decide: only allow if that is the app you are connecting. A client identified by a metadata document URL (ChatGPT uses `https://chatgpt.com/oauth/client.json`) also shows that URL, because its host proves who the client is; a registered client's name is only what it says about itself. If the request itself is wrong (a `resource` other than anymd's `/mcp`, or PKCE without S256), anymd shows an error page; once it has verified the client's redirect URI, that page carries a **Return to** link that hands the client `error`, `state` and `iss`. anymd never redirects you there on its own, because anyone can register a client. Tick **Read-only connection** to let the client read the web and search your library but never save, change, publish or delete anything: anymd drops every write scope from the grant and refuses those tools on every call, whatever the model asks.
+
+Each tool in `tools/list` carries `securitySchemes` (`oauth2` with the scope it needs), and destructive tools such as `delete_document` are annotated `destructiveHint: true` so hosts ask you before running them. The server never relies on either: it checks the scope on every call.
+
+Either way, your agent only sees the tools its scopes allow. An OAuth client that requests no scopes gets `convert`, `library:read` and `library:write` (read the web, save to and search your own library); anything more, admin scopes above all, must be requested by name and approved on the consent screen, or (owners and admins only) added by choosing an admin access option there: see [Set up an admin agent](#set-up-an-admin-agent). Deleting library documents needs `library:delete`, which is never in the default set: `delete_document` stays hidden until you approve it, and a client that calls it gets `403 insufficient_scope` naming `library:delete`, so it can ask you to reconnect (step up). An argument the model sends can never stand in for that approval. When a read is not saved, the result says so: `saved: false` with `not_saved_reason` (`missing_scope` means the connection lacks `library:write`). See [API keys & roles](/docs/api-keys-roles#oauth).
 
 ## Client setup
 
@@ -105,7 +110,7 @@ Tools are listed only when the caller holds the scope they need.
 | `list_documents` | `{ limit?, domain?, tags?, before? }` | `library:read` |
 | `list_tags` | `{ limit? }` | `library:read` |
 | `tag_document` | `{ id, add?, remove?, set? }` | `library:write` |
-| `delete_document` | `{ id }` | `library:write` |
+| `delete_document` | `{ id }` | `library:delete` |
 | `usage_summary` | `{}` | `usage:read` |
 
 `search_social` searches public posts on X, Facebook, Instagram, Threads, LinkedIn or all of them and returns normalized results with a per-platform status and a `next_cursor`. `period` (`24h`, `7d`, `30d`) or `since`/`until` (ISO-8601) limits it to a time range; posts are de-duplicated across every page of the search, and the cursor keeps the range, works once and lasts 24 hours. See [Social search](/docs/social-search). `read_url` and `convert_url` are the same tool with the same input and output; new integrations should use `read_url`. `mode` is `hybrid` (default), `bm25`, `fulltext` or `semantic`. See [Library & search](/docs/library-search).
@@ -240,7 +245,7 @@ Admin access is never granted by default. Give the agent only what its job needs
 
 **OAuth clients (Claude, ChatGPT).** Connect anymd as usual. If you are an owner or admin, the consent screen offers **Admin access for this connection**: **None** (the default), **Admin read-only (monitoring and reports)** or **Support agent**. Each option lists the scopes it adds. Your role caps the result, and is applied again on every call, so a demotion removes admin access from the connection immediately. Owner-only scopes (`users:roles:write`, `credits:write`, `billing:write`) are never added from the consent screen; use an API key for those. Roles below admin never see the option. To change an existing connection, disconnect anymd in the client and connect again.
 
-**OAuth step-up.** A client that can re-authorize does not need the consent option. When it calls a tool whose scope the grant lacks but your role allows, anymd answers `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` listing the current scopes plus the missing one, and the client re-authorizes with them.
+**OAuth step-up.** A client that can re-authorize does not need the consent option. When it calls a tool whose scope the grant lacks but your role allows, anymd answers `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` listing the current scopes plus the missing one, and the client re-authorizes with them. Where such a denial comes back as a tool result instead (inside a batch), the result carries the same challenge in `_meta["mcp/www_authenticate"]`, which ChatGPT uses to start linking again.
 
 **API key.** Create a key from a preset (**Dashboard → API keys**, or `create_api_key`), capped by your role like every key:
 
@@ -424,9 +429,11 @@ MCP has its own limits, separate from the REST API, counted per user and per cre
 |---|---|
 | A tool is missing | Your key or OAuth grant lacks its scope. Check with `GET /api/v1/me` or `anymd whoami`. |
 | `401 invalid_api_key` | The key was revoked, expired or mistyped. Create a new one. |
+| `401 invalid_token` over OAuth | The token expired, the connection was revoked (Dashboard → API keys, or account deletion), you connected the same client again (a new consent replaces the earlier connection), or it was issued for another resource. Clients refresh or reconnect from the `WWW-Authenticate` challenge. A suspended account gets the same answer and cannot refresh; once it is reactivated, connect again. |
+| `429` with `rate_limited` before any tool runs | Too many failed sign-ins (bad keys or tokens) from your address in a minute. Fix the credential, then wait for `Retry-After`. |
 | `402 quota_exceeded` | Free plan credits are used up for the month. |
 | `revision_conflict` from `apply_page_ops` | Someone changed the page. Call `get_page`, then retry with the new `revision`. |
 | Admin tools are missing | Call `get_admin_access_status`: it says what your connection lacks and how to reconnect. If that tool is missing too, your role has no admin access. See [Set up an admin agent](#set-up-an-admin-agent). |
-| `403` with `insufficient_scope` | The OAuth grant lacks the tool's scope. Re-authorize with the scopes in the `WWW-Authenticate` header. |
+| `403` with `insufficient_scope` | The OAuth grant lacks the tool's scope (for `delete_document`, `library:delete`). Re-authorize with the scopes in the `WWW-Authenticate` header. |
 | `429` / `-32005` | MCP rate limit. Wait for `Retry-After` seconds. |
 | `-32020` or `-32022` | A 2026-07-28 client sent headers that don't match the body, or an unsupported version. |

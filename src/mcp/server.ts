@@ -178,8 +178,9 @@ const TOOLS: ToolDef[] = [
   {
     name: 'delete_document',
     title: 'Delete document',
-    description: 'Permanently delete a library document and its embeddings.',
-    scope: 'library:write',
+    description:
+      'Permanently delete a library document and its embeddings. Needs the library:delete scope, which the user approves on the anymd consent screen (OAuth clients without it are asked to re-authorize). Only call this when the user asked to delete this document.',
+    scope: 'library:delete',
     input: z.object({ id: z.string() }),
     annotations: DESTRUCTIVE,
     run: async (a, t) => {
@@ -375,8 +376,23 @@ function visibleTools(p: Principal) {
   return ALL_TOOLS.filter((t) => holdsToolScope(p, t));
 }
 
+/**
+ * Every tool needs an authenticated caller. `securitySchemes` tells hosts that link accounts per tool
+ * (ChatGPT) which OAuth scope a tool needs; the server still checks the scope on every call.
+ */
+function securitySchemes(tool: ToolDef) {
+  return [{ type: 'oauth2', scopes: tool.scope ? [tool.scope] : [] }];
+}
+
 function toolListing(p: Principal) {
-  return visibleTools(p).map((x) => ({ name: x.name, title: x.title, description: x.description, inputSchema: inputSchemas.get(x.name), annotations: { title: x.title, ...x.annotations } }));
+  return visibleTools(p).map((x) => ({
+    name: x.name,
+    title: x.title,
+    description: x.description,
+    inputSchema: inputSchemas.get(x.name),
+    annotations: { title: x.title, ...x.annotations },
+    securitySchemes: securitySchemes(x),
+  }));
 }
 
 /** A tool the caller cannot use because of scope. `stepUp` when an OAuth client could request it. */
@@ -393,14 +409,16 @@ function scopeDenial(name: string, p: Principal): ScopeDenial | null {
   return { tool: { ...tool, scope: tool.scope }, roleAllows, stepUp: roleAllows && p.kind === 'oauth' };
 }
 
-function denialToolResult(d: ScopeDenial, p: Principal) {
+function denialToolResult(env: Env, d: ScopeDenial, p: Principal) {
   const code = d.roleAllows ? 'insufficient_scope' : 'forbidden';
   const message = !d.roleAllows
     ? `Your role (${p.role}) does not allow ${d.tool.name} (needs ${d.tool.scope}).`
     : p.kind === 'api_key'
       ? `This API key lacks the ${d.tool.scope} scope needed for ${d.tool.name}. Create a key that includes it (see list_roles for presets).`
       : `This connection lacks the ${d.tool.scope} scope needed for ${d.tool.name}. Reconnect and approve it.`;
-  return { isError: true, content: [{ type: 'text', text: `${code}: ${message}` }], structuredContent: { error: { code, message, required: [d.tool.scope], tool: d.tool.name } } };
+  // Hosts that link accounts from a tool result (ChatGPT) re-run OAuth from this challenge.
+  const meta = d.stepUp ? { _meta: { 'mcp/www_authenticate': [stepUpChallenge(env, d, p)] } } : {};
+  return { isError: true, content: [{ type: 'text', text: `${code}: ${message}` }], structuredContent: { error: { code, message, required: [d.tool.scope], tool: d.tool.name } }, ...meta };
 }
 
 function errorToolResult(code: string | undefined, message: string, details?: unknown, status?: number) {
@@ -411,7 +429,7 @@ function errorToolResult(code: string | undefined, message: string, details?: un
 async function callTool(params: Record<string, unknown> | undefined, t: ToolContext) {
   const name = String(params?.name ?? '');
   const denied = scopeDenial(name, t.principal);
-  if (denied) return denialToolResult(denied, t.principal);
+  if (denied) return denialToolResult(t.env, denied, t.principal);
   const tool = visibleTools(t.principal).find((x) => x.name === name);
   if (!tool) return { isError: true, content: [{ type: 'text', text: `Unknown tool: ${name}` }] };
   const parsed = tool.input.safeParse(params?.arguments ?? {});
@@ -528,11 +546,22 @@ function rateLimitedResponse(messages: JsonRpcMessage[], batch: boolean, limited
  * OAuth step-up (RFC 6750 insufficient_scope): the client can re-authorize with the listed scope
  * set, which keeps what it has and adds what the tool needs.
  */
+function stepUpScope(d: ScopeDenial, p: Principal): string {
+  return [...new Set([...p.scopes, d.tool.scope])].join(' ');
+}
+
+function stepUpMessage(d: ScopeDenial): string {
+  return `${d.tool.name} needs the ${d.tool.scope} scope. Re-authorize to grant it.`;
+}
+
+function stepUpChallenge(env: Env, d: ScopeDenial, p: Principal): string {
+  return `Bearer error="insufficient_scope", scope="${stepUpScope(d, p)}", resource_metadata="${resourceMetadataUrl(env)}", error_description="${stepUpMessage(d)}"`;
+}
+
 function stepUpResponse(env: Env, id: JsonRpcId, d: ScopeDenial, p: Principal): Response {
-  const scope = [...new Set([...p.scopes, d.tool.scope])].join(' ');
-  const message = `${d.tool.name} needs the ${d.tool.scope} scope. Re-authorize to grant it.`;
-  return json(rpcError(id, RPC.INSUFFICIENT_SCOPE, message, { code: 'insufficient_scope', required: [d.tool.scope], scope, tool: d.tool.name }), 403, {
-    'WWW-Authenticate': `Bearer error="insufficient_scope", scope="${scope}", resource_metadata="${resourceMetadataUrl(env)}", error_description="${message}"`,
+  const scope = stepUpScope(d, p);
+  return json(rpcError(id, RPC.INSUFFICIENT_SCOPE, stepUpMessage(d), { code: 'insufficient_scope', required: [d.tool.scope], scope, tool: d.tool.name }), 403, {
+    'WWW-Authenticate': stepUpChallenge(env, d, p),
   });
 }
 

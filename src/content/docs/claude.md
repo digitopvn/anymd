@@ -38,15 +38,15 @@ The plugin contains one skill and the server entry. It has no hooks, scripts or 
 
 ## What Claude can access
 
-Sign-in uses OAuth 2.1 with PKCE. The consent screen asks for three permissions and nothing more:
+Sign-in uses OAuth 2.1 with PKCE. By default the consent screen asks for three permissions:
 
 | Permission | Lets Claude |
 |---|---|
 | `convert` | Read public URLs (uses your credits) |
 | `library:read` | Search and open documents in your own library |
-| `library:write` | Save, tag and delete documents in your own library |
+| `library:write` | Save and tag documents in your own library |
 
-With these, Claude sees these tools: `read_url` (and its original name `convert_url`), `search_library`, `get_document`, `list_documents`, `list_tags`, `tag_document`, `delete_document`, `search_social` and `get_video_download`. The library tools that only read are marked read-only, and `delete_document` is marked destructive, so Claude asks before deleting. Your library is private to your account: no other user, connection or key of another account can search it. Revoke the connection any time under **Dashboard → API keys → Connected apps**.
+With these, Claude sees these tools: `read_url` (and its original name `convert_url`), `search_library`, `get_document`, `list_documents`, `list_tags`, `tag_document`, `search_social` and `get_video_download`. The library tools that only read are marked read-only. Deleting needs a fourth permission, `library:delete` (permanently delete documents in your own library), which is never part of the default: Claude can ask you to reconnect and approve it by name, and only then sees `delete_document`, marked destructive so Claude asks before deleting. Tick **Read-only connection** on the consent screen to keep Claude from saving or changing anything. Your library is private to your account: no other user, connection or key of another account can search it. Revoke the connection any time under **Dashboard → API keys → Connected apps**.
 
 ## Credits
 

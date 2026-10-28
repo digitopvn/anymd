@@ -387,7 +387,7 @@ api.patch('/library/:id', requireScope('library:write'), async (c) => {
   return c.json({ ok: true });
 });
 
-api.delete('/library/:id', requireScope('library:write'), async (c) => {
+api.delete('/library/:id', requireScope('library:delete'), async (c) => {
   const ok = await deleteDocument(c.env, me(c).userId, c.req.param('id'), eventOrigin(c));
   if (!ok) return apiError(c, 404, 'not_found', 'Document not found');
   return c.json({ ok: true });

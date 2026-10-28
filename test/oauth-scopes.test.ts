@@ -131,3 +131,48 @@ describe('scope vocabulary', () => {
     expect(preset('support')).not.toContain('users:roles:write');
   });
 });
+
+describe('library deletion scope', () => {
+  it('is separate from saving, held by every role that can save, and never part of the OAuth baseline', () => {
+    for (const role of ROLES) expect(scopesForRole(role).includes('library:delete'), role).toBe(scopesForRole(role).includes('library:write'));
+    expect(OAUTH_DEFAULT_SCOPES.includes('library:delete')).toBe(false);
+    expect(ELEVATED_SCOPES.has('library:delete')).toBe(true);
+    for (const role of ROLES) expect(oauthConsentScopes(role, []).granted.includes('library:delete'), role).toBe(false);
+  });
+
+  it('is never inherited by OAuth grants made before it existed', () => {
+    expect(oauthPrincipalScopes('user', ['convert', 'library:read', 'library:write'], OAUTH_GRANT_VERSION).includes('library:delete')).toBe(false);
+    expect(oauthPrincipalScopes('user', ['convert', 'library:read', 'library:write'], undefined).includes('library:delete')).toBe(false);
+    expect(oauthPrincipalScopes('user', [], undefined).includes('library:delete')).toBe(false);
+  });
+
+  it('needs explicit consent: a client asking for it by name gets it, capped by role', () => {
+    expect(oauthConsentScopes('user', ['library:read', 'library:delete']).granted).toEqual(['library:read', 'library:delete']);
+    expect(oauthConsentScopes('viewer', ['library:delete']).unavailable).toEqual(['library:delete']);
+  });
+});
+
+describe('library:delete key migration', () => {
+  it('gives existing API keys that could save and delete the new scope, and leaves the rest alone', async () => {
+    const { createTestEnv } = await import('./helpers/sqlite-env');
+    // @ts-expect-error Node's fs is absent from the Worker type set; tests run under Node.
+    const { readFileSync } = await import('node:fs');
+    const t = createTestEnv();
+    try {
+      t.db.exec("INSERT INTO users (id, email, name, role, plan, created_at, updated_at) VALUES ('u1', 'u1@example.test', 'U', 'user', 'free', 0, 0)");
+      const insert = t.db.prepare("INSERT INTO api_keys (id, user_id, name, prefix, key_hash, scopes, created_at) VALUES (?, 'u1', 'k', 'amd_', ?, ?, 0)");
+      insert.run('k-write', 'h1', '["convert","library:read","library:write"]');
+      insert.run('k-read', 'h2', '["library:read"]');
+      insert.run('k-both', 'h3', '["library:write","library:delete"]');
+      const sql = readFileSync(new URL('../migrations/0014_library_delete_scope.sql', import.meta.url), 'utf8');
+      t.db.exec(sql);
+      t.db.exec(sql);
+      const scopes = (id: string) => JSON.parse((t.db.prepare('SELECT scopes FROM api_keys WHERE id = ?').get(id) as { scopes: string }).scopes);
+      expect(scopes('k-write')).toEqual(['convert', 'library:read', 'library:write', 'library:delete']);
+      expect(scopes('k-read')).toEqual(['library:read']);
+      expect(scopes('k-both')).toEqual(['library:write', 'library:delete']);
+    } finally {
+      t.close();
+    }
+  });
+});

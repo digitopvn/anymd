@@ -21,7 +21,7 @@ The plugin has no hooks, scripts, commands or local code. It runs nothing on you
    ```
 
 2. When Claude first uses an AnyMD tool, sign in to AnyMD in the browser window that opens (OAuth 2.1 with PKCE). A free AnyMD account works.
-3. Approve the default access on the consent screen: read the web (`convert`) and read and save your own library (`library:read`, `library:write`). The plugin never asks for more.
+3. Approve the default access on the consent screen: read the web (`convert`) and read and save your own library (`library:read`, `library:write`). Deleting a document needs one more permission, `library:delete`, which you approve by name only if you ask Claude to delete something.
 
 If you already added the AnyMD connector in Claude, you don't need this plugin's server entry as well; the skill uses whichever AnyMD connection is present.
 
@@ -40,7 +40,7 @@ If you already added the AnyMD connector in Claude, you don't need this plugin's
 
 ## Tools Claude uses
 
-`read_url`, `search_library`, `get_document`, `list_documents`, `list_tags`, `tag_document`, `search_social`, `get_video_download` and `delete_document` (only when you ask to delete a document). `convert_url` is the same tool as `read_url` under its original name.
+`read_url`, `search_library`, `get_document`, `list_documents`, `list_tags`, `tag_document`, `search_social`, `get_video_download`, and `delete_document` once the connection holds `library:delete` (only when you ask to delete a document). `convert_url` is the same tool as `read_url` under its original name.
 
 ## Support, privacy and security
 

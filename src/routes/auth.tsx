@@ -1,4 +1,5 @@
 /** Email/password and GitHub/Google sign-in, password reset, and the OAuth 2.1 consent screen for MCP clients. */
+import { AuthorizationError } from '@cloudflare/workers-oauth-provider';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { consentAdminPresets, consentGrantScopes } from '../auth/consent';
@@ -199,9 +200,29 @@ authRoutes.get('/oauth/authorize', async (c) => {
   try {
     authRequest = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
   } catch (e) {
+    // Once the client and its redirect URI are validated, the client can learn why (RFC 6749
+    // 4.1.2.1, with RFC 9207 iss). Anyone can register a client (DCR, CIMD), so an automatic
+    // redirect would make this an open redirector: the user follows a labelled link instead.
+    if (e instanceof AuthorizationError && e.redirectUri) {
+      const to = new URL(e.redirectUri);
+      to.searchParams.set('error', e.code);
+      to.searchParams.set('error_description', e.description);
+      if (e.state) to.searchParams.set('state', e.state);
+      if (e.issuer) to.searchParams.set('iss', e.issuer);
+      return renderMessage(
+        c,
+        400,
+        'Invalid authorization request',
+        e.description || 'The client sent an invalid request.',
+        <a class="btn btn-dark" href={to.toString()} rel="noreferrer" data-oauth-error-return>
+          Return to {to.host}
+        </a>,
+      );
+    }
     return renderMessage(c, 400, 'Invalid authorization request', e instanceof Error ? e.message : 'The client sent an invalid request.');
   }
-  const client = await c.env.OAUTH_PROVIDER.lookupClient(authRequest.clientId);
+  // A metadata-URL client (CIMD) is fetched here, and that fetch can fail.
+  const client = await c.env.OAUTH_PROVIDER.lookupClient(authRequest.clientId).catch(() => null);
   if (!client) return renderMessage(c, 400, 'Unknown client', 'This MCP client is not registered. Reconnect it from your agent.');
   // Least privilege: a client that asks for nothing gets the customer baseline, never the whole role.
   const { granted, unavailable } = oauthConsentScopes(user.role, authRequest.scope);
@@ -210,9 +231,17 @@ authRoutes.get('/oauth/authorize', async (c) => {
   return renderPage(
     c,
     { title: 'Authorize MCP client', path: '/oauth/authorize', ...noindex },
-    <ConsentPage clientName={client.clientName || 'An MCP client'} clientUri={client.clientUri} scopes={granted} unavailable={unavailable} requestedNothing={!authRequest.scope.length} state={handle} userEmail={user.email} role={user.role} adminPresets={consentAdminPresets(user.role)} />,
+    <ConsentPage clientName={client.clientName || 'An MCP client'} clientUri={client.clientUri} metadataUrl={/^https:\/\//i.test(client.clientId) ? client.clientId : undefined} redirectHost={hostOf(authRequest.redirectUri)} scopes={granted} unavailable={unavailable} requestedNothing={!authRequest.scope.length} state={handle} userEmail={user.email} role={user.role} adminPresets={consentAdminPresets(user.role)} />,
   );
 });
+
+function hostOf(url: string): string | undefined {
+  try {
+    return new URL(url).host || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 authRoutes.post('/oauth/authorize', async (c) => {
   const user = c.get('user');
@@ -226,8 +255,8 @@ authRoutes.post('/oauth/authorize', async (c) => {
     }
     const approved = await c.env.OAUTH_PROVIDER.approveConsent(c.req.raw, f.state ?? '');
     // Admin access is only ever added by the user's explicit choice on the consent form, capped by role.
-    const scopes = consentGrantScopes(user.role, approved.request.scope, f.admin_access);
-    const client = await c.env.OAUTH_PROVIDER.lookupClient(approved.request.clientId);
+    const scopes = consentGrantScopes(user.role, approved.request.scope, f.admin_access, f.read_only === '1');
+    const client = await c.env.OAUTH_PROVIDER.lookupClient(approved.request.clientId).catch(() => null);
     const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
       request: { ...approved.request, scope: scopes },
       userId: user.id,

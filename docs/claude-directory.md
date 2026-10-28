@@ -23,9 +23,10 @@ A Claude user who connects anymd signs in with OAuth 2.1 (Dynamic Client Registr
 | `list_documents` | read-only | Recent library documents, filter by domain or tags |
 | `list_tags` | read-only | Tags in the caller's library |
 | `tag_document` | idempotent write | Add, remove or set tags |
-| `delete_document` | destructive | Permanently delete a document |
 | `search_social` | open world | Public posts on X, Facebook, Instagram, Threads, LinkedIn (credits per page; keywords go to the RapidAPI social providers listed in the privacy policy) |
 | `get_video_download` | read-only | Status of a YouTube download started by `read_url` |
+
+`delete_document` (destructive) is not in that set: it needs the elevated `library:delete` scope, which the user approves by name on the consent screen, usually through a `403 insufficient_scope` step-up (`docs/mcp-oauth-compatibility.md`).
 
 Staff tooling stays out of a customer's connection: admin control-plane tools need admin scopes, `get_admin_access_status` is visible only to owner and admin roles, page-builder and CMS tools need content scopes, and the server instructions name only the tool groups the caller can see (`instructionsFor` in `src/mcp/server.ts`). Every tool declares all four hints (`test/mcp-admin-authorization.test.ts`); every tool in the directory set has a `title` and a name of at most 64 characters (`test/mcp-directory-readiness.test.ts`).
 

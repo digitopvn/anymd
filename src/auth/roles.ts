@@ -1,7 +1,7 @@
 import type { RoleName, Scope } from '../env';
 
 /** Scopes every customer account holds. Anything outside this set is "elevated" (staff) access. */
-const CUSTOMER: Scope[] = ['convert', 'library:read', 'library:write', 'usage:read', 'keys:manage', 'feedback:write'];
+const CUSTOMER: Scope[] = ['convert', 'library:read', 'library:write', 'library:delete', 'usage:read', 'keys:manage', 'feedback:write'];
 const CONTENT_READ: Scope[] = ['content:read', 'pages:read'];
 const CONTENT_WRITE: Scope[] = ['content:write', 'pages:write'];
 const CONTENT_PUBLISH: Scope[] = ['content:publish', 'pages:publish'];
@@ -54,11 +54,12 @@ export const ALL_SCOPES: Scope[] = ROLE_TEMPLATES.owner.scopes;
 
 /**
  * Scopes shown as elevated on the consent screen: everything that reaches other users' data or
- * site-wide state, plus `keys:manage`, which manages long-lived credentials of the account, and
- * `feedback:write`, which publishes a permanent public GitHub issue and so is never granted silently
- * (grants and keys made before it existed never hold it).
+ * site-wide state, plus `keys:manage`, which manages long-lived credentials of the account,
+ * `feedback:write`, which publishes a permanent public GitHub issue, and `library:delete`, which
+ * permanently deletes library documents. These are never granted silently (OAuth grants made before
+ * they existed never hold them).
  */
-export const ELEVATED_SCOPES: ReadonlySet<Scope> = new Set([...ALL_SCOPES.filter((s) => !CUSTOMER.includes(s)), 'keys:manage', 'feedback:write']);
+export const ELEVATED_SCOPES: ReadonlySet<Scope> = new Set([...ALL_SCOPES.filter((s) => !CUSTOMER.includes(s)), 'keys:manage', 'feedback:write', 'library:delete']);
 
 /** Admin control-plane scopes (everything outside customer and content work). */
 export const ADMIN_SCOPES: ReadonlySet<Scope> = new Set([...ADMIN_READ, ...ADMIN_WRITE, ...OWNER_ONLY]);
@@ -70,15 +71,26 @@ export function roleHasAdminAccess(role: RoleName): boolean {
 
 /**
  * What an OAuth client gets when it asks for no scopes: read the web, and save to and recall its
- * own library. Nothing elevated: no other users' data, no site state, no credential management.
+ * own library. Nothing elevated: no other users' data, no site state, no credential management, and
+ * no deletion (`library:delete` is approved on the consent screen, usually through step-up).
  */
 export const OAUTH_DEFAULT_SCOPES: Scope[] = ['convert', 'library:read', 'library:write'];
+
+/**
+ * A read-only OAuth connection keeps only scopes that read: the web (`convert`, which spends credits
+ * but stores nothing without `library:write`) and `*:read`. Everything that saves, changes, publishes
+ * or deletes is dropped, so the server refuses those tools whatever the model asks for.
+ */
+export function readOnlyScopes(scopes: readonly Scope[]): Scope[] {
+  return scopes.filter((s) => s === 'convert' || s.endsWith(':read'));
+}
 
 /** Human labels for consent screens, key forms and docs. */
 export const SCOPE_LABELS: Record<Scope, string> = {
   convert: 'Convert URLs to Markdown (uses your credits)',
   'library:read': 'Read and search your library',
-  'library:write': 'Save and delete library documents',
+  'library:write': 'Save and tag library documents',
+  'library:delete': 'Permanently delete library documents',
   'usage:read': 'Read your usage and traces',
   'feedback:write': 'Publish product feedback as a public GitHub issue (permanent, visible to everyone)',
   'keys:manage': 'Manage your API keys, connected apps and saved reading defaults',
@@ -107,7 +119,7 @@ export const SCOPE_LABELS: Record<Scope, string> = {
 /** API-key presets shown in the dashboard. Each is capped by the owner's role at use time. */
 export const KEY_PRESETS: { id: string; label: string; scopes: Scope[] }[] = [
   { id: 'convert-only', label: 'Convert only', scopes: ['convert'] },
-  { id: 'library', label: 'Convert + library (agents)', scopes: ['convert', 'library:read', 'library:write'] },
+  { id: 'library', label: 'Convert + library (agents)', scopes: ['convert', 'library:read', 'library:write', 'library:delete'] },
   { id: 'feedback', label: 'Product feedback (public GitHub issues)', scopes: ['feedback:write'] },
   { id: 'read-only', label: 'Read-only', scopes: ['library:read', 'usage:read'] },
   { id: 'content-editor', label: 'Content editor (AI CMS)', scopes: ['content:read', 'content:write', 'content:publish', 'pages:read', 'pages:write', 'pages:publish'] },

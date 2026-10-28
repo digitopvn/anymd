@@ -1,6 +1,9 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { AppBindings, Principal, Scope } from '../env';
+import { AUTH_FAILURE_RETRY_AFTER, recordAuthFailure } from './auth-failures';
+import { resourceMetadataUrl } from '../mcp/protocol';
+import { OAUTH_DEFAULT_SCOPES } from './roles';
 import { ANONYMOUS, API_KEY_PREFIX, principalFromApiKey, sessionPrincipal, SESSION_COOKIE, userFromSession, type UserRow } from './identity';
 
 export type AppContext = Context<AppBindings>;
@@ -21,7 +24,19 @@ export const resolvePrincipal: MiddlewareHandler<AppBindings> = async (c, next) 
   const key = bearer(c);
   if (key && key.startsWith(API_KEY_PREFIX)) {
     const p = await principalFromApiKey(c.env, key, c.executionCtx);
-    if (!p) return c.json({ error: { code: 'invalid_api_key', message: 'API key is invalid, revoked or expired.' } }, 401);
+    if (!p) {
+      // On the MCP endpoint, the challenge (on the 401 and the 429 alike) points the host at OAuth
+      // discovery so it can reconnect.
+      if (c.req.path === '/mcp') {
+        c.header('WWW-Authenticate', `Bearer realm="anymd", error="invalid_token", resource_metadata="${resourceMetadataUrl(c.env)}", scope="${OAUTH_DEFAULT_SCOPES.join(' ')}"`);
+        c.header('Access-Control-Expose-Headers', 'Retry-After, WWW-Authenticate');
+      }
+      if (await recordAuthFailure(c.env, c.req.raw, { credential: 'api_key', reason: 'invalid_api_key' })) {
+        c.header('Retry-After', String(AUTH_FAILURE_RETRY_AFTER));
+        return c.json({ error: { code: 'rate_limited', message: 'Too many failed sign-ins from this address. Retry later.' } }, 429);
+      }
+      return c.json({ error: { code: 'invalid_api_key', message: 'API key is invalid, revoked or expired.' } }, 401);
+    }
     principal = p;
   } else {
     const token = getCookie(c, SESSION_COOKIE);
