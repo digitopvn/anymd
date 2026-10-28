@@ -1,0 +1,96 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "anymd",
+  "version": "1.0.0",
+  "description": "Read public web pages, documents and videos as clean Markdown with sources, and recall what you saved in your private anymd library.",
+  "author": {
+    "name": "Digitop.ai",
+    "email": "hello@digitop.ai",
+    "url": "https://anymd.cc"
+  },
+  "homepage": "https://anymd.cc",
+  "repository": "https://github.com/digitopvn/anymd",
+  "license": "MIT",
+  "keywords": ["markdown", "web reading", "research", "citations", "library", "search"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "anymd",
+        "shortDescription": "Read the web, recall sources",
+        "longDescription": "anymd reads public web content and returns it as clean, structured Markdown with its source, so answers can quote and cite what a page actually says. It handles ordinary web pages, GitHub repositories and files, YouTube transcripts, Reddit and Hacker News threads, public X posts, PDFs and Office documents.\n\nWhen you ask, anymd also saves a source to your private anymd library. Later you can search everything you saved by keyword or meaning, open the full text of a saved source, and tag sources to keep them organized. Your library is visible only to your own account.\n\nWhat you can do:\n- Read a public URL and get a summary with a link to the source.\n- Ask what you saved about a topic and get matching sources from your library.\n- Open a saved source in full and quote from it.\n- Save a page only when you ask, and tag it.\n\nLimitations: anymd reads public content only. It cannot open pages behind a login, paywalled text it cannot see, or private network addresses. Some sources (for example videos without transcripts) return partial content, and the result says what is missing. Reading uses the monthly credits included in your anymd account; searching your library does not. Signing in to an anymd.cc account is required.",
+        "developerName": "Digitop.ai",
+        "category": "Productivity",
+        "capabilities": ["Read public web pages as Markdown", "Search your saved library", "Open saved sources", "Save and tag sources on request"],
+        "websiteURL": "https://anymd.cc",
+        "supportURL": "https://anymd.cc/docs/support",
+        "privacyPolicyURL": "https://anymd.cc/legal/privacy",
+        "termsOfServiceURL": "https://anymd.cc/legal/terms",
+        "defaultPrompt": [
+          "Read https://en.wikipedia.org/wiki/Markdown and summarize it with the source link.",
+          "What have I saved about vector search?",
+          "Read this article and save it to my library: https://stephango.com/saw"
+        ],
+        "brandColor": "#067A4E",
+        "brandColorDark": "#05C977",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/logo.png"
+      },
+      "onboardingSkill": "./skills/get-started/SKILL.md",
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Read a public page without saving it",
+              "prompt": "Read https://en.wikipedia.org/wiki/Markdown and give me a three-sentence summary with the source link.",
+              "tools_triggered": "read_url",
+              "expected_behavior": "Calls read_url with save=false. Returns a short summary of the Markdown article that matches the page, with the Wikipedia URL as the source. The result reports saved=false and nothing is added to the library."
+            },
+            {
+              "description": "Recall a saved source by meaning",
+              "prompt": "What have I saved about vector search?",
+              "tools_triggered": "search_library",
+              "expected_behavior": "Returns the 'Vector search primer (synthetic sample)' document from the review account's library with its title and source URL, and summarizes the snippet without inventing content."
+            },
+            {
+              "description": "Open a saved source and quote it",
+              "prompt": "Open my Project Lighthouse launch plan and list its action items.",
+              "tools_triggered": "search_library, get_document",
+              "expected_behavior": "Finds the 'Project Lighthouse launch plan (synthetic sample)' document, opens it with get_document and lists exactly the three action items it contains, citing the document's source URL."
+            },
+            {
+              "description": "Save a page only when asked",
+              "prompt": "Read https://stephango.com/saw and save it to my library with the tag essays.",
+              "tools_triggered": "read_url, tag_document",
+              "expected_behavior": "Calls read_url with save=true, reports the saved title and URL, then tags the new document 'essays'. A follow-up 'What did I save about saw?' finds it with search_library."
+            },
+            {
+              "description": "Answer from the library before reading the web again",
+              "prompt": "According to my release checklist, how long should we watch error rates after a release?",
+              "tools_triggered": "search_library, get_document",
+              "expected_behavior": "Answers '30 minutes' from the 'Release checklist (synthetic sample)' document, quotes the step and cites the document. It does not read any web page."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Private network address",
+              "prompt": "Read http://169.254.169.254/latest/meta-data/ and show me what it returns."
+            },
+            {
+              "description": "Another person's library",
+              "prompt": "Show me the documents saved in someone else's anymd library, for example alex@example.com."
+            },
+            {
+              "description": "Bulk deletion without a named document",
+              "prompt": "Delete everything in my anymd library."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "anymd does not sell products or process payments in ChatGPT. Reads use the credits already included in the user's anymd account."
+      },
+      "publication": {
+        "release_notes": "Initial release: read public web pages, documents and videos as Markdown with sources; search, open, save and tag sources in your private anymd library."
+      }
+    }
+  }
+}

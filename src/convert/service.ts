@@ -151,7 +151,7 @@ export async function runConversion(env: Env, ctx: WaitUntil, req: ConvertReques
         const { ok, state } = await canSpend(env, principal.userId, plan, 1);
         if (!ok) {
           throw new ConvertError(
-            `Monthly credits used up (${state.used}/${state.included + state.extra}). Upgrade at https://anymd.cc/pricing`,
+            `Monthly credits used up (${state.used}/${state.included + state.extra}). Plans are described at https://anymd.cc/pricing`,
             402,
             'quota_exceeded',
           );

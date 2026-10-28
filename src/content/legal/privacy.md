@@ -1,7 +1,7 @@
 ---
 title: Privacy Policy
 description: What anymd.cc collects, why, who else sees it, how long we keep it, and the rights you have over it.
-updated: 2026-10-10
+updated: 2026-10-28
 ---
 
 > **Plain-English note.** This policy is written in plain English on purpose. It describes what actually happens to your data, not what could theoretically happen. If anything is unclear, email hello@digitop.ai.
@@ -106,6 +106,16 @@ The Service is not directed at children under 16, and we do not knowingly collec
 **We do not train AI models on your content.** Your library, your conversions, your search queries and your usage history are never used by us to train, fine-tune or evaluate AI models, and we do not sell or license them to anyone for that purpose.
 
 AI features run only to perform the conversion or search you asked for. Document and image conversion and embeddings run on Cloudflare Workers AI, on Cloudflare's infrastructure. Search query rewriting runs through OpenRouter when it is configured, with Workers AI as the fallback, and receives only your query text. The Jev decider uses TypeSafe, only when you enable it. Only Cloudflare Workers AI processes document content. The other services receive search text and result titles, never document bodies.
+
+## AI assistants you connect
+
+You can connect an AI assistant such as ChatGPT, Claude or Cursor to your anymd account through our MCP server, either by signing in through OAuth or by giving it an API key.
+
+- **What the assistant sends us.** Only the tool calls it makes on your behalf: the URL to read, your search query, a document id, tags, and whether to save a result. We do not receive your conversation with the assistant.
+- **What we send back.** Only what the tool returns: the Markdown of the page or document you asked for, search results from your own library, and whether a read was saved. Read and search results carry no internal trace ids or timings.
+- **What we store.** Calls are recorded like any other request (see *Usage events and traces*). Pages are saved to your library only when the assistant asks to save them, which our ChatGPT plugin does only when you ask. For an OAuth connection we also keep the client's name and redirect address, the scopes you approved, and hashed access and refresh tokens. Access tokens expire after 1 hour and refresh tokens after 30 days.
+- **Who else sees it.** The assistant's provider receives the tool results under its own privacy policy (for ChatGPT, OpenAI's). We do not share your library with the provider beyond the results you request.
+- **Disconnecting.** Open **Dashboard → API keys → Connected apps** and choose **Disconnect**, or revoke the API key you gave the assistant. Its tokens stop working immediately. Documents it saved stay in your library until you delete them.
 
 ## Changes to this policy
 

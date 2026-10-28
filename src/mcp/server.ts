@@ -63,7 +63,8 @@ const READ_URL_INPUT = z.object({
 const READ_URL_TEXT = 'Saves to the library by default (save=false to skip) when this connection holds library:write; the result reports saved and, when not saved, not_saved_reason (missing_scope means re-authorize with library:write). Deep reading is opt-in and costs extra credits: expandThread (X same-author thread, up to maxThreadPosts), includeComments and analyzeImages. Omitted options use the account\'s saved reading preferences, otherwise they are off; the user\'s sign-in alone never enables them. maxCredits defaults to 100; partial results explain missing content. Cached reads are free. For YouTube, downloadVideo=true (or the account setting) also starts a background download of the lowest-quality video to the anymd CDN and returns video_download.id: check it with get_video_download. analyzeVideo=true (implies downloadVideo) then has the same job analyzed by AI (analysis.markdown); both cost extra credits outside maxCredits, charged only when ready.';
 const readUrl = async (a: z.infer<typeof READ_URL_INPUT>, t: ToolContext) => {
   const r = await runConversion(t.env, t.ctx, { ...a, channel: 'mcp', principal: t.principal });
-  const { content: _content, ...rest } = convertPayload(r);
+  // Tool results carry only what answers the request: no trace ids or timings (those stay in REST and the dashboard).
+  const { content: _content, trace_id: _traceId, duration_ms: _durationMs, ...rest } = convertPayload(r);
   return rest;
 };
 const READ_URL_TOOLS = new Set(['read_url', 'convert_url']);

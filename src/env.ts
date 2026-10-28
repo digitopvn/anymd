@@ -59,6 +59,8 @@ export interface Env {
   GOOGLE_CALLBACK_URL?: string;
   /** Encrypts MCP Events callback secrets at rest. Without it the events capability is not offered. */
   EVENTS_SECRET_KEY?: string;
+  /** Domain-verification token from the OpenAI plugin portal, served at /.well-known/openai-apps-challenge. */
+  OPENAI_APPS_CHALLENGE?: string;
 }
 
 /** The part of ExecutionContext this app uses; Hono's and workers-types' contexts both satisfy it. */

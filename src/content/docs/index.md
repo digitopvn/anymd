@@ -1,7 +1,7 @@
 ---
 title: "Documentation"
 description: "anymd is the web context layer for AI agents. Docs for MCP, the URL API, REST, CLI, WebMCP, library search and self-hosting."
-updated: "2026-10-15"
+updated: "2026-10-28"
 ---
 
 anymd is the web context layer for AI agents. It reads public web content, normalizes it into structured Markdown, remembers what your agents read in a private searchable library, and makes all of it available through MCP, the API and the CLI.
@@ -32,6 +32,7 @@ The rest of these docs cover doing it from inside an agent, from code and from y
 | Understand credits and plans | [Billing & credits](/docs/billing) |
 | Run my own copy on Cloudflare | [Self-hosting](/docs/self-host) |
 | Report a bug or suggest a feature | [Send feedback](/docs/feedback) |
+| Get help, report a security issue or disconnect ChatGPT | [Support](/docs/support) |
 
 ## Core ideas
 

@@ -1,7 +1,7 @@
 ---
 title: "MCP server"
 description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp so your agents can read the public web, remember it and search it, and get webhook events when it changes."
-updated: "2026-10-15"
+updated: "2026-10-28"
 ---
 
 anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) server. It is the main way agents use anymd as their web context layer: connect it once and your agent can read public web content as structured Markdown, recall everything it has read from your private library, and (with the right scopes) manage pages.
@@ -70,6 +70,16 @@ If you'd rather use an API key, bridge the remote server through `mcp-remote` in
   }
 }
 ```
+
+### ChatGPT
+
+anymd connects to ChatGPT as an app over OAuth, with no API key to paste:
+
+1. In ChatGPT, add anymd from the apps directory, or (with developer mode on) create a custom app with the MCP URL `https://anymd.cc/mcp` and OAuth authentication.
+2. Sign in to anymd when ChatGPT opens the consent screen, and approve the requested access.
+3. Ask something like *"Read https://en.wikipedia.org/wiki/Markdown and summarize it with the source link"* or *"What have I saved about vector search?"*
+
+ChatGPT registers itself through Dynamic Client Registration and uses PKCE. A connection that asks for no scopes gets `convert`, `library:read` and `library:write`; admin tools never appear unless an owner or admin approves them by name. The anymd app reads with `save: false` unless you ask it to save. Disconnect it from **Dashboard → API keys → Connected apps**, or from ChatGPT's settings. Help: [Support](/docs/support).
 
 ### Any other client
 
