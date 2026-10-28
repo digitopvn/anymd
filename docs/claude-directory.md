@@ -17,17 +17,17 @@ A Claude user who connects anymd signs in with OAuth 2.1 (Dynamic Client Registr
 
 | Tool | Hints | What it does |
 |---|---|---|
-| `read_url` / `convert_url` | open world, not read-only | Read a public URL as Markdown; saves to the library unless `save: false` |
+| `read_url` / `convert_url` | open world, not read-only | Read a public URL as Markdown in windows of about 10k tokens; saves to the library unless `save: false` |
 | `search_library` | read-only | Search the caller's own library |
-| `get_document` | read-only | One library document |
+| `get_document` | read-only | One library document, paged the same way |
 | `list_documents` | read-only | Recent library documents, filter by domain or tags |
 | `list_tags` | read-only | Tags in the caller's library |
 | `tag_document` | idempotent write | Add, remove or set tags |
 | `delete_document` | destructive | Permanently delete a document |
-| `search_social` | open world | Public posts on X, Facebook, Instagram, Threads, LinkedIn (credits per page) |
+| `search_social` | open world | Public posts on X, Facebook, Instagram, Threads, LinkedIn (credits per page; keywords go to the RapidAPI social providers listed in the privacy policy) |
 | `get_video_download` | read-only | Status of a YouTube download started by `read_url` |
 
-Staff tooling stays out of a customer's connection: admin control-plane tools need admin scopes, `get_admin_access_status` is visible only to owner and admin roles, page-builder and CMS tools need content scopes, and the server instructions name only the tool groups the caller can see (`instructionsFor` in `src/mcp/server.ts`). Every tool declares a `title` and all four hints (`test/mcp-admin-authorization.test.ts`), and every name is at most 64 characters.
+Staff tooling stays out of a customer's connection: admin control-plane tools need admin scopes, `get_admin_access_status` is visible only to owner and admin roles, page-builder and CMS tools need content scopes, and the server instructions name only the tool groups the caller can see (`instructionsFor` in `src/mcp/server.ts`). Every tool declares all four hints (`test/mcp-admin-authorization.test.ts`); every tool in the directory set has a `title` and a name of at most 64 characters (`test/mcp-directory-readiness.test.ts`).
 
 `convert_url` is kept as an alias of `read_url` for clients built before the rename. Both carry the same annotations and the description says they are the same tool.
 
@@ -70,7 +70,8 @@ Re-run these before each submission and after any MCP change:
 
 | Check | Command | Expected |
 |---|---|---|
-| Directory tool set, hints, instructions | `npx vitest run test/mcp-directory-readiness.test.ts` | 5 tests pass |
+| Directory tool set, hints, instructions | `npx vitest run test/mcp-directory-readiness.test.ts` | all tests pass |
+| Result size | `npx vitest run test/mcp-output-window.test.ts` | all tests pass |
 | Full suite | `npm run typecheck && npm test` | pass |
 | Plugin schema | `claude plugin validate ./plugins/anymd-research` | `Validation passed`, no directory findings |
 | Marketplace manifest | `claude plugin validate .` | `Validation passed` |
@@ -81,7 +82,7 @@ Re-run these before each submission and after any MCP change:
 | MCP Inspector | `npx @modelcontextprotocol/inspector` → Streamable HTTP, `https://anymd.cc/mcp`, OAuth | every tool lists and runs with valid arguments |
 | End to end in Claude | Connect as a custom connector, run the example prompts | cited answer; saved source found again; deleted on request |
 
-Results on 2026-10-28 (production, before this change was deployed): plugin and marketplace validation passed with no findings; the plugin installed and registered the server; OAuth discovery, the 401 challenge and DCR with Claude's callback URL behaved as expected; and an authenticated Claude Code session ran read → cite → save → tag → `search_library` (the saved RFC ranked first) → delete. That run found long pages returning about 127,000 characters in one result, fixed in [#57](https://github.com/digitopvn/anymd/issues/57).
+Results on 2026-10-28 (production, before this change was deployed): plugin and marketplace validation passed with no findings; the plugin installed and registered the server; OAuth discovery, the 401 challenge and DCR with Claude's callback URL behaved as expected; and an authenticated Claude Code session ran read → cite → save → tag → `search_library` (the saved RFC ranked first) → delete. That run found long pages returning about 127,000 characters in one result, fixed in [#57](https://github.com/digitopvn/anymd/issues/57). The code review before submission found the privacy policy missing the RapidAPI social and video providers, fixed in [#58](https://github.com/digitopvn/anymd/issues/58).
 
 ## Submitting
 

@@ -1,6 +1,6 @@
 # AnyMD Research
 
-Source-grounded web research for Claude, powered by [AnyMD](https://anymd.cc). Claude reads public web pages as clean Markdown, answers with inline citations and a sources list, saves a source to your private AnyMD library only when you ask, and finds what you saved before searching the web again.
+Source-grounded web research for Claude, powered by [AnyMD](https://anymd.cc). Its research skill has Claude read public web pages as clean Markdown, answer with inline citations and a sources list, save a source to your private AnyMD library when you ask, and look in what you saved before searching the web again.
 
 ## What's inside
 
@@ -16,7 +16,8 @@ The plugin has no hooks, scripts, commands or local code. It runs nothing on you
 1. Install the plugin. In Claude Code:
 
    ```
-   /plugin install anymd-research --marketplace digitopvn/anymd
+   /plugin marketplace add digitopvn/anymd
+   /plugin install anymd-research@anymd
    ```
 
 2. When Claude first uses an AnyMD tool, sign in to AnyMD in the browser window that opens (OAuth 2.1 with PKCE). A free AnyMD account works.
@@ -32,10 +33,10 @@ If you already added the AnyMD connector in Claude, you don't need this plugin's
 
 ## What it sends and where
 
-- **To AnyMD (`anymd.cc`) only.** Each tool call sends its arguments, such as the URL to read or your search query, to the AnyMD MCP server under your account. AnyMD fetches the public page and returns Markdown. No other destination is contacted by this plugin.
+- **To AnyMD (`anymd.cc`) only.** Each tool call sends its arguments, such as the URL to read or your search query, to the AnyMD MCP server under your account. The plugin itself contacts nothing else. AnyMD fetches the public page and returns Markdown; for some sources it uses third-party providers, for example social network data providers receive your keywords when you use `search_social`. The [privacy policy](https://anymd.cc/legal/privacy) lists each provider and what it receives.
 - **Your library is private.** Saved documents belong to your account; searches only reach your own documents.
-- **Credits.** Reading a page uses AnyMD credits from your plan (cached reads and library search are free). Deep options (threads, comments, image or video analysis) and social search cost extra, and the skill uses them only when you ask. See [pricing and credits](https://anymd.cc/docs/billing).
-- **Saving is opt-in in this skill.** Claude passes `save: false` unless you ask it to keep a source.
+- **Credits.** Reading a page uses AnyMD credits from your plan; a repeat read within the hour and library search are free. Deep options (threads, comments, image or video analysis, video download) and social search cost extra. The skill doesn't switch them on unless you ask, but options you turned on under **Account → Reading defaults** on anymd.cc apply to every read. See [pricing and credits](https://anymd.cc/docs/billing).
+- **Saving follows your request.** The skill tells Claude to pass `save: false` unless you ask it to keep a source. Without the skill, AnyMD's `read_url` saves by default.
 
 ## Tools Claude uses
 

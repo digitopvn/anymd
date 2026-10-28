@@ -11,7 +11,7 @@
     {
       "name": "anymd-research",
       "source": "./plugins/anymd-research",
-      "description": "Source-grounded web research with AnyMD: read public pages as clean Markdown, answer with citations, save sources only when you ask, and find them again in your private AnyMD library."
+      "description": "Source-grounded web research with AnyMD: a skill that has Claude read public pages as clean Markdown, answer with citations, save a source to your private AnyMD library when you ask, and search that library before the web."
     }
   ]
 }

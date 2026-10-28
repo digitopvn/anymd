@@ -60,6 +60,8 @@ describe('get_admin_access_status', () => {
     }
     const hidden = await callTool(t.env, as(customer, 'oauth', capScopes('user', OAUTH_DEFAULT_SCOPES), { clientId: 'c' }), 'get_admin_access_status');
     expect(hidden.result.isError).toBe(true);
+    expect(hidden.result.content[0].text).toMatch(/Unknown tool/);
+    expect(JSON.stringify(hidden.result)).not.toMatch(/admin_scopes|reconnect/);
   });
 
   it('tells a user-role caller over REST only that the role has no admin access', async () => {

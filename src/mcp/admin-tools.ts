@@ -338,7 +338,7 @@ export function accessStatusTool(catalog: () => readonly ToolDef[]): ToolDef {
     name: 'get_admin_access_status',
     title: 'My admin access',
     description:
-      "What this connection can do as an admin: your role, this credential's effective scopes, the admin scopes your role allows but this connection lacks, the admin tools available now and after reconnecting, and exactly how to reconnect with admin access (OAuth consent option, step-up scope or API key preset). Reports only on you; roles without admin access learn only that.",
+      "What this connection can do as an admin: your role, this credential's effective scopes, the admin scopes your role allows but this connection lacks, the admin tools available now and after reconnecting, and exactly how to reconnect with admin access (OAuth consent option, step-up scope or API key preset). Reports only on you. Listed only for owner and admin roles.",
     scope: null,
     visibleTo: (p) => roleHasAdminAccess(p.role),
     input: z.object({}),
