@@ -4,6 +4,7 @@
  * Every list is paginated (pass `next_cursor` back as `cursor`); there is no generic SQL tool.
  */
 import { z } from 'zod';
+import { roleHasAdminAccess } from '../auth/roles';
 import { AuditQuery, listAuditEvents } from '../services/admin/audit';
 import { adminAccessStatus } from '../services/admin/access';
 import { BillingEventQuery, getBillingDiagnostics, getBillingEvent, getCustomerBillingSummary, getSubscription, listBillingEvents, listSubscriptions, SubscriptionQuery } from '../services/admin/billing';
@@ -326,9 +327,11 @@ export const ADMIN_TOOLS: ToolDef[] = [
 ];
 
 /**
- * The caller's own admin access, visible to every signed-in caller so a client whose connection
- * lacks admin scopes can still learn what its role allows and how to reconnect. Reports nothing
- * about other users or the system. Takes the finished tool catalog to name the tools.
+ * The caller's own admin access, visible to every signed-in owner or admin so a client whose
+ * connection lacks admin scopes can still learn how to reconnect with them. Other roles never see
+ * it over MCP (customers' tool lists stay free of admin tooling); REST `/api/v1/admin/access` still
+ * answers them. Reports nothing about other users or the system. Takes the finished tool catalog
+ * to name the tools.
  */
 export function accessStatusTool(catalog: () => readonly ToolDef[]): ToolDef {
   return {
@@ -337,6 +340,7 @@ export function accessStatusTool(catalog: () => readonly ToolDef[]): ToolDef {
     description:
       "What this connection can do as an admin: your role, this credential's effective scopes, the admin scopes your role allows but this connection lacks, the admin tools available now and after reconnecting, and exactly how to reconnect with admin access (OAuth consent option, step-up scope or API key preset). Reports only on you; roles without admin access learn only that.",
     scope: null,
+    visibleTo: (p) => roleHasAdminAccess(p.role),
     input: z.object({}),
     annotations: READ_ONLY,
     run: async (_a, t) => adminAccessStatus(t.env, t.principal, catalog()),

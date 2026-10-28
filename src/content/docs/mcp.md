@@ -1,7 +1,7 @@
 ---
 title: "MCP server"
 description: "Connect Claude Code, Claude Desktop, Cursor or any MCP client to anymd.cc/mcp so your agents can read the public web, remember it and search it, and get webhook events when it changes."
-updated: "2026-10-15"
+updated: "2026-10-28"
 ---
 
 anymd runs a remote [Model Context Protocol](https://modelcontextprotocol.io) server. It is the main way agents use anymd as their web context layer: connect it once and your agent can read public web content as structured Markdown, recall everything it has read from your private library, and (with the right scopes) manage pages.
@@ -38,6 +38,10 @@ Run `anymd mcp` from the [CLI](/docs/cli) to print these snippets with your key 
 claude mcp add --transport http anymd https://anymd.cc/mcp \
   --header "Authorization: Bearer amd_…"
 ```
+
+### Claude (claude.ai, Cowork, Desktop)
+
+Add anymd as a custom connector, or install the AnyMD Research plugin: see [Use anymd with Claude](/docs/claude).
 
 ### Claude Desktop
 
@@ -155,7 +159,7 @@ The ops format, revision rules and the safe editing loop are in the admin [build
 
 Owners and admins can run the deployment from an agent: users, credentials, credits, settings, opt-outs, billing health, audit history and system usage. Every admin tool is a thin adapter over the same services the REST API uses, so the rules are identical everywhere:
 
-- **Scoped.** Each tool needs one granular scope and is hidden without it. The one exception is `get_admin_access_status`, which every signed-in caller sees because it reports only on the caller. Owner-only tools (`update_user_role`, `grant_credits`, `revoke_credit_grant`) never appear for admins.
+- **Scoped.** Each tool needs one granular scope and is hidden without it. The one exception is `get_admin_access_status`, which needs no scope because it reports only on the caller: every owner and admin sees it, whatever their connection holds. Other roles never see it over MCP, so a customer's tool list holds no admin tooling (`GET /api/v1/admin/access` still answers them). Owner-only tools (`update_user_role`, `grant_credits`, `revoke_credit_grant`) never appear for admins.
 - **Ranked.** Nobody can act on their own account; admins only act on accounts ranked below them.
 - **Bounded.** Every list is paginated: pass `next_cursor` back as `cursor`. There is no SQL or shell tool.
 - **Safe to retry.** Mutations accept an `idempotencyKey` (required for `grant_credits`); a retry returns the first result with `replayed: true`, and a retry that arrives while the first attempt is still running gets `idempotency_in_progress` (retry shortly) instead of running the change twice. Changes guarded by `expectedRole` or `expectedVersion` fail with a conflict instead of overwriting someone else's change.
@@ -168,7 +172,7 @@ Tool annotations tell the client what to expect: read tools are `readOnlyHint`, 
 
 | Tool | Input | Needs |
 |---|---|---|
-| `get_admin_access_status` | `{}` | any signed-in caller |
+| `get_admin_access_status` | `{}` | owner or admin role, any scope |
 | `system_overview` | `{}` | `system:read` |
 | `get_user_stats` | `{}` | `system:read` |
 | `get_operations_health` | `{}` | `system:read` |
@@ -253,7 +257,7 @@ With an API key, calling a tool whose scope the key lacks returns a tool error w
 
 | `state` | Meaning |
 |---|---|
-| `not_eligible` | Your role has no admin access. Only an owner can change roles; nothing a client or key requests adds it. |
+| `not_eligible` | Your role has no admin access (only `GET /api/v1/admin/access` reports this; the MCP tool is hidden from such roles). Only an owner can change roles; nothing a client or key requests adds it. |
 | `not_granted` | Your role allows admin access, but this connection holds no admin scopes. Reconnect with an admin option, or use a key from an admin preset. |
 | `partial` | The connection holds some of the admin scopes your role allows. `admin.missing` lists the rest. |
 | `full` | The connection holds every admin scope your role allows. |
@@ -418,7 +422,7 @@ MCP has its own limits, separate from the REST API, counted per user and per cre
 | `401 invalid_api_key` | The key was revoked, expired or mistyped. Create a new one. |
 | `402 quota_exceeded` | Free plan credits are used up for the month. |
 | `revision_conflict` from `apply_page_ops` | Someone changed the page. Call `get_page`, then retry with the new `revision`. |
-| Admin tools are missing | Call `get_admin_access_status`: it says whether your role allows admin access and how to reconnect. See [Set up an admin agent](#set-up-an-admin-agent). |
+| Admin tools are missing | Call `get_admin_access_status`: it says what your connection lacks and how to reconnect. If that tool is missing too, your role has no admin access. See [Set up an admin agent](#set-up-an-admin-agent). |
 | `403` with `insufficient_scope` | The OAuth grant lacks the tool's scope. Re-authorize with the scopes in the `WWW-Authenticate` header. |
 | `429` / `-32005` | MCP rate limit. Wait for `Retry-After` seconds. |
 | `-32020` or `-32022` | A 2026-07-28 client sent headers that don't match the body, or an unsupported version. |

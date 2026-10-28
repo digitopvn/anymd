@@ -7,7 +7,7 @@
  */
 import { z } from 'zod';
 import { getUser } from '../auth/identity';
-import { scopesForRole } from '../auth/roles';
+import { roleHasAdminAccess, scopesForRole } from '../auth/roles';
 import { blockCatalog } from '../cms/blocks';
 import { applyPageOps, createPage, getPage, listPages, OpSchema, PageError, pageView, publishPage, TEMPLATES, unpublishPage } from '../cms/pages';
 import { createPost, getPostRow, listAllPosts, PostInputSchema, setPostPublished, updatePost } from '../cms/posts';
@@ -43,10 +43,20 @@ import { checkMcpRate, type RateLimited } from './rate-limit';
 import { DESTRUCTIVE, holdsToolScope, IDEMPOTENT_WRITE, isMutation, READ_ONLY, ToolError, WRITE, type ToolContext, type ToolDef } from './tool-types';
 
 const SERVER_INFO = { name: 'anymd', title: 'anymd — the web context layer for AI agents', version: '1.1.0' };
-const INSTRUCTIONS =
+const INSTRUCTIONS_CORE =
   'anymd is the web context layer for AI agents: it reads public web content (web pages, GitHub, YouTube, Reddit, Hacker News, X, PDFs, Office files, images) into structured Markdown and keeps a private, searchable library of everything read. ' +
-  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document for full text, search_social to find public posts on X, Facebook, Instagram, Threads or LinkedIn (read a result with read_url). Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision. ' +
+  'Use read_url to read a page (convert_url is the same tool under its original name), search_library to recall saved sources before reading the web again, get_document for full text, search_social to find public posts on X, Facebook, Instagram, Threads or LinkedIn (read a result with read_url).';
+const INSTRUCTIONS_PAGES = 'Page-builder tools (list_blocks → create_page → apply_page_ops → publish_page) build landing pages: always read the page first and pass its current revision as baseRevision.';
+const INSTRUCTIONS_ADMIN =
   'Admin tools appear only for owner/admin credentials granted their scopes; get_admin_access_status explains what this connection can reach and how to reconnect with admin access. Admins: start with system_overview or get_user_stats, page with next_cursor, pass expected* values and an idempotencyKey with every change; every change lands in list_audit_events.';
+
+/** Server instructions name only tool groups the caller can see, so customers aren't told about staff tooling. */
+function instructionsFor(p: Principal): string {
+  const parts = [INSTRUCTIONS_CORE];
+  if (p.scopes.includes('pages:read')) parts.push(INSTRUCTIONS_PAGES);
+  if (roleHasAdminAccess(p.role)) parts.push(INSTRUCTIONS_ADMIN);
+  return parts.join(' ');
+}
 
 const READ = READ_ONLY;
 const TAG_LIST_INPUT = z.array(z.string().max(MAX_TAG_LENGTH)).max(MAX_TAGS).optional();
@@ -441,7 +451,7 @@ async function handleMessage(msg: JsonRpcMessage, t: ToolContext, era: Era): Pro
       return ok({
         supportedVersions: SUPPORTED_VERSIONS,
         capabilities: { tools: { listChanged: false }, ...(eventsAvailable(t.env, t.principal) ? { events: { listChanged: false } } : {}) },
-        instructions: INSTRUCTIONS,
+        instructions: instructionsFor(t.principal),
         ttlMs: LIST_TTL_MS,
         cacheScope: 'private',
         _meta: { [META_SERVER_INFO]: SERVER_INFO },
@@ -469,7 +479,7 @@ async function handleMessage(msg: JsonRpcMessage, t: ToolContext, era: Era): Pro
           protocolVersion: LEGACY_VERSIONS.includes(requested) ? requested : LEGACY_VERSIONS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: SERVER_INFO,
-          instructions: INSTRUCTIONS,
+          instructions: instructionsFor(t.principal),
         });
       }
       case 'ping':

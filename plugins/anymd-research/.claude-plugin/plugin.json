@@ -1,0 +1,24 @@
+{
+  "name": "anymd-research",
+  "displayName": "AnyMD Research",
+  "version": "1.0.0",
+  "description": "Source-grounded web research with AnyMD: read public pages as clean Markdown, answer with citations, save sources only when you ask, and find them again in your private AnyMD library.",
+  "author": {
+    "name": "Digitop.ai",
+    "email": "hello@digitop.ai",
+    "url": "https://anymd.cc"
+  },
+  "homepage": "https://anymd.cc/docs/claude",
+  "repository": "https://github.com/digitopvn/anymd",
+  "license": "MIT",
+  "keywords": [
+    "research",
+    "citations",
+    "web",
+    "markdown",
+    "library",
+    "mcp"
+  ],
+  "privacyPolicyUrl": "https://anymd.cc/legal/privacy",
+  "icon": ".claude-plugin/icon.png"
+}
