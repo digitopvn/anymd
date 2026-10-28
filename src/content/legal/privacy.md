@@ -60,6 +60,8 @@ We use a small set of processors. Each receives only what it needs for its job.
 - **Polar.sh** — merchant of record for payments, tax and VAT. Receives your email, billing details and purchase history.
 - **FxTwitter** — receives the post identifier when you convert an X/Twitter URL.
 - **YouTube oEmbed, RapidAPI transcript providers and VidCap** — receive the video URL or identifier when you convert a YouTube link.
+- **RapidAPI video download provider** — receives the YouTube video identifier when you ask for a video download or AI video analysis.
+- **RapidAPI social providers** (X, Facebook, Instagram, Threads and LinkedIn data APIs) — receive the post URL or identifier when you convert a Facebook, Instagram, Threads or LinkedIn post, or an X post when you ask for its thread or comments, and the keywords you enter when you use social search.
 - **Hacker News API** — receives the item identifier when you convert a Hacker News thread.
 - **OpenRouter** — routes two small AI calls for search. It receives the text of your search query (up to 300 characters) to suggest alternative phrasings, and, if you turn on the Jev decider, the same data TypeSafe receives below. It never receives document bodies. If you turn on AI video analysis, it also receives the anymd CDN link of each downloaded YouTube video and passes it to Google's Gemini model, which returns the analysis.
 - **TypeSafe** — only if you turn on the Jev decider for search. It receives a sanitized version of your search query and the titles of the candidate results, directly or through OpenRouter. It never receives document bodies.
@@ -74,7 +76,7 @@ Cloudflare runs a global network, so your data may be processed in data centers 
 
 - **Anonymous conversion cache:** up to 1 hour.
 - **Account data, library, embeddings, API key hashes:** until you delete them or delete your account.
-- **Usage events and traces:** while your account exists, so you can see your history in the dashboard. They are deleted with your account.
+- **Usage events and traces:** while your account exists, so you can see your history in the dashboard. They are deleted with your account Values of credential-like query parameters in logged URLs (such as `token`, `key` or `signature`) and anymd API keys are replaced with a placeholder before a usage event is stored.
 - **Billing records:** kept by Polar.sh and by us for as long as tax and accounting law requires.
 - **Backups:** when you delete your account, your documents, keys and usage logs are removed from live systems and purged from backups within 30 days.
 

@@ -1,7 +1,17 @@
 import { ConvertError, type ConvertContext } from './types';
 
-export async function readBounded(response: Response, maxBytes = 5 * 1024 * 1024): Promise<Uint8Array> {
-  if (Number(response.headers.get('content-length')) > maxBytes) throw new ConvertError('Upstream response too large', 502, 'upstream_too_large');
+const upstreamTooLarge = () => new ConvertError('Upstream response too large', 502, 'upstream_too_large');
+
+/**
+ * Read at most `maxBytes` of a body. Past the cap it throws `onOverflow()`, or with 'truncate'
+ * returns the first `maxBytes` (for formats where a prefix is still meaningful, like robots.txt).
+ */
+export async function readBounded(response: Response, maxBytes = 5 * 1024 * 1024, onOverflow: 'truncate' | (() => Error) = upstreamTooLarge): Promise<Uint8Array<ArrayBuffer>> {
+  const overflow = () => { if (onOverflow !== 'truncate') throw onOverflow(); };
+  if (Number(response.headers.get('content-length')) > maxBytes && onOverflow !== 'truncate') {
+    await response.body?.cancel();
+    throw onOverflow();
+  }
   const reader = response.body?.getReader();
   if (!reader) return new Uint8Array();
   const chunks: Uint8Array[] = [];
@@ -10,8 +20,14 @@ export async function readBounded(response: Response, maxBytes = 5 * 1024 * 1024
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      if (size + value.length > maxBytes) {
+        await reader.cancel();
+        overflow();
+        chunks.push(value.subarray(0, maxBytes - size));
+        size = maxBytes;
+        break;
+      }
       size += value.length;
-      if (size > maxBytes) { await reader.cancel(); throw new ConvertError('Upstream response too large', 502, 'upstream_too_large'); }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }

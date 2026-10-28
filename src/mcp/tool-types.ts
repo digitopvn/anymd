@@ -26,13 +26,16 @@ export interface ToolDef {
   annotations?: ToolAnnotations;
   /** Counts against the mutation rate limit even though the tool reaches the open world (e.g. publishing feedback). */
   mutation?: boolean;
+  /** Extra visibility rule on top of `scope`, e.g. a tool only roles with admin access need. */
+  visibleTo?: (p: Pick<Principal, 'role' | 'scopes'>) => boolean;
   // Arguments are validated against `input` before `run` is called; each tool narrows them itself.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   run: (args: any, t: ToolContext) => Promise<unknown>;
 }
 
 /** Whether the principal may see and call the tool. */
-export function holdsToolScope(p: Pick<Principal, 'scopes'>, tool: Pick<ToolDef, 'scope'>): boolean {
+export function holdsToolScope(p: Pick<Principal, 'role' | 'scopes'>, tool: Pick<ToolDef, 'scope' | 'visibleTo'>): boolean {
+  if (tool.visibleTo && !tool.visibleTo(p)) return false;
   return tool.scope === null || p.scopes.includes(tool.scope);
 }
 

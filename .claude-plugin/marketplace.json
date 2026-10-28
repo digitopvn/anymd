@@ -1,0 +1,17 @@
+{
+  "name": "anymd",
+  "owner": {
+    "name": "Digitop.ai",
+    "email": "hello@digitop.ai"
+  },
+  "metadata": {
+    "description": "AnyMD plugins for Claude: source-grounded web research and a private, searchable Markdown library."
+  },
+  "plugins": [
+    {
+      "name": "anymd-research",
+      "source": "./plugins/anymd-research",
+      "description": "Source-grounded web research with AnyMD: a skill that has Claude read public pages as clean Markdown, answer with citations, save a source to your private AnyMD library when you ask, and search that library before the web."
+    }
+  ]
+}

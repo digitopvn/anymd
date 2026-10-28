@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "anymd": {
+      "type": "http",
+      "url": "https://anymd.cc/mcp"
+    }
+  }
+}

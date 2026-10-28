@@ -38,17 +38,20 @@ Before handing work back: `npm run typecheck`, plus `npm test` for touched behav
 - `src/content/`: all bundled Markdown content and site copy.
 - `src/views/`, `src/routes/`, `src/mcp/`, `client/`, `cli/`: UI, HTTP routes, MCP server, browser islands, CLI.
 - `migrations/`: D1 schema. `docs/`: maintainer docs.
+- `plugins/anymd-research/` + `.claude-plugin/marketplace.json`: the Claude plugin listed in the Claude Directory (see `docs/claude-directory.md`).
 - `plugins/chatgpt/`: the ChatGPT plugin directory package for `/mcp` (validate and pack with `npm run plugin:chatgpt`; runbook in `docs/chatgpt-plugin.md`). Changing an MCP tool's name, inputs or behavior changes what ChatGPT reviewers tested: re-run its test pack.
 
-Start with `docs/architecture.md` for the module map and request flow, `docs/operations.md` for deploys, logs and rollback, and `REVIEW.md` for what reviewers check.
+Start with `docs/architecture.md` for the module map and request flow, `docs/operations.md` for deploys, logs and rollback, `docs/security.md` for the untrusted-content threat model and residual risks, and `REVIEW.md` for what reviewers check.
 
 ## Conventions
 
-- **One pipeline.** Every conversion goes through `runConversion` in `src/convert/service.ts`. Never fetch a user-supplied URL outside `normalizeTargetUrl`.
+- **One pipeline.** Every conversion goes through `runConversion` in `src/convert/service.ts`. Never fetch a user-supplied URL outside `normalizeTargetUrl`; fetch it with `fetchPublic` (`src/convert/safe-fetch.ts`) so every redirect hop is re-checked, with a deadline and a `readBounded` body cap.
+- **Fetched content is untrusted data.** Page text never changes what anymd does, and tool output that carries it says so (`content_trust`, MCP instructions). Never present page text as app or system instructions.
 - **Scopes on every route.** Guard API routes with `requireScope`; scope every library query by `user_id`; hide MCP tools the caller can't use.
 - **Side effects in `waitUntil`.** Usage recording, embeddings and billing ingest must not add latency or fail the request.
 - **Errors** are `{ error: { code, message, ... } }` with a matching status. Clients branch on `code`.
 - **Public contracts** (URL API, REST, MCP tools, WebMCP tools, CLI, credits) are documented in `src/content/docs/`. Change code and the matching doc page together.
+- **Directory-reviewed MCP surface.** What a default OAuth customer sees over MCP is what the Claude Directory reviewed: keep staff tooling (admin, page-builder, CMS) out of it, give every tool a `title` and explicit hints, and keep names at most 64 characters. A change to that tool set updates `test/mcp-directory-readiness.test.ts`, `src/content/docs/claude.md` and `plugins/anymd-research/` (bump its `version`), and runs `claude plugin validate ./plugins/anymd-research`.
 - **Optional secrets.** New integrations must detect their secret and degrade gracefully without it.
 - **Content truth.** Prices and credits come from `src/billing/plans.ts`. No invented metrics, testimonials or logos anywhere. Roadmap sources in `ROADMAP_SOURCES` (`src/content/site.ts`) are "planned", never described as shipped.
 - **Every public page has a `.md` twin.** New pages and blocks must produce good Markdown.
