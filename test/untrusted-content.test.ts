@@ -5,6 +5,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { normalizeTargetUrl } from '../src/convert/index';
 import { fetchPublic } from '../src/convert/safe-fetch';
+import { webAdapter } from '../src/convert/web';
+import type { ConvertContext } from '../src/convert/types';
+import { Tracer } from '../src/lib/tracer';
 import { runConversion } from '../src/convert/service';
 import { CONTENT_TRUST, UNTRUSTED_CONTENT_NOTE } from '../src/mcp/server';
 import { redactSecrets } from '../src/lib/usage';
@@ -51,10 +54,14 @@ describe('normalizeTargetUrl refuses every private and self spelling', () => {
   it.each([
     'http://localhost./', 'http://anymd.cc./', 'https://api.anymd.cc/x', 'http://2130706433/', 'http://0x7f.1/', 'http://017700000001/',
     'http://[::1]/', 'http://[::ffff:127.0.0.1]/', 'http://[fd00::1]/', 'http://169.254.169.254/latest/meta-data/', 'http://198.18.0.1/',
-    'http://224.0.0.1/', 'http://100.64.0.1/', 'http://router.lan/', 'http://nas.home.arpa/', 'file:///etc/passwd', 'javascript:alert(1)',
-    'gopher://example.com/', `https://example.com/${'a'.repeat(5000)}`,
-  ])('refuses %s', (raw) => {
-    expect(() => normalizeTargetUrl(raw)).toThrow();
+    'http://224.0.0.1/', 'http://100.64.0.1/', 'http://router.lan/', 'http://nas.home.arpa/', 'https://intranet/',
+  ])('refuses %s as blocked_host', (raw) => {
+    expect(() => normalizeTargetUrl(raw)).toThrow(expect.objectContaining({ code: 'blocked_host' }));
+  });
+
+  // Input without http(s):// is read as a host name, so other schemes can never be fetched as such.
+  it.each(['file:///etc/passwd', 'javascript:alert(1)', 'gopher://example.com/', 'ftp://example.com/', `https://example.com/${'a'.repeat(5000)}`])('refuses %s', (raw) => {
+    expect(() => normalizeTargetUrl(raw)).toThrow(expect.objectContaining({ code: expect.stringMatching(/^(invalid_url|blocked_host)$/) }));
   });
 
   it('keeps public hosts and public IP literals', () => {
@@ -82,6 +89,12 @@ describe('fetchPublic re-checks every redirect hop', () => {
     const calls = stubFetch({ 'https://loop.example/': () => new Response(null, { status: 302, headers: { location: '/' } }) });
     await expect(fetchPublic(new URL('https://loop.example/'), { signal: signal() })).rejects.toMatchObject({ code: 'too_many_redirects' });
     expect(calls).toHaveLength(6);
+  });
+
+  it('re-checks the starting URL too', async () => {
+    const calls = stubFetch({});
+    await expect(fetchPublic(new URL('http://127.0.0.1/'), { signal: signal() })).rejects.toMatchObject({ code: 'blocked_host' });
+    expect(calls).toEqual([]);
   });
 
   it('follows public redirects and reports the final URL as the source', async () => {
@@ -128,6 +141,50 @@ describe('conversions fail closed with bounded errors', () => {
     });
     await expect(convert(t, 'https://slow.example/')).rejects.toMatchObject({ code: 'fetch_timeout', status: 504 });
     await expect(convert(t, 'https://bin.example/')).rejects.toMatchObject({ code: 'unsupported_type', status: 415 });
+    t.close();
+  });
+
+  it('aborts a body that stops sending once the deadline passes', async () => {
+    const t = createTestEnv();
+    stubFetch({
+      'https://hang.example/': (init) => new Response(new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new TextEncoder().encode('<p>partial'));
+          init?.signal?.addEventListener('abort', () => c.error(init.signal!.reason));
+        },
+      }), { headers: { 'content-type': 'text/html' } }),
+    });
+    const budget = { deadline: Date.now() + 50, canFetch: () => true, canSpend: () => true, calls: 0, breakdown: { base: 0 } };
+    const started = Date.now();
+    await expect(webAdapter.convert(new URL('https://hang.example/'), { env: t.env, tracer: new Tracer('trc_test'), budget } as unknown as ConvertContext))
+      .rejects.toMatchObject({ code: 'fetch_timeout', status: 504 });
+    expect(Date.now() - started).toBeLessThan(5000);
+    t.close();
+  });
+
+  it("refuses a redirect to an opted-out site and skips extra checks for apex to www", async () => {
+    const t = createTestEnv();
+    t.db.prepare("INSERT INTO site_optouts (domain, reason, created_by, created_at) VALUES ('optedout.example', 'owner request', 'test', 1)").run();
+    stubFetch({ 'https://short.example/o': () => new Response(null, { status: 302, headers: { location: 'https://optedout.example/page' } }) });
+    await expect(convert(t, 'https://short.example/o')).rejects.toMatchObject({ code: 'site_opted_out' });
+
+    const limiter = t.env.RL_DOMAIN as unknown as { calls: string[] };
+    limiter.calls.length = 0;
+    const calls = stubFetch({
+      'https://apex.example/a': () => new Response(null, { status: 301, headers: { location: 'https://www.apex.example/a' } }),
+      'https://www.apex.example/a': () => html('<article><h1>Apex</h1><p>A page that moved to the www host and still reads fine as an article.</p></article>'),
+    });
+    const r = await convert(t, 'https://apex.example/a');
+    expect(r.result.source).toBe('https://www.apex.example/a');
+    expect(limiter.calls).toEqual(['apex.example']);
+    expect(calls.filter((u) => u.endsWith('/robots.txt'))).toEqual(['https://apex.example/robots.txt']);
+    t.close();
+  });
+
+  it('reports our own failure during a redirect check as internal, not as the upstream', async () => {
+    const t = createTestEnv({ RL_DOMAIN: { limit: async ({ key }: { key: string }) => { if (key === 'other.example') throw new Error('rate limiter down'); return { success: true }; } } } as never);
+    stubFetch({ 'https://short.example/i': () => new Response(null, { status: 302, headers: { location: 'https://other.example/' } }) });
+    await expect(convert(t, 'https://short.example/i')).rejects.toMatchObject({ code: 'internal', status: 500 });
     t.close();
   });
 
@@ -221,6 +278,12 @@ describe('usage rows do not keep credentials from URLs', () => {
     expect(redactSecrets('https://files.example/a.pdf?X-Amz-Signature=abc&page=2&token=t0k')).toBe('https://files.example/a.pdf?X-Amz-Signature=REDACTED&page=2&token=REDACTED');
     expect(redactSecrets('fetch_failed: key amd_abcdefghijklmnop leaked')).toBe('fetch_failed: key amd_[redacted] leaked');
     expect(redactSecrets('plain search query')).toBe('plain search query');
+    for (const name of ['refresh_token', 'id_token', 'api-key', 'private_token', 'X-Goog-Signature', 'X-Goog-Credential', 'Policy', 'Key-Pair-Id', 'access_token', 'password']) {
+      expect(redactSecrets(`https://x.example/f?${name}=v4lue&page=2`), name).toBe(`https://x.example/f?${name}=REDACTED&page=2`);
+    }
+    // Scheme-less input and fragments are redacted too.
+    expect(redactSecrets('files.example/a?token=abc')).toBe('files.example/a?token=REDACTED');
+    expect(redactSecrets('https://app.example/cb#access_token=abc&state=1')).toBe('https://app.example/cb#access_token=REDACTED&state=1');
   });
 
   it('stores the redacted target for a conversion', async () => {
@@ -233,6 +296,8 @@ describe('usage rows do not keep credentials from URLs', () => {
     await Promise.all(waits);
     const row = t.db.prepare('SELECT target FROM usage_events WHERE user_id = ?').get(owner.id) as { target: string };
     expect(row.target).toBe('https://share.example/doc?token=REDACTED&id=7');
+    const trace = t.db.prepare('SELECT target, spans, meta FROM traces WHERE user_id = ?').get(owner.id) as Record<string, string>;
+    expect(JSON.stringify(trace).includes('s3cret-value')).toBe(false);
     t.close();
   });
 });

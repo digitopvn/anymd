@@ -42,23 +42,37 @@ async function fetchPage(start: URL, userAgent: string, ctx: ConvertContext): Pr
   };
   if (ctx.language) headers['Accept-Language'] = ctx.language;
   const signal = fetchDeadline(FETCH_TIMEOUT_MS, ctx.budget?.deadline);
-  // A redirect to another site must pass that site's opt-out, rate limit and robots.txt too.
+  // A redirect to another site must pass that site's opt-out, rate limit and robots.txt too. Our own
+  // failures there (D1, KV) keep their meaning instead of reading as an unreachable upstream.
   const beforeHop = async (next: URL) => {
-    if (next.hostname === start.hostname) return;
-    if (await findOptout(ctx.env, next.hostname)) throw new ConvertError(`${next.hostname} has asked not to be converted by anymd.`, 403, 'site_opted_out');
-    await checkSitePolicy(next, ctx);
+    if (siteOf(next) === siteOf(start)) return;
+    try {
+      if (await findOptout(ctx.env, next.hostname)) throw new ConvertError(`${next.hostname} has asked not to be converted by anymd.`, 403, 'site_opted_out');
+      await checkSitePolicy(next, ctx);
+    } catch (err) {
+      throw err instanceof ConvertError ? err : new ConvertError(err instanceof Error ? err.message : 'Conversion failed', 500, 'internal');
+    }
   };
+  let fetched: { response: Response; url: URL };
   try {
-    const { response, url } = await fetchPublic(start, { headers, signal, beforeHop });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new ConvertError(`${url.hostname} responded ${response.status} ${response.statusText}`.trim(), response.status === 404 ? 404 : 502, 'upstream_status');
-    }
-    const contentType = (response.headers.get('content-type') || '').toLowerCase();
-
-    if (isDocumentContentType(contentType, url)) {
+    fetched = await fetchPublic(start, { headers, signal, beforeHop });
+  } catch (err) {
+    throw networkError(err, start);
+  }
+  const { response, url } = fetched;
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new ConvertError(`${url.hostname} responded ${response.status} ${response.statusText}`.trim(), response.status === 404 ? 404 : 502, 'upstream_status');
+  }
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  if (isDocumentContentType(contentType, url)) {
+    try {
       return { kind: 'result', result: await convertDocumentResponse(response, url, contentType, ctx) };
+    } catch (err) {
+      throw isTimeout(err) ? networkError(err, start) : err;
     }
+  }
+  try {
     if (contentType.startsWith('text/markdown') || contentType.startsWith('text/plain') || contentType.includes('json')) {
       const text = new TextDecoder().decode(await readBounded(response, MAX_HTML_BYTES, tooLargeHtml));
       const content = contentType.includes('json') ? '```json\n' + text + '\n```' : text;
@@ -84,10 +98,17 @@ async function fetchPage(start: URL, userAgent: string, ctx: ConvertContext): Pr
     const html = new TextDecoder().decode(await readBounded(response, MAX_HTML_BYTES, tooLargeHtml));
     return { kind: 'html', html, finalUrl: url.href };
   } catch (err) {
-    if (err instanceof ConvertError) throw err;
-    if (isTimeout(err)) throw new ConvertError(`${start.hostname} did not respond in time`, 504, 'fetch_timeout');
-    throw new ConvertError(`Could not reach ${start.hostname}: ${err instanceof Error ? err.message : 'network error'}`, 502, 'fetch_failed');
+    throw networkError(err, start);
   }
+}
+
+const siteOf = (url: URL) => url.hostname.replace(/^www\./, '');
+
+/** Errors from fetching or reading a body: ours pass through, the rest is the upstream's. */
+function networkError(err: unknown, start: URL): ConvertError {
+  if (err instanceof ConvertError) return err;
+  if (isTimeout(err)) return new ConvertError(`${start.hostname} did not respond in time`, 504, 'fetch_timeout');
+  return new ConvertError(`Could not reach ${start.hostname}: ${err instanceof Error ? err.message : 'network error'}`, 502, 'fetch_failed');
 }
 
 async function parseHtml(html: string, pageUrl: string, ctx: ConvertContext): Promise<ConvertResult> {

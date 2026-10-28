@@ -27,7 +27,7 @@ export function isTimeout(err: unknown): boolean {
 
 /** The final response and the URL it came from (the source to cite). */
 export async function fetchPublic(start: URL, options: PublicFetchOptions): Promise<{ response: Response; url: URL }> {
-  let url = start;
+  let url = normalizeTargetUrl(start.href);
   for (let hop = 0; ; hop++) {
     const response = await fetch(url.href, { headers: options.headers, redirect: 'manual', signal: options.signal });
     const location = response.status >= 300 && response.status < 400 ? response.headers.get('location') : null;

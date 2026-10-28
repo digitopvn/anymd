@@ -3,6 +3,9 @@
  * MCP Events callbacks) so they refuse the same IANA special-purpose ranges.
  */
 
+/** Names that never point at the public internet (RFC 6761/6762/8375 and common private zones). */
+export const PRIVATE_SUFFIXES = ['.localhost', '.local', '.internal', '.home.arpa', '.lan', '.corp', '.intranet'];
+
 export function ipv4Octets(s: string): number[] | null {
   const parts = s.split('.');
   if (parts.length !== 4) return null;

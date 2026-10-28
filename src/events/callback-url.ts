@@ -9,7 +9,7 @@
  * networks of this account, and `global_fetch_strictly_public` keeps requests to our own zone public.
  */
 import type { Env } from '../env';
-import { ipv4Octets, isPublicAddress } from '../lib/public-address';
+import { ipv4Octets, isPublicAddress, PRIVATE_SUFFIXES } from '../lib/public-address';
 
 export { isPublicAddress, isPublicIpv4, isPublicIpv6 } from '../lib/public-address';
 
@@ -21,7 +21,6 @@ export class CallbackUrlError extends Error {
 
 const MAX_URL_LENGTH = 2048;
 
-const BLOCKED_SUFFIXES = ['.localhost', '.local', '.internal', '.home.arpa', '.lan', '.corp', '.intranet'];
 
 /** Shape checks only (no DNS). Returns the normalized URL. */
 export function parseCallbackUrl(env: Pick<Env, 'PUBLIC_URL'>, raw: unknown): URL {
@@ -38,7 +37,7 @@ export function parseCallbackUrl(env: Pick<Env, 'PUBLIC_URL'>, raw: unknown): UR
   // A trailing dot names the same host (`anymd.cc.`), so compare without it.
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
   const literal = ipv4Octets(host) !== null || host.includes(':');
-  if (literal ? !isPublicAddress(host) : !host.includes('.') || host === 'localhost' || BLOCKED_SUFFIXES.some((s) => host.endsWith(s))) {
+  if (literal ? !isPublicAddress(host) : !host.includes('.') || host === 'localhost' || PRIVATE_SUFFIXES.some((s) => host.endsWith(s))) {
     throw new CallbackUrlError('delivery.url must be a public host', 'blocked_host');
   }
   let own = '';

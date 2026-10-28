@@ -447,8 +447,19 @@ async function storeVideo(env: Env, videoId: string, picked: { format: StreamFor
   if (declared > MAX_VIDEO_BYTES) throw new VideoJobError('video_too_large');
   let response: Response;
   try {
-    response = await fetch(picked.format.url!, { redirect: 'follow', signal: AbortSignal.timeout(10 * 60_000) });
-  } catch {
+    // Redirects stay on YouTube's media hosts: a provider-supplied URL never steers the download elsewhere.
+    const signal = AbortSignal.timeout(10 * 60_000);
+    let url = picked.format.url!;
+    for (let hop = 0; ; hop++) {
+      response = await fetch(url, { redirect: 'manual', signal });
+      const location = response.status >= 300 && response.status < 400 ? response.headers.get('location') : null;
+      if (!location) break;
+      await response.body?.cancel();
+      url = new URL(location, url).href;
+      if (hop >= 5 || !isYoutubeMediaUrl(url)) throw new VideoJobError('invalid_stream_url');
+    }
+  } catch (err) {
+    if (err instanceof VideoJobError) throw err;
     throw new VideoJobError('download_timeout', true);
   }
   if (!response.ok || !response.body) throw new VideoJobError('download_failed', response.status >= 500 || response.status === 429);

@@ -8,7 +8,7 @@ import { threadsAdapter } from './threads';
 import { linkedinAdapter } from './linkedin';
 import { ENRICHMENT_CREDITS } from '../billing/plans';
 import { documentCreditCost } from './document';
-import { ipv4Octets, isPublicAddress } from '../lib/public-address';
+import { ipv4Octets, isPublicAddress, PRIVATE_SUFFIXES } from '../lib/public-address';
 import { ConvertError, type ConvertContext, type ConvertResult, type SourceAdapter, type SourceKind } from './types';
 
 export * from './types';
@@ -17,7 +17,7 @@ export * from './types';
 const ADAPTERS: SourceAdapter[] = [xAdapter, facebookAdapter, instagramAdapter, threadsAdapter, linkedinAdapter, youtubeAdapter, hackerNewsAdapter, webAdapter];
 
 const BLOCKED_HOSTNAMES = new Set(['localhost', 'anymd.cc', 'www.anymd.cc', 'staging.anymd.cc', 'metadata.google.internal']);
-const BLOCKED_SUFFIXES = ['.localhost', '.local', '.internal', '.home.arpa', '.lan', '.corp', '.intranet', '.anymd.cc'];
+const BLOCKED_SUFFIXES = [...PRIVATE_SUFFIXES, '.anymd.cc'];
 const MAX_URL_LENGTH = 4096;
 
 /** `hostname` as the URL parser left it: IPv6 in brackets, IPv4 shorthands already expanded. */

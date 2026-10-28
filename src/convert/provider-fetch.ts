@@ -8,7 +8,10 @@ const upstreamTooLarge = () => new ConvertError('Upstream response too large', 5
  */
 export async function readBounded(response: Response, maxBytes = 5 * 1024 * 1024, onOverflow: 'truncate' | (() => Error) = upstreamTooLarge): Promise<Uint8Array<ArrayBuffer>> {
   const overflow = () => { if (onOverflow !== 'truncate') throw onOverflow(); };
-  if (Number(response.headers.get('content-length')) > maxBytes) { overflow(); }
+  if (Number(response.headers.get('content-length')) > maxBytes && onOverflow !== 'truncate') {
+    await response.body?.cancel();
+    throw onOverflow();
+  }
   const reader = response.body?.getReader();
   if (!reader) return new Uint8Array();
   const chunks: Uint8Array[] = [];
