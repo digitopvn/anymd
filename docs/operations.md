@@ -62,6 +62,10 @@ npx wrangler r2 object put anymd/cli/anymd-cli-latest.tgz --file ./<packed-tarba
 
 Verify the versioned artifact by downloading it with `wrangler r2 object get --remote` and comparing its SHA-256 hash with the local tarball (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on POSIX). Verify the CDN URL and the CLI help output after the upload. This procedure documents the release route; it does not mean a new artifact has been published.
 
+## ChatGPT plugin
+
+The OpenAI plugin directory package lives in `plugins/chatgpt/`. Submission, domain verification (`OPENAI_APPS_CHALLENGE`), the reviewer account, the test pack and its release and rollback steps are in [chatgpt-plugin.md](chatgpt-plugin.md).
+
 ## Secrets
 
 Secret names and their features are declared in the `Env` interface in `src/env.ts`, with a purpose table in the self-host doc. Values live only in Cloudflare (`wrangler secret put <NAME> --env <env>`) and in the local, git-ignored `.env` / `.dev.vars`.

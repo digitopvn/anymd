@@ -299,7 +299,7 @@ api.post('/convert/file', requireScope('convert'), async (c) => {
   const user = await getUser(c.env, p.userId);
   const tracer = new Tracer(newId('trc_'));
   const { ok, state } = await canSpend(c.env, p.userId, user?.plan ?? 'free', 3);
-  if (!ok) return apiError(c, 402, 'quota_exceeded', `Monthly credits used up (${state.used}/${state.included + state.extra}). Upgrade at https://anymd.cc/pricing`);
+  if (!ok) return apiError(c, 402, 'quota_exceeded', `Monthly credits used up (${state.used}/${state.included + state.extra}). Plans are described at https://anymd.cc/pricing`);
   try {
     const { markdown, kind } = await convertBlobToMarkdown(file, file.name || 'upload', mime, { env: c.env, tracer });
     const credits = documentCreditCost(kind);

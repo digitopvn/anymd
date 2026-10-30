@@ -303,6 +303,13 @@ publicRoutes.get('/.well-known/security.txt', (c) =>
   c.text(`Contact: mailto:${SITE.email}\nExpires: 2027-12-31T00:00:00.000Z\nPreferred-Languages: en, vi\nCanonical: ${originOf(c)}/.well-known/security.txt\n`),
 );
 
+// OpenAI plugin portal domain verification: the exact token as plain text, nothing else.
+publicRoutes.get('/.well-known/openai-apps-challenge', (c) => {
+  const token = c.env.OPENAI_APPS_CHALLENGE?.trim();
+  if (!token) return c.text('Not found', 404);
+  return c.text(token, 200, { 'Cache-Control': 'no-store' });
+});
+
 publicRoutes.get('/status.json', async (c) => {
   const db = await c.env.DB.prepare('SELECT 1 AS ok').first<{ ok: number }>().catch(() => null);
   return c.json(

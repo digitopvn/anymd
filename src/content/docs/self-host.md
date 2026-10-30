@@ -1,7 +1,7 @@
 ---
 title: "Self-hosting"
 description: "Deploy your own copy of anymd on Cloudflare Workers with D1, KV, R2, Vectorize and Workers AI, plus secrets and CI."
-updated: "2026-10-15"
+updated: "2026-10-28"
 ---
 
 anymd is MIT-licensed and runs as a single Cloudflare Worker. Everything the hosted service uses is in the repository at [github.com/digitopvn/anymd](https://github.com/digitopvn/anymd).
@@ -117,6 +117,7 @@ npm run secrets:production   # pushes every known secret found in .env, without 
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | "Continue with GitHub" sign-in |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | "Continue with Google" sign-in |
 | `EVENTS_SECRET_KEY` | [MCP Events](/docs/mcp#events-webhooks) (webhook subscriptions). anymd derives an AES-GCM key from it to encrypt callback secrets at rest; without it `server/discover` does not offer events. Use a long random value and set it with `npx wrangler secret put EVENTS_SECRET_KEY --env <env>`, or let `npm run secrets:*` push it from `.env` (`EVENTS_SECRET_KEY` for production, `STAGING_EVENTS_SECRET_KEY` for staging, so each environment keeps its own key). Changing it makes stored callback secrets unreadable, so existing subscriptions stop delivering until clients subscribe again |
+| `OPENAI_APPS_CHALLENGE` | Domain verification for a ChatGPT app listing. Paste the token the OpenAI plugin portal shows; anymd serves it as plain text at `/.well-known/openai-apps-challenge` (404 while unset). Set it with `npx wrangler secret put OPENAI_APPS_CHALLENGE --env <env>` |
 
 ### Sign in with GitHub or Google
 

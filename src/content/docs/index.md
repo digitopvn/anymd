@@ -33,6 +33,7 @@ The rest of these docs cover doing it from inside an agent, from code and from y
 | Understand credits and plans | [Billing & credits](/docs/billing) |
 | Run my own copy on Cloudflare | [Self-hosting](/docs/self-host) |
 | Report a bug or suggest a feature | [Send feedback](/docs/feedback) |
+| Get help, report a security issue or disconnect ChatGPT | [Support](/docs/support) |
 
 ## Core ideas
 

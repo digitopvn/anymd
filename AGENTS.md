@@ -39,6 +39,7 @@ Before handing work back: `npm run typecheck`, plus `npm test` for touched behav
 - `src/views/`, `src/routes/`, `src/mcp/`, `client/`, `cli/`: UI, HTTP routes, MCP server, browser islands, CLI.
 - `migrations/`: D1 schema. `docs/`: maintainer docs.
 - `plugins/anymd-research/` + `.claude-plugin/marketplace.json`: the Claude plugin listed in the Claude Directory (see `docs/claude-directory.md`).
+- `plugins/chatgpt/`: the ChatGPT plugin directory package for `/mcp` (validate and pack with `npm run plugin:chatgpt`; runbook in `docs/chatgpt-plugin.md`). Changing an MCP tool's name, inputs or behavior changes what ChatGPT reviewers tested: re-run its test pack.
 
 Start with `docs/architecture.md` for the module map and request flow, `docs/operations.md` for deploys, logs and rollback, `docs/security.md` for the untrusted-content threat model and residual risks, and `REVIEW.md` for what reviewers check.
 

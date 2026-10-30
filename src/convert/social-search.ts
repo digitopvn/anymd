@@ -183,7 +183,7 @@ export async function runSocialSearch(env: Env, ctx: WaitUntil, req: SocialSearc
     const user = await env.DB.prepare('SELECT plan FROM users WHERE id = ?').bind(principal.userId).first<{ plan: string }>();
     const allowance = await reserveConversion(env, tracer.id, principal.userId, user?.plan ?? 'free', price);
     reserved = true;
-    if (allowance < price) throw new ConvertError(`This social search needs ${price} credits; fewer are left this month. Upgrade at https://anymd.cc/pricing`, 402, 'quota_exceeded');
+    if (allowance < price) throw new ConvertError(`This social search needs ${price} credits; fewer are left this month. Plans are described at https://anymd.cc/pricing`, 402, 'quota_exceeded');
     if (session) {
       await claimSession(env, principal.userId, session.id, session.version, tracer.id, now);
       claimed = { id: session.id, version: session.version };

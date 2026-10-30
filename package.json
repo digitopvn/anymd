@@ -21,6 +21,7 @@
     "secrets:production": "node --env-file=.env scripts/sync-secrets.mjs production",
     "polar:setup": "node --env-file=.env scripts/polar-setup.mjs",
     "creem:setup": "node --env-file=.env scripts/creem-setup.mjs",
+    "plugin:chatgpt": "node scripts/chatgpt-plugin.mjs",
     "deploy:staging": "npm run build && wrangler deploy --env staging",
     "deploy:production": "npm run build && wrangler deploy --env production"
   },
